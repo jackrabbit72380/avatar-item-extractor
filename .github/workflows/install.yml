@@ -1,0 +1,23 @@
+name: install one-file tool
+on:
+  push:
+    paths:
+      - ".github/workflows/install.yml"
+permissions:
+  contents: write
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch the built file
+        run: curl -fsSL https://files.catbox.moe/iiwq3k.bat -o Extract-AvatarItem-v20.bat
+      - name: verify it is the built file
+        run: echo "f3ef44952f52d3f9e83387d430fb9ad87f981d4b6f3ab3e3177e3b795c5e96b9  Extract-AvatarItem-v20.bat" | sha256sum -c -
+      - name: commit it
+        run: |
+          git config user.name "extractor installer"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Install the single-file tool: extraction and rigging inside"
+          git push
