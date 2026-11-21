@@ -1,54 +1,52 @@
 # Avatar Item Extractor
 
-One click on Windows: **double-click `avatar-item-extractor.bat`**, pick the
-folder holding your item files, and it opens the results for you.
+**Double-click `avatar-item-extractor.bat`.** That is the whole procedure.
+
+It finds the item files itself, extracts every item it finds, and opens the
+results folder. No folder picker, no drag-and-drop, no setup step, no prompts.
 
 It reads retail Xbox 360 avatar items — the `YTGR`/`STRB` assets the LIVE avatar
 service served and the `Clean Slate NXE` dump ships — and writes a catalogue
 plus one model file and icon per item.
 
-## What it accepts
+## Where it looks
 
-Anything holding item assets; it works out which of the three you gave it:
+A fixed list, checked every run, in this order:
 
-| you give it | it does |
-| --- | --- |
-| a **closet folder** (`closet_index.tsv`, `<guid>.bin`, `icons/`) | uses the index for names and category masks |
-| a **folder of loose items** (`.bin` / `.asset`) | extracts every item file in it; names come from the ids |
-| **one item file** | extracts that file — you can drag it straight onto the `.bat` |
+1. its own folder, and the folder above it
+2. `..\UniKron\src_archive` — where the project keeps the dump
+3. `Downloads`
+4. `Desktop`
+5. `Documents`
+6. `OneDrive\Downloads`, `OneDrive\Desktop`
 
-If the file is not a `STRB` container the run says so and moves on; it never
-stops at the first bad item.
+It takes **every** source it finds, not the first one, and extracts them
+together into one catalogue. A source is a folder with `closet_index.tsv` (the
+retail layout) or one with `.bin` / `.asset` item files. It does not look deeper
+than three folders down, and it skips `.git`, `node_modules`, `vendor`,
+`extracted` and the recycle bin.
 
-## One click (Windows)
+The run always says what it searched and what it found:
 
-1. Double-click `avatar-item-extractor.bat`.
-2. Choose the folder. (Skip this by putting a `_closet` folder beside the `.bat`,
-   or by dragging a folder or `.bin` file onto the `.bat`.)
-3. The results folder opens: `extracted\`.
-
-On first run it fetches the two reader modules it needs into `vendor\` — from a
-UniKron checkout if one sits next to this repo, otherwise from GitHub.
-
-## Other OS
-
-```sh
-./setup.sh                                  # vendors avatar_mesh.py + lzx.py
-python3 extract_items.py _closet extracted --obj
+```
+Looking for avatar items in:
+  C:\Users\lands\avatar-item-extractor
+  C:\Users\lands\UniKron\src_archive
+  C:\Users\lands\Downloads
+  ...
+Found 2 item sources:
+  C:\Users\lands\Downloads\closet  (20349 items in the index)
+  C:\Users\lands\Desktop\items     (14 item files)
 ```
 
-Or point straight at a UniKron checkout and skip setup:
-
-```sh
-python3 extract_items.py path/to/item.bin extracted --obj \
-  --mesh-dir ../UniKron/avatar/avatar_tools
-```
+If nothing is found it names the folders it searched, exits with status 4, and
+stops. It never asks a question.
 
 ## What it writes
 
 | output | contents |
 | --- | --- |
-| `extracted/catalogue.json` | one record per item: name, category and body masks, STRB block table, geometry summary, icon and `.obj` paths |
+| `extracted/catalogue.json` | every item: name, category and body masks, STRB block table, geometry summary, where it came from, icon and `.obj` paths |
 | `extracted/items/<id>.obj` | the model, ready for Blender |
 | `extracted/icons/<id>.png` | the item's icon, copied when the folder has one |
 
@@ -59,6 +57,8 @@ A record looks like this:
  "id": "00000008-001f-62f1-c10d-7afc354107d4",
  "name": "2014 Colombia Home Jersey",
  "categories": 8, "bodies": 3,
+ "file": "00000008-001f-62f1-c10d-7afc354107d4.bin",
+ "source": "C:\\Users\\lands\\Downloads\\closet",
  "blocks": [{"id": 1, "size": 412}, {"id": 3, "size": 9120}],
  "model": {
   "parses": true,
@@ -70,7 +70,7 @@ A record looks like this:
 ```
 
 When an item does not parse, `model.parses` is `false` and `model.error` says
-which stage failed.
+which stage failed. The run continues; it never stops at the first bad file.
 
 ## How an item is read
 
@@ -101,16 +101,29 @@ body each.
   oversized header, and one batch can exceed eight thousand vertices; the
   reader handles both.
 - Icons are copied, not generated. No icon in the folder means `"icon": null`.
-- Exit status is 3 when nothing parsed, so a script can tell.
+- A file that is not a `STRB` container is reported and skipped, so a folder of
+  unrelated `.bin` files produces a catalogue of failures and nothing else.
 
-## Command line
+Exit status: `0` something parsed, `3` sources found but nothing parsed, `4`
+nothing found.
+
+## Other OS, or a folder outside the list
+
+```sh
+./setup.sh                                     # vendors avatar_mesh.py + lzx.py
+python3 extract_items.py                       # same fixed search list
+python3 extract_items.py --root /data/dump     # search somewhere else
+python3 extract_items.py /data/dump/closet     # or name one source directly
+```
+
+Options:
 
 ```
-python extract_items.py <folder-or-file> <out> [options]
-
+--out DIR        where to write (default: extracted)
 --obj            write each model as <out>/items/<id>.obj
 --only ID|NAME   extract only ids or names containing this (repeatable)
---limit N        stop after N selected items
+--limit N        stop after N items
 --no-icons       do not copy icons
+--root DIR       search this folder instead of the default list (repeatable)
 --mesh-dir DIR   where avatar_mesh.py lives (default: ./vendor)
 ```

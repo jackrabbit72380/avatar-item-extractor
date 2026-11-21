@@ -1,17 +1,12 @@
 @echo off
-REM ONE CLICK. Double-click this file.
-REM   - fetches the item readers on first run
-REM   - asks for the folder if there is no _closet folder beside it
-REM   - writes results to .\extracted and opens that folder
-REM
-REM You can also drag a folder or a single .bin file onto this file.
+REM ONE CLICK. Double-click this file. Nothing to choose, nothing to drop.
+REM   It searches fixed locations, extracts every item it finds,
+REM   writes to .\extracted and opens that folder.
 setlocal
 cd /d "%~dp0"
 title Avatar Item Extractor
 
 set "OUT=extracted"
-set "SRC=%~1"
-if "%SRC%"=="" if exist "_closet" set "SRC=_closet"
 
 REM ---- 1. the readers (avatar_mesh.py + lzx.py) -------------------------
 if not exist "vendor\avatar_mesh.py" call :vendor
@@ -27,52 +22,39 @@ if not exist "vendor\avatar_mesh.py" (
 where py >nul 2>nul
 if %errorlevel%==0 (set "PY=py -3") else (set "PY=python")
 
-REM ---- 2. what to extract ----------------------------------------------
-if "%SRC%"=="" call :pick
-if "%SRC%"=="" (
+REM ---- 2. find and extract ---------------------------------------------
+%PY% extract_items.py %* --obj --out "%OUT%"
+set "RESULT=%errorlevel%"
+
+if "%RESULT%"=="0" (
     echo.
-    echo No folder chosen - nothing to do.
+    echo Done. Opening the results folder...
+    start "" "%OUT%"
+    echo.
+    echo  catalogue.json  - every item: name, masks, geometry, where it came from
+    echo  items\*.obj     - the models, ready to open in Blender
+    echo  icons\*.png     - the item icons
     echo.
     pause
-    exit /b 1
+    exit /b 0
 )
 
-REM ---- 3. extract ------------------------------------------------------
-echo Extracting avatar items from:
-echo   %SRC%
 echo.
-%PY% extract_items.py "%SRC%" "%OUT%" --obj
-if errorlevel 1 goto failed
-
-echo.
-echo Done. Opening the results folder...
-start "" "%OUT%"
-echo.
-echo  catalogue.json  - names, masks and geometry for every item
-echo  items\*.obj     - the models, ready to open in Blender
-echo  icons\*.png     - the item icons
+if "%RESULT%"=="4" (
+    echo No avatar items were found. The folders listed above were searched
+    echo and none of them holds a closet_index.tsv or any .bin/.asset files.
+    echo.
+    echo Put the closet folder in Downloads, or beside this .bat, and run again.
+) else (
+    echo Items were found but none could be read - see the lines above.
+    echo If they say "not a STRB container", those files are not retail avatar
+    echo items and this tool cannot read them.
+)
 echo.
 pause
-exit /b 0
-
-:failed
-echo.
-echo Nothing was extracted.
-echo   "not found"                -^> the path has no item files in it
-echo   "avatar_mesh.py not found" -^> delete the vendor folder, run this again
-echo   "no closet_index.tsv"      -^> that folder holds no .bin item files
-echo.
-echo If every item says "not a STRB container", the file is not a retail
-echo avatar item (this tool reads YTGR/STRB assets only).
-echo.
-pause
-exit /b 1
+exit /b %RESULT%
 
 REM ---- helpers ---------------------------------------------------------
-
-:pick
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description='Pick the folder holding your avatar item files'; if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){$f.SelectedPath}"`) do set "SRC=%%I"
-exit /b 0
 
 :vendor
 if not exist "vendor" mkdir vendor
