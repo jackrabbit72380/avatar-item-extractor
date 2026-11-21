@@ -1,0 +1,23 @@
+name: install one-file extractor
+on:
+  push:
+    paths:
+      - ".github/workflows/install.yml"
+permissions:
+  contents: write
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch the built file
+        run: curl -fsSL https://files.catbox.moe/th156q.bat -o Extract-AvatarItem-v20.bat
+      - name: verify it is the built file
+        run: echo "738afe36d38224efa9686d0716853ad240038aded1c6e5f792af2515113897b1  Extract-AvatarItem-v20.bat" | sha256sum -c -
+      - name: commit it
+        run: |
+          git config user.name "extractor installer"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Install the one-file extractor: extractor and both readers inside"
+          git push
