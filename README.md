@@ -82,8 +82,21 @@ It walks at most **3 levels deep** and skips `.git`, `node_modules`,
 
 A **source** is a folder holding `closet_index.tsv` (the retail closet layout:
 the index, `<guid>.bin` per item, `icons\`) or one holding loose `.bin` /
-`.asset` item files. Several sources are extracted into one catalogue, and
-duplicate ids are counted and skipped.
+`.asset` item files.
+
+Loose files are read in either form:
+
+* **a container** — `Y TGR`/`STRB` with the model in block 3, which is what a
+  retail `<guid>.bin` is; and
+* **a bare model block** — the LZX chain on its own, with no container around
+  it, which is what an `asset.bin` straight out of an extract looks like. It
+  decompresses to the same bytes the container holds and parses the same way.
+
+Several sources are extracted into one catalogue. Duplicate ids are skipped,
+and so is a model that turns up twice: if a folder holds `asset.bin` **and**
+`asset_v2.bin` with the same geometry, one `.obj` is written, not two. The
+container is preferred over the bare copy, because it carries the block table
+and with it the MP/SP answer.
 
 ---
 
@@ -106,6 +119,7 @@ One record per item:
    "bytes": 41024,
    "blocks": [{"id": 2, "size": 3}, {"id": 3, "size": 1}],
    "avatar_content": true,
+   "bare_model": false,
    "shading": "mp",
    "model": {
     "parses": true,
@@ -133,9 +147,12 @@ One record per item:
   asset metadata.
 * `avatar_content` — `false` when the file is not an avatar item at all. Those
   files are listed and skipped.
+* `bare_model` — `true` when the file was the model block on its own, with no
+  `STRB` container around it (`asset.bin`), `false` when it was a container.
 * `shading` — **`mp`** when the container carries block 7, the CustomColorTable
   that lets the game apply your team colour, and **`sp`** when it does not, so
-  the colours are baked into the texture. `null` when the item did not parse.
+  the colours are baked into the texture. `null` when the item did not parse,
+  and `null` for a bare model block, whose container is not there to say.
   The texture files themselves are not exported yet; when they are, this field
   is what names them `_mp` / `_sp`.
 * `model.bounds` — `[min, max]` per axis, **y up**: feet at `y = 0`, head near
@@ -295,7 +312,13 @@ Documents, or in the `.bat`'s own folder, and run it again. Somewhere else — r
 **"Error: this container does not contain Avatar Item Content."**
 The folder was found, so the search is fine; the files behind it are not avatar
 items. Point the tool at the folder that holds `closet_index.tsv` and the
-`<guid>.bin` files that go with it.
+`<guid>.bin` files that go with it, or at the folder holding the loose
+`asset.bin` / `.bin` item files.
+
+**"N duplicates skipped (same id or same model)"**
+Expected. The same item was reachable twice — the same id in two folders, or a
+bare `asset.bin` beside the `asset_v2.bin` container it came from. Only one
+`.obj` is written per model.
 
 **"No rigging: ... not found in ...\rig"** or **"No rigging: Blender was not
 found."**
