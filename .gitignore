@@ -1,0 +1,10 @@
+# vendored readers, copied in by setup.bat / setup.sh
+vendor/
+
+# extraction output
+extracted/
+_closet/
+
+# python
+__pycache__/
+*.pyc
