@@ -49,18 +49,40 @@ It does not ask a single question. It looks in a fixed list of places, takes
 everything it finds, extracts all of it, and rigs all of it when it can. At the
 end it waits for a key press so the report stays on screen.
 
-### Results land next to the `.bat`
+### The results folder is named after the item
+
+One container, one folder, named with the title the container carries — in the
+folder the `.bat` sits in, so everything lands next to the file you
+double-clicked:
 
 ```
-extracted\
+UNSC Marine Armor\          the container's title
     catalogue.json          one record per item
     items\<id>.obj          the 3D model, one file per item
     icons\<id>.png          the item's icon, when there is one
-rigged\                     only when rigging ran
-    avatar_rigged.blend     whole scene: biped, FP arms, every rigged item
-    <id>.fbx                one rigged model per item, armature included
-    <id>.jms                Halo 1 Jointed Model Skeleton for tool.exe
+    rigged\                 only when rigging ran
+        avatar_rigged.blend whole scene: biped, FP arms, every rigged item
+        <id>.fbx            one rigged model per item, armature included
+        <id>.jms            Halo 1 Jointed Model Skeleton for tool.exe
 ```
+
+Characters Windows will not allow in a name are dropped from the title.
+
+**Every container has a title, and this is where it is read**
+
+* An Xbox 360 package — what an avatar item downloads as: `CON `, `LIVE` or
+  `PIRS` — keeps its title in the header at **`0x411`** (Display Name, first
+  locale, UTF-16BE), with **`0x1691`** (Title Name) as the fallback. That is the
+  same string wxPirs prints as `Title : …`.
+* The package is looked for beside the item files, and one folder up when its
+  name is the item's GUID: `00000FFC39723261C09A3B1E4D530877` matches the
+  closet's `00000ffc-3972-3261-c09a-3b1e4d530877`.
+* A closet item takes its title from `closet_index.tsv`, because the index
+  already says what the item is called.
+
+With **more than one item** in a run there is no single title, so the folder
+stays `extracted\` and `rigged\` goes beside it. An item with no title anywhere
+— a bare `asset.bin` on its own — also stays in `extracted\`.
 
 ---
 
@@ -112,6 +134,8 @@ One record per item:
   {
    "id": "3a1f0001-1111-2222-3333-444455556666",
    "name": "Test Shirt",
+   "title": "Test Shirt",
+   "title_source": "closet",
    "categories": 975110145,
    "bodies": 3,
    "file": "3a1f0001-1111-2222-3333-444455556666.bin",
@@ -138,6 +162,11 @@ One record per item:
 }
 ```
 
+* `title` — what the container is called: the closet's name, or the package's
+  Title read from `0x411`. `null` when nothing anywhere names the item. This is
+  the name the results folder gets.
+* `title_source` — where that title came from: `closet`, or
+  `package <file name>`.
 * `categories` — the bitmask in the item GUID's first four bytes; the index
   repeats it in column two.
 * `bodies` — `avatarBodyType` from column three: `3` fits both bodies, `1` / `2`
