@@ -29,17 +29,21 @@ if not exist "%CACHE%\avatar_mesh.py" call :readers
 if not exist "%CACHE%\avatar_mesh.py" (
     echo.
     echo Could not get the avatar readers.
-    echo Check the internet connection, or put a UniKron avatar_tools folder
-    echo next to this file and run again.
+    echo Check the internet connection and run this file again.
+    echo If that keeps failing, copy avatar_mesh.py and lzx.py from a
+    echo UniKron avatar_tools folder into this folder:
+    echo   %CACHE%
+    echo then run this file again.
     echo.
     pause
     exit /b 1
 )
 if not exist "%CACHE%\lzx.py" (
     echo.
-    echo The LZX reader is missing. Delete the folder
+    echo The LZX reader is missing. Copy lzx.py from a UniKron
+    echo avatar_tools folder into this folder:
     echo   %CACHE%
-    echo and run this file again.
+    echo then run this file again.
     echo.
     pause
     exit /b 1
@@ -102,7 +106,6 @@ set "BASE=https://raw.githubusercontent.com/jackrabbit72380/UniKron/main/avatar/
 echo Downloading the avatar readers ^(once^)...
 powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing '%BASE%/avatar_mesh.py' -OutFile '%CACHE%\avatar_mesh.py'; Invoke-WebRequest -UseBasicParsing '%BASE%/lzx.py' -OutFile '%CACHE%\lzx.py' } catch { exit 1 }"
 exit /b 0
-
 ###PAYLOAD###
 #!/usr/bin/env python3
 """Extract retail Xbox 360 avatar items into a catalogue and per-item files.
