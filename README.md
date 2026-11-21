@@ -15,8 +15,8 @@ and `fp arms.blend` in a `rig\` folder beside the `.bat`.
 Test Item\
     catalogue.json
     Test Item base map.png  also .tga and .tif
-    items\Test Item.obj  plus .mtl
-    icons\Test Item.png
+    Test Item.obj  plus .mtl
+    Test Item.png
     rigged\avatar_rigged.blend, .jms, .fbx
 ```
 
