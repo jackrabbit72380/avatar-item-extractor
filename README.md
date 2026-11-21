@@ -1,72 +1,76 @@
 # Avatar Item Extractor
 
-Reads retail Xbox 360 avatar items — the `YTGR`/`STRB` assets the LIVE avatar
+One click on Windows: **double-click `avatar-item-extractor.bat`**, pick the
+folder holding your item files, and it opens the results for you.
+
+It reads retail Xbox 360 avatar items — the `YTGR`/`STRB` assets the LIVE avatar
 service served and the `Clean Slate NXE` dump ships — and writes a catalogue
-plus one file per item, with names, category masks, geometry and icons.
+plus one model file and icon per item.
 
-This repo is the extractor only. The binary readers it depends on
-(`avatar_mesh.py`, `lzx.py`) are part of the
-[UniKron](https://github.com/jackrabbit72380/UniKron) avatar tools; `setup.bat`
-copies them into `vendor/` so this repo stays readable.
+## What it accepts
 
-## Quick start (Windows)
+Anything holding item assets; it works out which of the three you gave it:
 
-1. Put your closet folder next to this one and name it `_closet`, or drop the
-   path onto the `.bat` file.
-2. Double-click **`setup.bat`** once — it vendors the two reader modules.
-3. Double-click **`avatar-item-extractor.bat`**.
+| you give it | it does |
+| --- | --- |
+| a **closet folder** (`closet_index.tsv`, `<guid>.bin`, `icons/`) | uses the index for names and category masks |
+| a **folder of loose items** (`.bin` / `.asset`) | extracts every item file in it; names come from the ids |
+| **one item file** | extracts that file — you can drag it straight onto the `.bat` |
 
-Results land in `extracted\`.
+If the file is not a `STRB` container the run says so and moves on; it never
+stops at the first bad item.
 
-## Quick start (any OS)
+## One click (Windows)
+
+1. Double-click `avatar-item-extractor.bat`.
+2. Choose the folder. (Skip this by putting a `_closet` folder beside the `.bat`,
+   or by dragging a folder or `.bin` file onto the `.bat`.)
+3. The results folder opens: `extracted\`.
+
+On first run it fetches the two reader modules it needs into `vendor\` — from a
+UniKron checkout if one sits next to this repo, otherwise from GitHub.
+
+## Other OS
 
 ```sh
 ./setup.sh                                  # vendors avatar_mesh.py + lzx.py
 python3 extract_items.py _closet extracted --obj
 ```
 
-If the readers live in a UniKron checkout, skip setup entirely:
+Or point straight at a UniKron checkout and skip setup:
 
 ```sh
-python3 extract_items.py _closet extracted --obj \
+python3 extract_items.py path/to/item.bin extracted --obj \
   --mesh-dir ../UniKron/avatar/avatar_tools
 ```
-
-## What the input looks like
-
-A retail closet folder holds three things:
-
-| file | what it is |
-| --- | --- |
-| `<guid>.bin` | one item asset, a `STRB` container |
-| `icons/<guid>.png` | the item's icon |
-| `closet_index.tsv` | `id ⇥ categories ⇥ bodies ⇥ name` |
-
-Column two is the category bitmask and is a restatement of the GUID's first four
-bytes — the LIVE service put the categories inside the id. Column three is
-`avatarBodyType`: `3` is male + female, `1` and `2` are one body each.
 
 ## What it writes
 
 | output | contents |
 | --- | --- |
 | `extracted/catalogue.json` | one record per item: name, category and body masks, STRB block table, geometry summary, icon and `.obj` paths |
-| `extracted/icons/<id>.png` | the item's icon, copied |
-| `extracted/items/<id>.obj` | the model, with `--obj` |
+| `extracted/items/<id>.obj` | the model, ready for Blender |
+| `extracted/icons/<id>.png` | the item's icon, copied when the folder has one |
 
-A geometry record looks like this:
+A record looks like this:
 
 ```json
-"model": {
+{
+ "id": "00000008-001f-62f1-c10d-7afc354107d4",
+ "name": "2014 Colombia Home Jersey",
+ "categories": 8, "bodies": 3,
+ "blocks": [{"id": 1, "size": 412}, {"id": 3, "size": 9120}],
+ "model": {
   "parses": true,
   "batches": 1, "vertices": 1450, "triangles": 2402,
   "uv_sets": 1, "textures": 0, "shader_ids": [6],
   "bounds": [[-0.31, 0.31], [0.0, 0.21], [-0.18, 0.87]]
+ }
 }
 ```
 
 When an item does not parse, `model.parses` is `false` and `model.error` says
-why — the run continues and reports the count at the end.
+which stage failed.
 
 ## How an item is read
 
@@ -80,6 +84,14 @@ Items are pre-placed in a body space of their own and **up is y**: feet at
 `y = 0`, a hat topping out near `1.6`. That is why `.obj` export passes
 `up_axis="y"` — the coordinates need no rotation.
 
+## In a closet folder
+
+`closet_index.tsv` is `id ⇥ categories ⇥ bodies ⇥ name`. Column two is the
+category bitmask and is a restatement of the GUID's first four bytes — the LIVE
+service put the categories inside the id, so a loose file gets its mask the same
+way. Column three is `avatarBodyType`: `3` is male + female, `1` and `2` are one
+body each.
+
 ## Limits worth knowing
 
 - **No field states a garment type.** The item id does not carry one, every
@@ -87,14 +99,15 @@ Items are pre-placed in a body space of their own and **up is y**: feet at
   catalogue records the category mask and geometry and claims no category.
 - A few retail models end their LZX chain with trailing bytes that read as an
   oversized header, and one batch can exceed eight thousand vertices; the
-  reader in `avatar_mesh.py` handles both by skipping the tail and bounding a
-  batch by the `u16` index range.
-- Icons are copied, not generated. An item with no icon in `icons/` gets
-  `"icon": null`.
+  reader handles both.
+- Icons are copied, not generated. No icon in the folder means `"icon": null`.
+- Exit status is 3 when nothing parsed, so a script can tell.
 
-## Options
+## Command line
 
 ```
+python extract_items.py <folder-or-file> <out> [options]
+
 --obj            write each model as <out>/items/<id>.obj
 --only ID|NAME   extract only ids or names containing this (repeatable)
 --limit N        stop after N selected items

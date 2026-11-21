@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
 """Extract retail Xbox 360 avatar items into a catalogue and per-item files.
 
-A retail closet folder (as shipped in the `Clean Slate NXE` dump and served by
-the LIVE avatar service) holds three things:
+One-click use on Windows: double-click `avatar-item-extractor.bat`. This script
+is the engine it calls.
 
-    00000008-001f-62f1-c10d-7afc354107d4.bin      the item asset, YTGR/STRB
-    icons/00000008-001f-62f1-c10d-7afc354107d4.png
-    closet_index.tsv                              id, categories, bodies, name
+What you can point it at:
 
-Each item asset is a `STRB` container. Block 3 is the model, and in retail
-assets that block is LZX-framed *inside* the container, where the editor's own
-asset pack stores its blocks plain. So the model is:
+    a closet folder        the retail layout: closet_index.tsv, <guid>.bin,
+                           icons/<guid>.png
+    a folder of items      any folder holding .bin / .asset item files
+    one item file          a single .bin / .asset
+
+An item asset is a `STRB` container. Block 3 is the model, and in retail assets
+that block is LZX-framed *inside* the container, where the editor's own asset
+pack stores its blocks plain. So the model is:
 
     blocks = strb_blocks(data)
     payload = block 3
     batches = read_model(decompress(payload))
 
 which yields, per batch: vertices, u16 triangle indices, UV sets, material
-records, per-vertex joints and weights, shaders ids, and the item's bounds.
+records, per-vertex joints and weights, shader ids, and the item's bounds.
 
 Usage:
-    python extract_items.py <closet_dir> <out_dir> [options]
+    python extract_items.py <folder-or-file> <out_dir> [options]
 
 Options:
     --obj            also write each parsed model as <out>/items/<id>.obj
@@ -40,10 +43,12 @@ Requires Python 3.8+. No third-party packages.
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 
 INDEX = "closet_index.tsv"
+ITEM_EXTENSIONS = (".bin", ".asset")
 
 
 # --------------------------------------------------------------- mesh reader
@@ -110,6 +115,41 @@ def read_index(folder):
     return entries
 
 
+def guid_categories(item_id):
+    """The category bitmask lives in the GUID's first four bytes."""
+    match = re.match(r"^([0-9a-fA-F]{8})-", item_id)
+    return int(match.group(1), 16) if match else None
+
+
+def collect(source):
+    """Everything to extract: (id, categories, bodies, name, path) tuples.
+
+    Three input shapes, in the order they are tried: a single file, a retail
+    closet folder (which has the index), or a folder of loose item files.
+    """
+    entries = []
+    if os.path.isfile(source):
+        item_id = os.path.splitext(os.path.basename(source))[0]
+        return [(item_id, guid_categories(item_id), None, "", source)]
+
+    if not os.path.isdir(source):
+        raise SystemExit("not found: %s" % source)
+
+    if os.path.exists(os.path.join(source, INDEX)):
+        for item_id, (cats, bodies, name) in sorted(read_index(source).items()):
+            entries.append((item_id, cats, bodies, name,
+                            os.path.join(source, item_id + ".bin")))
+        return entries
+
+    for name in sorted(os.listdir(source)):
+        base, extension = os.path.splitext(name)
+        if extension.lower() not in ITEM_EXTENSIONS:
+            continue
+        entries.append((base, guid_categories(base), None, "",
+                        os.path.join(source, name)))
+    return entries
+
+
 # ------------------------------------------------------------------ the item
 
 def summarise(mesh, data):
@@ -118,7 +158,7 @@ def summarise(mesh, data):
     try:
         blocks = mesh.strb_blocks(data)
     except mesh.Malformed as exc:
-        facts["model"]["error"] = "not a STRB container: %s" % exc
+        facts["model"]["error"] = str(exc)
         return facts, None
     facts["blocks"] = [{"id": block[0], "size": block[1]} for block in blocks]
 
@@ -168,8 +208,9 @@ def wanted(item_id, name, needles):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Extract avatar items from a retail closet folder.")
-    parser.add_argument("folder", help="folder holding closet_index.tsv and <id>.bin files")
+        description="Extract avatar items from a closet folder, a folder of "
+                    "item files, or a single item file.")
+    parser.add_argument("folder", help="closet folder, folder of .bin files, or one item file")
     parser.add_argument("out", help="output folder")
     parser.add_argument("--obj", action="store_true", help="write each model as .obj")
     parser.add_argument("--only", action="append", default=[], metavar="ID|NAME",
@@ -179,11 +220,15 @@ def main(argv=None):
     parser.add_argument("--mesh-dir", help="directory holding avatar_mesh.py")
     args = parser.parse_args(argv)
 
-    if not os.path.exists(os.path.join(args.folder, INDEX)):
-        raise SystemExit("no %s in %s" % (INDEX, args.folder))
+    entries = collect(args.folder)
+    if not entries:
+        raise SystemExit(
+            "nothing to extract in %s\n"
+            "  a closet folder needs %s and <guid>.bin files,\n"
+            "  a plain folder needs .bin or .asset item files."
+            % (args.folder, INDEX))
 
     mesh = load_mesh(args.mesh_dir)
-    index = read_index(args.folder)
     items_dir = os.path.join(args.out, "items")
     icons_dir = os.path.join(args.out, "icons")
     os.makedirs(args.out, exist_ok=True)
@@ -196,15 +241,14 @@ def main(argv=None):
     failures = []
     parsed = icons = obj_files = 0
 
-    for count, (item_id, (categories, bodies, name)) in enumerate(sorted(index.items())):
+    for item_id, categories, bodies, name, path in entries:
         if not wanted(item_id, name, args.only):
             continue
         if args.limit and len(records) >= args.limit:
             break
 
-        path = os.path.join(args.folder, item_id + ".bin")
         if not os.path.exists(path):
-            failures.append((item_id, "no %s.bin" % item_id))
+            failures.append((item_id, "no %s" % os.path.basename(path)))
             continue
         with open(path, "rb") as handle:
             data = handle.read()
@@ -212,9 +256,10 @@ def main(argv=None):
         facts, batches = summarise(mesh, data)
         record = {
             "id": item_id,
-            "name": name,
+            "name": name or "",
             "categories": categories,
             "bodies": bodies,
+            "file": os.path.basename(path),
             "bytes": facts["bytes"],
             "blocks": facts["blocks"],
             "model": facts["model"],
@@ -234,7 +279,7 @@ def main(argv=None):
             failures.append((item_id, facts["model"].get("error", "unknown")))
 
         if not args.no_icons:
-            source = os.path.join(args.folder, "icons", item_id + ".png")
+            source = os.path.join(os.path.dirname(path), "icons", item_id + ".png")
             if os.path.exists(source):
                 shutil.copyfile(source, os.path.join(icons_dir, item_id + ".png"))
                 record["icon"] = "icons/%s.png" % item_id
@@ -246,7 +291,7 @@ def main(argv=None):
 
     catalogue = {
         "source": os.path.abspath(args.folder),
-        "index": INDEX,
+        "index": INDEX if os.path.exists(os.path.join(args.folder, INDEX)) else None,
         "items": records,
     }
     target = os.path.join(args.out, "catalogue.json")
@@ -262,7 +307,7 @@ def main(argv=None):
             print("    %s  %s" % (item_id, reason))
         if len(failures) > 10:
             print("    ... and %d more" % (len(failures) - 10))
-    return 0
+    return 0 if parsed else 3
 
 
 if __name__ == "__main__":
