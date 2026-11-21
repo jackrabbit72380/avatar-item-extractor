@@ -58,13 +58,22 @@ double-clicked:
 ```
 UNSC Marine Armor\          the container's title
     catalogue.json          one record per item
-    items\<id>.obj          the 3D model, one file per item
-    icons\<id>.png          the item's icon, when there is one
+    <name> base map.png     the item's texture, also .tga and .tif
+    items\<name>.obj        the 3D model, one file per item
+    items\<name>.mtl        its materials
+    icons\<name>.png        the item's icon, when there is one
     rigged\                 only when rigging ran
         avatar_rigged.blend whole scene: biped, FP arms, every rigged item
-        <id>.fbx            one rigged model per item, armature included
-        <id>.jms            Halo 1 Jointed Model Skeleton for tool.exe
+        <name>.fbx          one rigged model per item, armature included
+        <name>.jms          Halo 1 Jointed Model Skeleton for tool.exe
 ```
+
+**One name, everywhere.** `<name>` is the item's title — the same string on the
+folder, the `.obj`, the `.mtl`, the icon, the base maps and the rigged files.
+An item that nothing names (a bare `asset.bin` with no package and no closet)
+falls back to its id, and a title already used earlier in the same run falls
+back to the id too, so two items called "Test Shirt" cannot overwrite each
+other.
 
 Characters Windows will not allow in a name are dropped from the title.
 
@@ -155,9 +164,9 @@ One record per item:
     "shader_ids": [7],
     "bounds": [[-0.711, 0.711], [0.0, 1.6], [-0.17, 0.2]]
    },
-   "icon": "icons/3a1f0001-1111-2222-3333-444455556666.png",
-   "obj": "items/3a1f0001-1111-2222-3333-444455556666.obj",
-   "mtl": "items/3a1f0001-1111-2222-3333-444455556666.mtl",
+   "icon": "icons/Test Shirt.png",
+   "obj": "items/Test Shirt.obj",
+   "mtl": "items/Test Shirt.mtl",
    "texture": {
     "png": "Test Shirt base map.png",
     "tga": "Test Shirt base map.tga",
@@ -201,10 +210,10 @@ One record per item:
 * `model.parses` is `false` with an `error` string when an item could not be
   read.
 
-### `items\<id>.obj`
+### `items\<name>.obj`
 
 Wavefront OBJ, written y-up: one `o batch_<shader>` group and one
-`usemtl batch_<shader>` per triangle batch, `mtllib <id>.mtl` at the top.
+`usemtl batch_<shader>` per triangle batch, `mtllib <name>.mtl` at the top.
 
 * `v` — positions, metres, y up, feet at `y = 0`.
 * `vt` — texture coordinates, one per vertex and in the same order, so a face's
@@ -216,7 +225,7 @@ base colour texture names, not always set 0.
 
 Normals are not written; the mesh is flat-shaded, as before.
 
-### `items\<id>.mtl`
+### `items\<name>.mtl`
 
 One `newmtl batch_<shader>` per batch, with `Kd 0.8 0.8 0.8`, `illum 1`, and —
 when the batch binds a base colour texture — `map_Kd texture_<nn>.dds`, named
@@ -242,10 +251,11 @@ textured.
 
 The count appears in the console as `N base maps`.
 
-### `icons\<id>.png`
+### `icons\<name>.png`
 
-The item's picture, copied under the item's id. It comes from the source's
-`icons\<id>.png` when there is one — which is what a closet has — and otherwise
+The item's picture, copied under the item's name. It comes from the source's
+`icons\<id>.png` when there is one — which is what a closet has, keyed by the
+item's id — and otherwise
 from an `icon.png` sitting beside the loose `.bin` files, which is what an
 extract of a single item usually looks like. `--no-icons` turns all of it off.
 
