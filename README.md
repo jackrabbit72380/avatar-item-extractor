@@ -167,7 +167,10 @@ triangles only, written y-up.
 
 ### `icons\<id>.png`
 
-Copied from the source `icons` folder when the item has one.
+The item's picture, copied under the item's id. It comes from the source's
+`icons\<id>.png` when there is one — which is what a closet has — and otherwise
+from an `icon.png` sitting beside the loose `.bin` files, which is what an
+extract of a single item usually looks like. `--no-icons` turns all of it off.
 
 ---
 
