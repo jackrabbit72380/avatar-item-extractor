@@ -57,7 +57,7 @@ echo   and tick "Add python.exe to PATH" in the installer, then run this
 echo   file again. Nothing else is needed.
 echo.
 start "" https://www.python.org/downloads/windows/
-pause
+timeout /t 20 >nul 2>&1
 exit /b 2
 
 :run
@@ -72,12 +72,12 @@ echo.
 echo   The extractor stopped with code %RC%.
 echo   Nothing was deleted or moved. Run this file again to retry.
 echo.
-pause
+timeout /t 20 >nul 2>&1
 exit /b %RC%
 
 :noreaders
 echo.
-pause
+timeout /t 20 >nul 2>&1
 exit /b 5
 
 :nothing
@@ -87,7 +87,7 @@ echo.
 echo   A source is a closet_index.tsv, or item .bin / .asset files. This file
 echo   looked only in its own folder. Put the items there and run it again.
 echo.
-pause
+timeout /t 20 >nul 2>&1
 exit /b 4
 
 :unparsed
@@ -98,7 +98,7 @@ echo.
 echo   The files found are listed above, one line per item, with the reason
 echo   each one was not an avatar item.
 echo.
-pause
+timeout /t 20 >nul 2>&1
 exit /b 3
 
 :unpackfailed
@@ -108,15 +108,14 @@ echo   The file was probably truncated while downloading.
 echo.
 echo   Download it again, or copy it to C:\Tools and run it from there.
 echo.
-pause
+timeout /t 20 >nul 2>&1
 exit /b 1
 
 :done
 echo.
-echo   Done. Everything is in:
-echo      %OUT%
+echo   Done. The folder is beside this file.
 echo.
-pause
+rem Nothing to wait for: the folder is there, so close the window.
 endlocal
 exit /b 0
 ###BOOTSTRAP###
