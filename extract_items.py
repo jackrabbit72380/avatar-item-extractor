@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Extract retail Xbox 360 avatar items into a catalogue and per-item files.
 
-One click on Windows: double-click `avatar-item-extractor.bat`. This is the
-engine it calls.
+Carried inside Extract-AvatarItem-v20.bat, which unpacks it on first run.
+Written in plain ASCII on purpose: the batch file copies these bytes verbatim.
 
 You do not tell it where the items are. It checks a fixed list of places, takes
 every item source it finds, and extracts all of them. Nothing is asked, nothing
@@ -21,7 +21,7 @@ also works as an explicit argument. Pass --root to search somewhere else, or a
 path to skip discovery entirely.
 
 An item asset is a `STRB` container. Block 3 is the model, and in retail assets
-that block is LZX-framed *inside* the container, where the editor's own asset
+that block is LZX-framed inside the container, where the editor's own asset
 pack stores its blocks plain. So the model is:
 
     blocks = strb_blocks(data)
@@ -96,8 +96,9 @@ def load_mesh(explicit_dir=None):
                                  % (path, exc))
     raise SystemExit(
         "avatar_mesh.py not found (it holds the STRB/LZX/model readers).\n"
-        "Run setup.bat (Windows) or setup.sh once, or pass --mesh-dir "
-        "<path to a UniKron/avatar/avatar_tools checkout>."
+        "It is downloaded next to this script on first run; if that failed, "
+        "put a UniKron/avatar/avatar_tools checkout next to it or pass "
+        "--mesh-dir."
     )
 
 
