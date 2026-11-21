@@ -48,3 +48,25 @@ chips across, and `_colours.txt` lists the same colours as hex. A container with
 no colour table still gets the text file, saying so - there is no palette to draw.
 In `catalogue.json`, `mp` means the item takes your team colour and `sp` means its
 colours are baked in.
+
+## Working on the extractor itself
+
+Neither script is needed to run the tool.
+
+```sh
+python3 tools/payload.py unpack Extract-AvatarItem-v20.bat src/
+# edit src/extract_items.py, then put it back:
+python3 tools/payload.py pack Extract-AvatarItem-v20.bat src/
+```
+
+`pack` decodes its own output and refuses to write unless it matches the files it
+was given, so a half-written rebuild cannot be shipped.
+
+```sh
+python3 tools/test_pipeline.py
+```
+
+Runs the modules the `.bat` actually ships against a synthetic container and
+checks the eight files the extractor owns: `.obj`, `.mtl`, the base map in three
+formats, `colour_00.png`, the hex list and `catalogue.json`. The rigging half
+needs Blender and is not covered.
