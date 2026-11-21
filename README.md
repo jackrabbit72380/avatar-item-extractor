@@ -16,8 +16,7 @@ and the JMS.
 ```
 Test Item\
     Test Item.obj  plus .mtl
-    Test Item base map.png  also .tga and .tif, when the model carries a texture
-    Test Item texture_01.png, texture_02.png ...  any further slots it binds
+    Test Item base map.png  also .tga and .tif
     Test Item.png  the item's icon, when the package has one
     colour_00.png  the item's own palette, when it carries one
     Test Item_colours.txt
