@@ -1,0 +1,23 @@
+name: install readme
+on:
+  push:
+    paths:
+      - ".github/workflows/install.yml"
+permissions:
+  contents: write
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch it
+        run: curl -fsSL https://files.catbox.moe/y8zu82.md -o README.md
+      - name: verify it
+        run: echo "0534b18b37eabf931e729fa16fd8e1d9445e33aa7d75139c1c28534b9bf9bf86  README.md" | sha256sum -c -
+      - name: commit it
+        run: |
+          git config user.name "extractor installer"
+          git config user.email "actions@users.noreply.github.com"
+          git add README.md
+          git commit -m "Cut the readme to a short usage page"
+          git push
