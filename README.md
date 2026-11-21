@@ -12,14 +12,14 @@ and `fp arms.blend` in a `rig\` folder beside the `.bat`.
 ## Output
 
 ```
-UNSC Marine Armor\
+Test Item\
     catalogue.json
-    UNSC Marine Armor base map.png  also .tga and .tif
-    items\UNSC Marine Armor.obj  plus .mtl
-    icons\UNSC Marine Armor.png
+    Test Item base map.png  also .tga and .tif
+    items\Test Item.obj  plus .mtl
+    icons\Test Item.png
     rigged\avatar_rigged.blend, .jms, .fbx
 ```
 
-Folder and file names are the item's title; several items at once go to
-`extracted\`. In `catalogue.json`, `mp` means the item takes your team colour and
-`sp` means its colours are baked in.
+"Test Item" is whatever your item is titled. Folder and file names are the
+item's title; several items at once go to `extracted\`. In `catalogue.json`, `mp`
+means the item takes your team colour and `sp` means its colours are baked in.
