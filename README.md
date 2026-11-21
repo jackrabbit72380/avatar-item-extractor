@@ -156,7 +156,17 @@ One record per item:
     "bounds": [[-0.711, 0.711], [0.0, 1.6], [-0.17, 0.2]]
    },
    "icon": "icons/3a1f0001-1111-2222-3333-444455556666.png",
-   "obj": "items/3a1f0001-1111-2222-3333-444455556666.obj"
+   "obj": "items/3a1f0001-1111-2222-3333-444455556666.obj",
+   "mtl": "items/3a1f0001-1111-2222-3333-444455556666.mtl",
+   "texture": {
+    "png": "Test Shirt base map.png",
+    "tga": "Test Shirt base map.tga",
+    "tif": "Test Shirt base map.tif",
+    "width": 128,
+    "height": 128,
+    "format": "DXT5",
+    "bytes": 16384
+   }
   }
  ]
 }
@@ -167,6 +177,8 @@ One record per item:
   the name the results folder gets.
 * `title_source` — where that title came from: `closet`, or
   `package <file name>`.
+* `texture` — the base map written out: its three file names, size, DXT format
+  and pixel byte count. `null` when the container has no block 2.
 * `categories` — the bitmask in the item GUID's first four bytes; the index
   repeats it in column two.
 * `bodies` — `avatarBodyType` from column three: `3` fits both bodies, `1` / `2`
@@ -191,8 +203,44 @@ One record per item:
 
 ### `items\<id>.obj`
 
-Wavefront OBJ, one `o batch_<shader>` group per triangle batch, positions and
-triangles only, written y-up.
+Wavefront OBJ, written y-up: one `o batch_<shader>` group and one
+`usemtl batch_<shader>` per triangle batch, `mtllib <id>.mtl` at the top.
+
+* `v` — positions, metres, y up, feet at `y = 0`.
+* `vt` — texture coordinates, one per vertex and in the same order, so a face's
+texture index is its vertex index (`f 1/1 3/3 2/2`). The pack is top-left
+origin like D3D and OBJ is bottom-left, so `v` is written as `1 - v` and the
+texture comes up the right way round. The UV set used is the one the batch's
+base colour texture names, not always set 0.
+* `f` — triangles.
+
+Normals are not written; the mesh is flat-shaded, as before.
+
+### `items\<id>.mtl`
+
+One `newmtl batch_<shader>` per batch, with `Kd 0.8 0.8 0.8`, `illum 1`, and —
+when the batch binds a base colour texture — `map_Kd texture_<nn>.dds`, named
+after the texture index the container stores. The texture images themselves are
+not exported yet; the `.mtl` is what will point at them when they are.
+
+### `<name> base map.png`, `.tga`, `.tif`
+
+The item's own texture. Block **2** is the Texture block: a 33-byte header (format
+`0x14` DXT5 or `0x12` DXT1, endianness, width, height, bytes per frame) and then
+the pixels. It is decoded here in plain Python — no numpy, no image library — and
+written three times over, because people ask for all three formats:
+
+* `.png` — 8-bit RGBA, zlib-compressed;
+* `.tga` — uncompressed 32-bit, top-left origin;
+* `.tif` — baseline TIFF, 8 bits per channel, RGBA.
+
+`<name>` is the item's title, so `UNSC Marine Armor base map.png` sits beside the
+output folder's `items\` folder, and the `.mtl` points at it with
+`map_Kd ../<name> base map.png`. Items whose container carries no block 2 get no
+base map — that is most clothing in this format, which is coloured rather than
+textured.
+
+The count appears in the console as `N base maps`.
 
 ### `icons\<id>.png`
 
