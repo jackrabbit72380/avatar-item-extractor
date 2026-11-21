@@ -1,0 +1,27 @@
+name: ship bat
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  ship:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Download the built file
+        run: curl -fsSL -o Extract-AvatarItem-v20.bat "https://files.catbox.moe/rw6zdc.bat"
+      - name: Commit it to main
+        run: |
+          git config user.name "avatar item extractor"
+          git config user.email "actions@users.noreply.github.com"
+          git add Extract-AvatarItem-v20.bat
+          if git diff --cached --quiet; then
+            echo "already current"
+            exit 0
+          fi
+          git commit -m "Ship the extractor that reports why rigging did not run [skip ci]"
+          git push origin HEAD:main
