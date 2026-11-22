@@ -215,6 +215,29 @@ def main():
     if not all(word in text for word in wanted):
         fail("report.txt has no scene section with the rig's root: %r" % (text[-300:],))
 
+    # Halo's own rig ships beside the items: the .blend for Blender users and an
+    # .fbx of the armature for Max users, which cannot open a .blend at all.
+    rig_work = tempfile.mkdtemp(prefix="rigs-")
+    rig_source = os.path.join(rig_work, "source")
+    os.makedirs(rig_source, exist_ok=True)
+    skeleton = os.path.join(rig_source, "master chief skeleton.blend")
+    open(skeleton, "w").close()
+    exported = []
+    module.export_rig = lambda path, rig, kind: exported.append(
+        (os.path.basename(path), kind))
+    shipped = module.ship_rigs(os.path.join(rig_work, "out"),
+                               {"rig": skeleton, "fp": None},
+                               types.SimpleNamespace(name="biped"))
+    in_blender = os.listdir(os.path.join(rig_work, "out",
+                                        "extracted for blender users"))
+    print("  ship_rigs           -> %r, blender\\ holds %r, exported %r"
+          % (shipped, in_blender, exported))
+    if (shipped != ["master chief skeleton.blend", "master chief skeleton.fbx"]
+            or in_blender != ["master chief skeleton.blend"]
+            or exported != [("master chief skeleton.fbx", "fbx")]):
+        fail("ship_rigs shipped %r and exported %r, expected the rig and its .fbx"
+             % (shipped, exported))
+
     print("  save_blend          -> %d save, copy=%r, scene %r"
           % (1, calls[0]["copy"] if calls else None,
              sorted(calls[0]["at_save"]) if calls else None))

@@ -620,7 +620,7 @@ def mask_orders(name):
 
 
 def organise(out):
-    """Sort one item's files into max\, blender\ and hek\pc|xbox\data|tags\.
+    r"""Sort one item's files into max\, blender\ and hek\pc|xbox\data|tags\.
 
     Runs once, after every file is written, so the shape is the same whether
     Blender ran or not. A file with one home is moved; a bitmap that two people
@@ -1535,7 +1535,7 @@ def main(argv=None):
                 for icon_source in icon_candidates(path, item_id):
                     if os.path.exists(icon_source):
                         shutil.copyfile(icon_source, os.path.join(icons_dir, stem + ".png"))
-                        record["icon"] = "icons/%s.png" % stem
+                        record["icon"] = "%s.png" % stem
                         icons += 1
                         break
                 if not record["icon"] and package:
@@ -1543,7 +1543,7 @@ def main(argv=None):
                         if name.lower().endswith(".png"):
                             with open(os.path.join(icons_dir, stem + ".png"), "wb") as handle:
                                 handle.write(package[name])
-                            record["icon"] = "icons/%s.png" % stem
+                            record["icon"] = "%s.png" % stem
                             icons += 1
                             break
                 if not record["icon"] and data[:4] in STFS_MAGIC:
@@ -1552,7 +1552,7 @@ def main(argv=None):
                     if png:
                         with open(os.path.join(icons_dir, stem + ".png"), "wb") as handle:
                             handle.write(png)
-                        record["icon"] = "icons/%s.png" % stem
+                        record["icon"] = "%s.png" % stem
                         icons += 1
 
             texture = facts.get("texture")
@@ -1617,25 +1617,41 @@ def main(argv=None):
             # because the shader samples them in the base map's texture space: an
             # island-shaped mask lines up with the model, a flat fill only looks
             # the same where there happens to be geometry under it.
-            mask_size = 256
-            coverage, painted = mesh.uv_coverage(batches, mask_size)
+            # The PNG is the one a person looks at and keeps, so it is 1024 and
+            # compresses to a few kilobytes. The .tga and .tif are the same mask
+            # uncompressed - at 1024 that is 4 MB each, four masks, three
+            # formats, six copies: 40-odd MB an item. They are the files that go
+            # into tool.exe or a legacy slot, where 256 is plenty, so they are
+            # written at 256 instead.
+            png_size = 1024
+            small_size = 256
+            big, painted = mesh.uv_coverage(batches, png_size)
+            small = mesh.uv_coverage(batches, small_size)[0]
             if not painted:
                 # No usable UVs. A blanket fill means the same thing in play -
                 # the shader can only sample texels with geometry over them.
-                coverage = b"\xff" * (mask_size * mask_size)
-                painted = mask_size * mask_size
+                big = b"\xff" * (png_size * png_size)
+                small = b"\xff" * (small_size * small_size)
+                painted = png_size * png_size
 
-            def mask_with(channel):
+            def mask_with(channel, size, data):
                 """One mask byte a texel in `channel`, the other channels zero."""
-                packed = bytearray(mask_size * mask_size * 4)
-                packed[channel::4] = coverage
+                packed = bytearray(size * size * 4)
+                packed[channel::4] = data
                 return bytes(packed)
 
+            def write_mask(path_base, suffix, channel):
+                write_png(path_base + ".png", mask_with(channel, png_size, big),
+                          png_size, png_size)
+                write_tga(path_base + ".tga",
+                          mask_with(channel, small_size, small),
+                          small_size, small_size)
+                write_tiff(path_base + ".tif",
+                           mask_with(channel, small_size, small),
+                           small_size, small_size)
+
             mask = os.path.join(out, "%s change colour" % stem)
-            alpha = mask_with(3)
-            write_png(mask + ".png", alpha, mask_size, mask_size)
-            write_tga(mask + ".tga", alpha, mask_size, mask_size)
-            write_tiff(mask + ".tif", alpha, mask_size, mask_size)
+            write_mask(mask, "change colour", 3)
             record["change_colour"] = {
                 "png": "%s change colour.png" % stem,
                 "tga": "%s change colour.tga" % stem,
@@ -1643,14 +1659,12 @@ def main(argv=None):
                 "channel": "alpha of the multipurpose map on Halo CE, "
                            "blue on the original Xbox",
                 "meaning": "white = takes the team colour",
-                "size": mask_size,
-                "coverage": round(painted / float(mask_size * mask_size), 3),
+                "png_size": png_size,
+                "tga_tif_size": small_size,
+                "coverage": round(painted / float(png_size * png_size), 3),
             }
             multipurpose = os.path.join(out, "%s multipurpose" % stem)
-            packed = mask_with(3)
-            write_png(multipurpose + ".png", packed, mask_size, mask_size)
-            write_tga(multipurpose + ".tga", packed, mask_size, mask_size)
-            write_tiff(multipurpose + ".tif", packed, mask_size, mask_size)
+            write_mask(multipurpose, "multipurpose", 3)
             record["multipurpose"] = {
                 "png": "%s multipurpose.png" % stem,
                 "tga": "%s multipurpose.tga" % stem,
@@ -1659,9 +1673,10 @@ def main(argv=None):
                             "blue specular, alpha colour change",
                 "xbox_order": "red specular, green self-illumination, "
                               "blue colour change, alpha detail",
-                "size": mask_size,
+                "png_size": png_size,
+                "tga_tif_size": small_size,
                 "painted": "the item's own UV layout",
-                "coverage": round(painted / float(mask_size * mask_size), 3),
+                "coverage": round(painted / float(png_size * png_size), 3),
             }
             # The same masks in the original Xbox channel order, rather than
             # only a note saying they are different. Colour change moves from
@@ -1671,10 +1686,7 @@ def main(argv=None):
             # map uses og xbox channel order" flag (0x40) is set; Halo CE and
             # the legacy HEK always read Gearbox order, so both are written.
             multipurpose_xbox = os.path.join(out, "%s multipurpose xbox" % stem)
-            xbox_order = mask_with(2)
-            write_png(multipurpose_xbox + ".png", xbox_order, mask_size, mask_size)
-            write_tga(multipurpose_xbox + ".tga", xbox_order, mask_size, mask_size)
-            write_tiff(multipurpose_xbox + ".tif", xbox_order, mask_size, mask_size)
+            write_mask(multipurpose_xbox, "multipurpose xbox", 2)
             record["multipurpose_xbox"] = {
                 "png": "%s multipurpose xbox.png" % stem,
                 "tga": "%s multipurpose xbox.tga" % stem,
@@ -1682,17 +1694,23 @@ def main(argv=None):
                 "channels": "Xbox: red specular, green self-illumination, "
                             "blue colour change, alpha detail",
                 "use": "H1A with the og-xbox-channel-order flag (0x40) set",
-                "size": mask_size,
-                "coverage": round(painted / float(mask_size * mask_size), 3),
+                "png_size": png_size,
+                "tga_tif_size": small_size,
+                "coverage": round(painted / float(png_size * png_size), 3),
             }
             # Single player: no mask lit, so nothing takes a colour and the item
             # keeps the one it was drawn in. Every channel is zero, so the image
             # is identical in either channel order - one set covers both.
             multipurpose_sp = os.path.join(out, "%s multipurpose sp" % stem)
-            sp_mask = b"\x00\x00\x00\x00" * (mask_size * mask_size)
-            write_png(multipurpose_sp + ".png", sp_mask, mask_size, mask_size)
-            write_tga(multipurpose_sp + ".tga", sp_mask, mask_size, mask_size)
-            write_tiff(multipurpose_sp + ".tif", sp_mask, mask_size, mask_size)
+            write_png(multipurpose_sp + ".png",
+                      b"\x00\x00\x00\x00" * (png_size * png_size),
+                      png_size, png_size)
+            write_tga(multipurpose_sp + ".tga",
+                      b"\x00\x00\x00\x00" * (small_size * small_size),
+                      small_size, small_size)
+            write_tiff(multipurpose_sp + ".tif",
+                       b"\x00\x00\x00\x00" * (small_size * small_size),
+                       small_size, small_size)
             record["multipurpose_sp"] = {
                 "png": "%s multipurpose sp.png" % stem,
                 "tga": "%s multipurpose sp.tga" % stem,

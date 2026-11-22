@@ -44,6 +44,7 @@ Test Item\
         Test Item.obj  plus .mtl
         Test Item.fbx  the rigged model, once Blender has run; also - fp arms,
                        - NXE and - unrigged, copied out of the Blender folder
+        master chief skeleton.fbx  Halo's own biped, for building on it
         Test Item base map.png  also .tga  - the texture the model binds
         Test Item multipurpose.png  also .tga  Halo CE channel order
         Test Item multipurpose xbox.png  also .tga  Xbox channel order
@@ -56,6 +57,7 @@ Test Item\
         Test Item - NXE.blend, .fbx, .glb  the 71-joint NXE skeleton
         Test Item - unrigged.blend, .fbx  the model with no skeleton
         the same textures as the Max folder, so a rig opens with its maps
+        master chief skeleton.blend, fp arms.blend  Halo's rig files themselves
     extracted for hek users\
         pc\data\    Test Item base map.tif, Test Item multipurpose.tif,
                     Test Item change colour.tif - Halo CE channel order
@@ -67,7 +69,6 @@ Test Item\
     Test Item.png  the item's icon, when the package has one
     colour_00.png  the item's own palette, when it carries one
     Test Item_colours.txt
-    card_art.png
     report.txt, blender.log  the run's facts; rigging adds a scene section
     catalogue.json
 ```
@@ -89,6 +90,11 @@ Both channel orders ship because the port and the original Xbox read the masks
 differently; nothing is left for you to swap by hand. The `.png` and `.tga`
 copies are the same images as the `.tif`s, for the programs that do not read
 TIFF.
+
+Halo's own two rig files are copied out of the `.bat` into
+`extracted for blender users\` as `.blend`, and the biped also as `.fbx` into
+`extracted for max users\`, so an item can be built or re-bound on the rig
+without the rig living only inside the tool.
 
 The `NXE` files need only Blender, because that skeleton travels inside the
 `.bat`. The biped, the arms, the `.jms` and `Test Item.blend` use Halo's two
@@ -193,12 +199,15 @@ is different, so both are written rather than leaving you to swap channels:
 | Xbox | specular | self-illumination | colour change | detail |
 
   * `<stem> multipurpose.*` - Halo CE order. The colour change mask is painted
-    from the item's own UV layout, 256x256, so it sits on the item's islands the
-    way the base map does: white where the item has geometry, so all of it takes
-    the player's colour, and black elsewhere. A part that must keep its own
-    colour needs painting black there. Detail, specular and self-illumination are
-    zero, because an item does not say which parts are shiny, glow or take a
-    detail map, and inventing that would be a guess.
+    from the item's own UV layout, so it sits on the item's islands the way the
+    base map does: white where the item has geometry, so all of it takes the
+    player's colour, and black elsewhere. A part that must keep its own colour
+    needs painting black there. The `.png` is 1024x1024 and a few kilobytes; the
+    `.tga` and `.tif` are the same mask at 256, because uncompressed at 1024 they
+    are 4 MB each and 256 is what a bitmap compiled by `tool.exe` uses anyway.
+    Detail, specular and self-illumination are zero, because an item does not say
+    which parts are shiny, glow or take a detail map, and inventing that would
+    be a guess.
   * `<stem> multipurpose xbox.*` - the same masks in Xbox order, for H1A with the
     shader's "og xbox channel order" flag (0x40) set. Halo CE and the legacy HEK
     always read Gearbox order, which is why the first set is not a substitute.

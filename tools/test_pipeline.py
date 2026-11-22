@@ -355,6 +355,9 @@ def main():
         covered = sum(1 for value in coverage if value) / float(len(coverage))
         print("  multipurpose    -> %d texels, %.1f%% lit, alpha values %r"
               % (len(ce), covered * 100, sorted(set(coverage))))
+        if len(ce) != 1024 * 1024:
+            print("\nFAIL: the mask is %d texels, expected 1024x1024" % (len(ce),))
+            return 1
         if sorted(set(coverage)) != [0, 255]:
             print("\nFAIL: the Halo CE mask is not a two-value island mask")
             return 1

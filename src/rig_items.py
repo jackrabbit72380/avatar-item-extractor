@@ -807,6 +807,21 @@ def export_objects(path, objects, kind):
     log("wrote %s" % os.path.basename(path))
 
 
+def export_rig(path, armature, kind):
+    """Write the rig on its own, so an item can be built on it from scratch."""
+    bpy.ops.object.select_all(action="DESELECT")
+    armature.select_set(True)
+    bpy.context.view_layer.objects.active = armature
+    if kind == "fbx":
+        bpy.ops.export_scene.fbx(filepath=path, use_selection=True,
+                                 apply_scale_options="FBX_SCALE_ALL",
+                                 object_types={"ARMATURE"})
+    else:
+        save_blend(path, [armature])
+        return
+    log("wrote %s" % os.path.basename(path))
+
+
 def export_rigged(path, mesh, armature, kind):
     """Write a mesh together with the armature it is skinned to."""
     bpy.ops.object.select_all(action="DESELECT")
@@ -879,10 +894,17 @@ def report_text(options, records, stems, armature, nxe=None):
     lines.append("rig file      : %s" % os.path.basename(options["rig"] or ""))
     lines.append("arms file     : %s" % os.path.basename(options["fp"] or "(none)"))
     if armature:
-        lines.append("armature      : %s (%d bones)"
-                     % (armature.name, len(armature.data.bones)))
+        lines.append("armature      : %s (%d bones) from %s"
+                     % (armature.name, len(armature.data.bones),
+                        os.path.basename(options["rig"] or "")))
+    elif options["rig"]:
+        # The file was there but had no armature in it, which is the difference
+        # between a missing rig and a rig that would not load - saying which is
+        # the whole reason this line exists.
+        lines.append("armature      : NOT loaded - %s holds no armature"
+                     % os.path.basename(options["rig"]))
     else:
-        lines.append("armature      : (none - NXE rig only)")
+        lines.append("armature      : none - no rig file was given, NXE rig only")
     if nxe:
         lines.append("NXE skeleton  : %s (%d joints)"
                      % (nxe.name, len(nxe.data.bones)))
@@ -936,6 +958,34 @@ def mirror_fbx(out, blend_dir, stems):
                 shutil.copyfile(source, os.path.join(models_dir, name))
                 copied += 1
     return copied
+
+
+def ship_rigs(out, options, armature):
+    """Halo's own rig files, in the folders of the people who open them.
+
+    The pass rigs items onto Halo's skeleton, but until now the skeleton itself
+    stayed inside the .bat: someone building an item from scratch, or re-binding
+    one by hand, had nothing to open. The .blend goes to the Blender folder and
+    the armature also goes to the Max folder as .fbx, because Max cannot read a
+    .blend.
+    """
+    blend_dir = os.path.join(out, BLENDER_DIR)
+    models_dir = os.path.join(out, MAX_DIR)
+    os.makedirs(blend_dir, exist_ok=True)
+    os.makedirs(models_dir, exist_ok=True)
+    shipped = []
+    for source, rig in ((options.get("rig"), armature),
+                        (options.get("fp"), None)):
+        if not source or not os.path.exists(source):
+            continue
+        name = os.path.basename(source)
+        shutil.copyfile(source, os.path.join(blend_dir, name))
+        shipped.append(name)
+        if rig is not None:
+            fbx = os.path.splitext(name)[0] + ".fbx"
+            export_rig(os.path.join(models_dir, fbx), rig, "fbx")
+            shipped.append(fbx)
+    return shipped
 
 
 def mirror_jms(out, stems):
@@ -1147,23 +1197,13 @@ def main():
     if copied:
         log("copied %d .jms into the xbox folder" % copied)
 
-    # The item's own picture doubles as the card art: the icon when the
-    # container carried one, otherwise the first base map.
-    for stem in stems:
-        for picture in ("%s.png" % stem, "%s base map.png" % stem):
-            for folder in (out, os.path.join(out, MAX_DIR), options["items"]):
-                source = os.path.join(folder, picture)
-                if os.path.exists(source):
-                    shutil.copyfile(source, os.path.join(out, "card_art.png"))
-                    log("wrote card_art.png from %s" % picture)
-                    break
-            else:
-                continue
-            break
-        else:
-            continue
-        break
+    shipped = ship_rigs(out, options, armature)
+    if shipped:
+        log("shipped the rig files: %s" % ", ".join(shipped))
 
+    # card_art.png used to be a copy of the item's own picture under a second
+    # name - the same bytes twice in the folder, and the icon already says which
+    # item it is. Nothing read it back, so it is not written at all.
     return 0
 
 
