@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""Prove the rigging-failure path actually fires.
+"""Prove the rigging outcome is judged by files, not by Blender's exit status.
 
-The fix has two halves: Blender has to report a crashed pass, and the .bat has
-to react to it. Neither needs real Blender to test - only a stand-in that obeys
-Blender's documented exit contract:
+Two things can go wrong and both look identical to the player:
 
-    --python-exit-code <code>
-        Set the exit-code in [0..255] to exit if a Python exception is raised
-        (only for scripts executed from the command line), zero disables.
+  * the pass crashes, and Blender reports 0 unless it is given
+    --python-exit-code, so the failure never reaches the .bat;
+  * the pass exits 0 and quietly writes nothing, which is what a missing
+    .fbx/.glb/.blend actually is.
 
-That default is the whole trap. Without the flag Blender exits 0 on a crashed
-script, so any check of its exit status is dead code. The stand-in below
-reproduces that exactly, and records the argv the bootstrap built so the flag
-itself can be asserted.
+The stand-in below reproduces both. It follows Blender's documented rule for
+exceptions, and it can be told to write the files a working pass would produce,
+or to write none of them.
 
     python3 tools/test_rigging.py
 """
@@ -29,26 +27,40 @@ ROOT = os.path.dirname(HERE)
 BAT = os.path.join(ROOT, "Extract-AvatarItem-v20.bat")
 MODULES = os.path.join(os.path.dirname(ROOT), "recovered")
 
-# A stand-in for blender.exe. It applies Blender's documented rule: a script
-# that raises exits with --python-exit-code when given, and 0 when not.
+# Halo's two rig files. With these present the biped is expected as well.
+RIGS = ("master chief skeleton.blend", "fp arms.blend")
+
+# A stand-in for blender.exe. Modes:
+#   crash  - the script raises; exit --python-exit-code if given, else 0
+#   ok     - write the files a working pass produces, exit 0
+#   silent - exit 0 and write nothing
 FAKE_BLENDER = """#!/bin/sh
-log="$FAKE_BLENDER_LOG"
-echo "$@" > "$log"
-pec=""
-prev=""
+echo "$@" > "$FAKE_BLENDER_LOG"
+pec=""; items=""; target=""; prev=""
 for a in "$@"; do
   if [ "$prev" = "--python-exit-code" ]; then pec="$a"; fi
+  if [ "$prev" = "--items" ]; then items="$a"; fi
+  if [ "$prev" = "--out" ]; then target="$a"; fi
   prev="$a"
 done
-# The script the bootstrap asked Blender to run. Crashes unless told not to.
-if [ "$FAKE_BLENDER_CRASH" = "0" ]; then
-  "$FAKE_PYTHON" -c 'pass' >/dev/null 2>&1
-else
+mode="${FAKE_BLENDER_MODE:-crash}"
+if [ "$mode" = "crash" ]; then
   "$FAKE_PYTHON" -c 'raise RuntimeError("simulated rig failure")' >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ] && [ -n "$pec" ]; then exit "$pec"; fi
+  exit 0
 fi
-rc=$?
-if [ "$rc" -ne 0 ] && [ -n "$pec" ]; then
-  exit "$pec"
+if [ "$mode" = "ok" ]; then
+  for obj in "$items"/*.obj; do
+    [ -e "$obj" ] || continue
+    base=$(basename "$obj" .obj)
+    for k in fbx glb blend; do
+      : > "$target/$base - NXE.$k"
+      if [ "$FAKE_BLENDER_BIPED" = "1" ]; then
+        : > "$target/$base - unrigged.$k"
+      fi
+    done
+  done
 fi
 exit 0
 """
@@ -79,11 +91,12 @@ def make_fake_blender(bin_dir):
     return path
 
 
-def run_case(boot, tmp, succeed):
-    """Run one rig() pass against the stand-in and return (code, argv)."""
+def run_case(boot, tmp, mode="crash", rigs=False, write_biped=False, item=True):
+    """One rig() pass against the stand-in. Returns (code, argv, out)."""
     bin_dir = os.path.join(tmp, "bin")
     os.makedirs(bin_dir, exist_ok=True)
-    make_fake_blender(bin_dir)
+    if mode != "none":
+        make_fake_blender(bin_dir)
 
     cache = os.path.join(tmp, "cache")
     os.makedirs(cache, exist_ok=True)
@@ -92,15 +105,25 @@ def run_case(boot, tmp, succeed):
 
     bat_dir = os.path.join(tmp, "bat")
     os.makedirs(bat_dir, exist_ok=True)
+    if rigs:
+        rig_dir = os.path.join(bat_dir, "rig")
+        os.makedirs(rig_dir, exist_ok=True)
+        for name in RIGS:
+            open(os.path.join(rig_dir, name), "w").close()
+
     out = os.path.join(tmp, "out")
     os.makedirs(out, exist_ok=True)
+    if item:
+        # The extractor writes this before the rigging pass runs.
+        open(os.path.join(out, "UNSC Marine Armor.obj"), "w").close()
 
     log = os.path.join(tmp, "argv.log")
     old = dict(os.environ)
     os.environ["PATH"] = bin_dir + os.pathsep + old.get("PATH", "")
     os.environ["FAKE_BLENDER_LOG"] = log
     os.environ["FAKE_PYTHON"] = sys.executable
-    os.environ["FAKE_BLENDER_CRASH"] = "0" if succeed else "1"
+    os.environ["FAKE_BLENDER_MODE"] = mode
+    os.environ["FAKE_BLENDER_BIPED"] = "1" if write_biped else "0"
     try:
         code = boot.rig(cache, bat_dir, out)
     finally:
@@ -117,8 +140,21 @@ def run_case(boot, tmp, succeed):
 def main():
     boot = load_bootstrap()
     failures = []
+    results = []
 
-    # The harness itself must behave like Blender, or the test proves nothing.
+    def check(label, expected, tmp, **kwargs):
+        try:
+            code, argv, out = run_case(boot, tmp, **kwargs)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        ok = code == expected
+        results.append("  %-46s -> code %r %s"
+                       % (label, code, "ok" if ok else "EXPECTED %r" % (expected,)))
+        if not ok:
+            failures.append("%s returned %r, expected %r" % (label, code, expected))
+        return argv
+
+    # The harness must behave like Blender, or nothing below means anything.
     tmp = tempfile.mkdtemp(prefix="rig-harness-")
     try:
         bin_dir = os.path.join(tmp, "bin")
@@ -126,71 +162,51 @@ def main():
         fake = make_fake_blender(bin_dir)
         os.environ["FAKE_BLENDER_LOG"] = os.path.join(tmp, "argv.log")
         os.environ["FAKE_PYTHON"] = sys.executable
+        os.environ["FAKE_BLENDER_MODE"] = "crash"
         bare = os.system("%s -b --factory-startup --python x.py" % fake)
         flagged = os.system("%s -b --python-exit-code 1 --python x.py" % fake)
         if bare != 0:
-            failures.append("stand-in exits %d without the flag; Blender exits 0" % bare)
-        if flagged != 256:  # os.system packs the code: 1 -> 256
-            failures.append("stand-in exits %d with --python-exit-code 1; expected 1" % (flagged >> 8))
+            failures.append("stand-in exits %d without the flag; Blender exits 0" % (bare >> 8))
+        if flagged != 256:
+            failures.append("stand-in exits %d with --python-exit-code 1; expected 1"
+                            % (flagged >> 8))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    # A crashed pass must reach the .bat as a failure, not as success.
-    tmp = tempfile.mkdtemp(prefix="rig-fail-")
-    try:
-        code, argv, out = run_case(boot, tmp, succeed=False)
-        if "--python-exit-code" not in argv:
-            failures.append(
-                "the blender command has no --python-exit-code, so Blender "
-                "reports 0 on a crashed pass and the failure is invisible")
-        if code != 7:
-            failures.append("a failed rigging pass returned %r, expected 7" % (code,))
-        if not os.path.exists(os.path.join(out, "blender.log")):
-            failures.append("no blender.log was written beside the items")
-        print("  failed pass -> code %r, flag %s"
-              % (code, "present" if "--python-exit-code" in argv else "MISSING"))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    # A crash must reach the .bat as a failure.
+    argv = check("crashed pass", 7,
+                 tempfile.mkdtemp(prefix="rig-crash-"), mode="crash")
+    if "--python-exit-code" not in argv:
+        failures.append("the blender command has no --python-exit-code, so a "
+                        "crashed pass reports 0 and the failure is invisible")
 
-    # A pass that worked must still report success.
-    tmp = tempfile.mkdtemp(prefix="rig-ok-")
-    try:
-        code, argv, _ = run_case(boot, tmp, succeed=True)
-        if code != 0:
-            failures.append("a clean rigging pass returned %r, expected 0" % (code,))
-        print("  clean pass  -> code %r" % (code,))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    # A pass that writes what it should is the only success.
+    check("clean pass writes NXE files", 0,
+          tempfile.mkdtemp(prefix="rig-ok-"), mode="ok")
 
-    # No Blender at all keeps its own code, so the two are never confused.
-    tmp = tempfile.mkdtemp(prefix="rig-none-")
-    try:
-        cache = os.path.join(tmp, "cache")
-        os.makedirs(cache, exist_ok=True)
-        bat_dir = os.path.join(tmp, "bat")
-        os.makedirs(bat_dir, exist_ok=True)
-        out = os.path.join(tmp, "out")
-        os.makedirs(out, exist_ok=True)
-        old = dict(os.environ)
-        os.environ["PATH"] = os.path.join(tmp, "empty")
-        try:
-            code = boot.rig(cache, bat_dir, out)
-        finally:
-            os.environ.clear()
-            os.environ.update(old)
-        if code != 6:
-            failures.append("no Blender returned %r, expected 6" % (code,))
-        print("  no blender  -> code %r" % (code,))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    # The reported symptom: exits 0, writes nothing.
+    check("exit 0 but wrote no files", 7,
+          tempfile.mkdtemp(prefix="rig-silent-"), mode="silent")
 
+    # With Halo's rigs present the biped copies are expected too.
+    check("rigs present, unrigged missing", 7,
+          tempfile.mkdtemp(prefix="rig-biped-miss-"), mode="ok", rigs=True)
+    check("rigs present, unrigged written", 0,
+          tempfile.mkdtemp(prefix="rig-biped-ok-"), mode="ok", rigs=True, write_biped=True)
+
+    # No Blender at all keeps its own code, so it is never confused with this.
+    check("no blender", 6,
+          tempfile.mkdtemp(prefix="rig-none-"), mode="none")
+
+    for line in results:
+        print(line)
     if failures:
         print("")
         for line in failures:
             print("FAIL: " + line)
         return 1
     print("")
-    print("PASS: failed pass is 7, clean pass is 0, no Blender is 6")
+    print("PASS: success is judged by the files written, not by the exit status")
     return 0
 
 

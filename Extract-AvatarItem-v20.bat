@@ -227,6 +227,35 @@ def write_reason(out, lines):
             handle.write(line + "\n")
 
 
+def missing_rigged(out, biped):
+    """What a pass that reports success should have left behind, and did not.
+
+    Blender exits 0 when a pass quietly does nothing, so its exit status alone
+    cannot be trusted. The files are the evidence.
+    """
+    stems = []
+    if os.path.isdir(out):
+        stems = sorted(os.path.splitext(name)[0] for name in os.listdir(out)
+                       if name.lower().endswith(".obj"))
+    absent = []
+    if stems:
+        for stem in stems:
+            for kind in ("fbx", "glb", "blend"):
+                name = "%s - NXE.%s" % (stem, kind)
+                if not os.path.exists(os.path.join(out, name)):
+                    absent.append(name)
+                if biped:
+                    name = "%s - unrigged.%s" % (stem, kind)
+                    if not os.path.exists(os.path.join(out, name)):
+                        absent.append(name)
+        return absent
+    # Nothing to name them from: the NXE copy is written for every item, so at
+    # least one has to be there.
+    if not glob.glob(os.path.join(out, "* - NXE.fbx")):
+        absent.append("no * - NXE.fbx")
+    return absent
+
+
 def rig(cache, bat_dir, out, inside=False):
     """One rigging pass over everything that was just extracted."""
     rig_dir = os.path.join(bat_dir, "rig")
@@ -285,6 +314,22 @@ def rig(cache, bat_dir, out, inside=False):
         # A pass that ran and failed is not the same as a run that worked: the
         # .bat has to keep the window open and say so, or the player is left
         # with no .fbx and no reason. 7 is its own code for exactly this.
+        return 7
+    # A clean exit is not proof that anything was written: Blender exits 0 when
+    # a pass quietly does nothing, which looks exactly like a run that worked.
+    absent = missing_rigged(target, not missing)
+    if absent:
+        print("")
+        print("   The rigging pass finished but did not write:")
+        for name in absent[:10]:
+            print("      %s" % name)
+        print("   The extracted files are fine and are in %s" % out)
+        print("   Blender's own account is in blender.log there.")
+        if os.path.isdir(target):
+            with open(os.path.join(target, "blender.log"), "a", encoding="utf-8") as handle:
+                handle.write("\nThe pass exited 0 but did not write:\n")
+                for name in absent:
+                    handle.write("  %s\n" % name)
         return 7
     print("")
     print("   Rigged files are in %s" % target)

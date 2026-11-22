@@ -39,6 +39,11 @@ travels inside the `.bat`. The biped, the arms, `avatar_rigged.blend` and the
 all, the reason is written to `blender.log` in the output folder and the window
 stays open to say so.
 
+A pass that finishes without writing the models it should is treated the same
+way. Blender exits 0 when a pass quietly does nothing, so the extractor checks
+the `.fbx`, `.glb` and `.blend` files it expects are actually there, names any
+that are missing, and keeps the window open rather than reporting a clean run.
+
 `unrigged` is the item fitted to the biped with no skeleton. `NXE` is the same
 model bound to the NXE avatar skeleton in the package's own space, y-up metres,
 so it drops into the 2008 editor's rig as the game ships it.
@@ -75,6 +80,8 @@ python3 tools/test_rigging.py
 ```
 
 Runs the real rigging pass against a stand-in Blender that obeys Blender's
-documented exit rule, and checks the three outcomes: a failed pass is code 7, a
-clean pass is code 0, and no Blender at all is code 6. It needs no Blender
-installed, which is the point - the failure path is what used to be invisible.
+documented exit rule. Six outcomes are checked: a crashed pass is 7, a pass that
+exits 0 but writes no files is 7, missing biped copies are 7, a clean pass is 0,
+a clean pass with the biped is 0, and no Blender at all is 6. It needs no
+Blender installed, which is the point - the failure paths are what used to be
+invisible.
