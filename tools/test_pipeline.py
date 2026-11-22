@@ -16,6 +16,7 @@ write path: block scan, texture decode, colour-table decode, naming, catalogue.
 
 import base64
 import json
+import glob
 import os
 import shutil
 import struct
@@ -24,7 +25,8 @@ import tempfile
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v21.bat")
+ROOT_DIR = os.path.dirname(HERE)
+BAT = max(glob.glob(os.path.join(ROOT_DIR, "Extract-AvatarItem-v*.bat")))
 
 # Paths are the organised ones: max\ holds the model and its textures for Max,
 # blender\ holds the same textures for Blender's rigs, hek\<build>\data\ holds

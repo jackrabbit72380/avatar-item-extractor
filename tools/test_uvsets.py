@@ -17,6 +17,7 @@ Two halves are checked:
 import base64
 import importlib.util
 import json
+import glob
 import os
 import shutil
 import struct
@@ -25,7 +26,8 @@ import tempfile
 import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v21.bat")
+ROOT_DIR = os.path.dirname(HERE)
+BAT = max(glob.glob(os.path.join(ROOT_DIR, "Extract-AvatarItem-v*.bat")))
 MODULES = os.environ.get("RIG_MODULES") or os.path.join(
     os.path.dirname(HERE), "src")
 

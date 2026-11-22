@@ -18,6 +18,7 @@ This builds such a package with both revisions and checks three things:
 
 import base64
 import json
+import glob
 import os
 import shutil
 import struct
@@ -25,7 +26,8 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v21.bat")
+ROOT_DIR = os.path.dirname(HERE)
+BAT = max(glob.glob(os.path.join(ROOT_DIR, "Extract-AvatarItem-v*.bat")))
 PACKAGE = "000000082C0C1281C54DAE304D5307E6"
 
 

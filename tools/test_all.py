@@ -13,6 +13,7 @@ No Blender, no rig folder, no build beside the repository: only Python 3.8+.
 Exits 0 only when every test passes, and names the ones that did not.
 """
 
+import glob
 import os
 import shutil
 import subprocess
@@ -21,7 +22,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-BAT = os.path.join(ROOT, "Extract-AvatarItem-v21.bat")
+BAT = max(glob.glob(os.path.join(ROOT, "Extract-AvatarItem-v*.bat")))
 
 
 def shipped(work):
@@ -47,6 +48,14 @@ def shipped(work):
     return len(entries)
 
 
+def payload_stamp(text):
+    """The VERSION the shipped rig_items.py reports."""
+    for line in text.splitlines():
+        if line.startswith("VERSION = \""):
+            return line.split('"')[1]
+    return None
+
+
 def main():
     tests = sorted(name for name in os.listdir(HERE)
                    if name.startswith("test_") and name.endswith(".py")
@@ -58,6 +67,15 @@ def main():
     work = tempfile.mkdtemp(prefix="avatar-tests-")
     try:
         count = shipped(work)
+        # The download has to be named after the build it ships, or a stale
+        # .bat on the user's disk looks exactly like the new one.
+        with open(os.path.join(work, "rig_items.py"), encoding="utf-8") as handle:
+            found = payload_stamp(handle.read())
+        name = os.path.basename(BAT)
+        print("version: %s in %s" % (found, name))
+        if not found or found not in name:
+            print("FAIL: %s carries %s - the file name must carry it" % (name, found))
+            return 1
         print("Tests run against the %d entries the .bat ships (%d bytes)\n"
               % (count, os.path.getsize(BAT)))
 

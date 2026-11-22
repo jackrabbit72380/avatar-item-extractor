@@ -13,9 +13,9 @@ that way the tool needs nothing beside it, not even a ``rig`` folder.
 
 Unpack before editing, repack after:
 
-    python3 tools/payload.py unpack Extract-AvatarItem-v21.bat src/
+    python3 tools/payload.py unpack Extract-AvatarItem-v22.bat src/
     # edit src/extract_items.py ...
-    python3 tools/payload.py pack Extract-AvatarItem-v21.bat src/ --rigs src/rig
+    python3 tools/payload.py pack Extract-AvatarItem-v22.bat src/ --rigs src/rig
 
 ``pack`` decodes its own output and refuses to write unless it matches the files
 it was given, so a half-written rebuild cannot be shipped.
@@ -25,6 +25,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import zlib
 
 BOOTSTRAP = "###BOOTSTRAP###"
@@ -115,6 +116,41 @@ def collect_rigs(folder):
     return entries
 
 
+STAMP = re.compile(r'^VERSION = "([^"]+)"$', re.M)
+
+
+def shipped_version(entries):
+    """The VERSION the packaged rig_items.py reports."""
+    for name, value in entries.items():
+        if name.endswith("rig_items.py") and isinstance(value, str):
+            found = STAMP.search(value)
+            if found:
+                return found.group(1)
+    raise SystemExit("no VERSION = \"...\" in the rig_items.py being packed")
+
+
+def check_version(bat, head, version):
+    """Refuse a build whose name and banner disagree with the code inside.
+
+    A version that only changes in the code is no use: the download is called
+    the same thing, so an old copy looks like the new one. The name, the banner
+    and the boot file all have to carry it.
+    """
+    problem = None
+    if version not in os.path.basename(bat):
+        problem = ("the file is called %s, but it carries VERSION %s - rename "
+                   "it, e.g. git mv to Extract-AvatarItem-%s.bat"
+                   % (os.path.basename(bat), version, version))
+    elif ("Version : %s" % version) not in head:
+        problem = ("its banner does not say 'Version : %s'" % version)
+    elif ("unpack_%s.py" % version) not in head:
+        problem = ("its boot file is not unpack_%s.py" % version)
+    if problem:
+        raise SystemExit("refusing to pack: %s\nBump VERSION, BUILD and the "
+                         "banner together, or the old download looks new."
+                         % problem)
+
+
 def pack(bat, src, rigs=None):
     text = open(bat, encoding="utf-8", newline="").read()
     head, _old_payload = _split(text)
@@ -132,6 +168,7 @@ def pack(bat, src, rigs=None):
             "would lose (%s).\nPass the folder holding them, e.g. --rigs %s"
             % (bat, len(lost), "y" if len(lost) == 1 else "ies",
                ", ".join(lost[:6]), "src/rig"))
+    check_version(bat, head, shipped_version(entries))
     rebuilt = head + encode_entries(entries)
     # Prove the new payload before writing: it must decode to the same content.
     if read_entries(rebuilt) != entries:

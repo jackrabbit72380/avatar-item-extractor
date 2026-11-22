@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v21"
-BUILD = "2026-11-22 fp-arms-retarget"
+VERSION = "v22"
+BUILD = "2026-11-22 fp-arms-pads"
 
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
 DEFORM_BONES = (
