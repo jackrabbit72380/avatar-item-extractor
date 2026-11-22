@@ -57,6 +57,7 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
+VERSION = "v20.4"
 BUILD = "2026-11-22 fp-arms-retarget"
 
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
@@ -823,6 +824,7 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     arms["carried_verts"] = moved_verts
     arms["carried_units"] = moved_worst
     arms["build"] = BUILD
+    arms["version"] = VERSION
     log("cut %s: %d of %d vert(s), %d face(s) in %d shell(s), %s, on %s"
         % (arms.name, len(order), len(mesh.vertices), len(faces), len(pieces),
            ("carried on %d bone frame(s) onto Halo's fp rig, moved %d vert(s) up "
@@ -1233,6 +1235,7 @@ def halo_note(stem, mesh, armature, arms=False):
         "export    : BlueStreak 1.0.4 .jms exporter on the mesh",
         "merge     : append another item's - halo.blend and join the meshes;",
         "            every item is skinned to the same biped",
+        "version   : %s" % VERSION,
         "build     : %s" % BUILD,
     ]
     if arms:
@@ -1299,6 +1302,7 @@ def rig_scene_lines(armature, nxe=None):
 def report_text(options, records, stems, armature, nxe=None):
     lines = ["Avatar item rig report", ""]
     lines.append("rig file      : %s" % os.path.basename(options["rig"] or ""))
+    lines.append("version       : %s" % VERSION)
     lines.append("build         : %s" % BUILD)
     lines.append("arms file     : %s" % os.path.basename(options["fp"] or "(none)"))
     if armature:
@@ -1425,7 +1429,7 @@ def ship_source_rigs(out, options, armature):
 
 def main():
     options = args()
-    log("build %s" % BUILD)
+    log("%s - build %s" % (VERSION, BUILD))
     reset_scene()
     # Halo's two rig files are optional: without them the item still gets its
     # NXE rig, which needs nothing but the skeleton carried in this script.
