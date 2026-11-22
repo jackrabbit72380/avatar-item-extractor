@@ -101,6 +101,15 @@ anything - and only falls back to a texture kept in its own block when the model
 has no table at all. A table of empty slots means there is no base map to write,
 and the report says so.
 
+Each item also gets a `<stem> change colour.png/.tga/.tif` mask for Halo's team
+colour: `shader_model` takes it from the blue channel of the multipurpose map,
+so white means that surface becomes the player's colour. It is white for the
+whole item - a part that must keep its own colour needs painting black there.
+
+Parts keep their own colours when the item states them: each mesh batch is its
+own material with its own `Kd`, and when the batches differ, each gets its own
+flat colour image instead of one image painting them all alike.
+
 `report.txt` says the same in plain text: the blocks, the mesh counts, the
 texture slots the model declares, whether a base map and a colour table were
 found, and each part's shader and texture bindings. The extractor writes it

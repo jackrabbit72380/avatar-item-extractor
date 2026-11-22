@@ -73,6 +73,23 @@ def batches():
     }]
 
 
+def two_parts():
+    """Two batches sharing a shader id, each with its own colour."""
+    parts = []
+    for colour in ([0.6, 0.2, 0.1], [0.1, 0.3, 0.6]):
+        parts.append({
+            "shader_id": 0,
+            "vertices": [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            "uvs": [[(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]],
+            "materials": [{"kind": "vector", "id": 22, "value": colour + [1.0]}],
+            "joints": [(0, 0, 0, 0)] * 3,
+            "weights": [(1.0, 0.0, 0.0, 0.0)] * 3,
+            "colours": [0, 0, 0],
+            "indices": [0, 1, 2],
+        })
+    return parts
+
+
 def main():
     work = tempfile.mkdtemp(prefix="avatar-pipeline-")
     try:
@@ -233,6 +250,48 @@ def main():
             return 1
 
         print("\nPASS: an item with no texture still writes its colour as .png/.tga/.tif")
+
+        # Fourth case: two parts in one item, each with its own colour, and the
+        # same shader id on both. They must stay two materials with two colours -
+        # naming by shader id merged them, and a hardcoded Kd made every part grey.
+        avatar_mesh.strb_blocks = lambda data: [(3, 1, 0, b"model-payload")]
+        avatar_mesh.read_model = lambda data: two_parts()
+        inbox4 = os.path.join(work, "parts")
+        os.makedirs(inbox4, exist_ok=True)
+        with open(os.path.join(inbox4, "Suit.bin"), "wb") as handle:
+            handle.write(b"STRB" + b"\0" * 60)
+        out4 = os.path.join(work, "parts-out")
+        code = extract_items.main(["--root", inbox4, "--obj", "--out", out4])
+        if code not in (0, None):
+            print("FAIL: the multi-part extractor returned %r" % (code,))
+            return 1
+
+        with open(os.path.join(out4, "Suit.mtl"), encoding="utf-8") as handle:
+            mtl4 = handle.read()
+        names = [line for line in mtl4.splitlines() if line.startswith("newmtl ")]
+        kd = [line for line in mtl4.splitlines() if line.startswith("Kd ")]
+        maps = [line for line in mtl4.splitlines() if line.startswith("map_Kd ")]
+        print("  materials: %d, distinct Kd: %d, maps: %d"
+              % (len(names), len(set(kd)), len(maps)))
+        for line in kd + maps:
+            print("    %s" % line)
+
+        if len(names) != 2:
+            print("FAIL: two parts became %d materials" % len(names))
+            return 1
+        if len(set(kd)) != 2:
+            print("FAIL: the two parts share one Kd - per-part colour was lost")
+            return 1
+        if len(maps) != 2:
+            print("FAIL: the two parts do not each have their own image")
+            return 1
+        for line in maps:
+            image = line.split(" ", 1)[1].strip()
+            if not os.path.exists(os.path.join(out4, image)):
+                print("FAIL: %s is named by the .mtl but was not written" % image)
+                return 1
+
+        print("\nPASS: two parts keep two colours, two materials and two images")
         print("Not covered: the rigging half (.fbx, .glb, .blend, .jms, scene.json,")
         print("skeleton.json) needs Blender and cannot run here.")
         return 0
