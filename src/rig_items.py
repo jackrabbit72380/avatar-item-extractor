@@ -55,6 +55,10 @@ ARM_BONES = (
 # into the first-person set, where they hung scattered around the arm.
 ARM_SHARE = 0.5
 
+# Stamped into the log, report.txt and every READ ME block, so a file on disk
+# can say which build made it instead of being guessed at from its contents.
+BUILD = "2026-11-22 fp-arms-retarget"
+
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
 DEFORM_BONES = (
     "bip01 pelvis", "bip01 spine", "bip01 spine1", "bip01 neck", "bip01 head",
@@ -751,6 +755,8 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     slot = {index: position for position, index in enumerate(order)}
     coords = []
     carried = {}
+    moved_verts = 0
+    moved_worst = 0.0
     for index in order:
         point = object_data.matrix_world @ mesh.vertices[index].co
         moved = carry_point(frames, weights[index], point, home[index])
@@ -758,6 +764,10 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
             coords.append((float(point[0]), float(point[1]), float(point[2])))
         else:
             coords.append((float(moved[0]), float(moved[1]), float(moved[2])))
+            step = (moved - point).length
+            if step > 1e-6:
+                moved_verts += 1
+                moved_worst = max(moved_worst, step)
         per = {}
         for name, weight in weights[index].items():
             if name not in names:
@@ -808,9 +818,15 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
         arms.matrix_parent_inverse = holder.matrix_world.inverted()
         modifier = arms.modifiers.new(name="Armature", type="ARMATURE")
         modifier.object = holder
+    # Written onto the object as well as the log: the .blend then says what was
+    # done to it, and a file that was made by an older build has nothing here.
+    arms["carried_verts"] = moved_verts
+    arms["carried_units"] = moved_worst
+    arms["build"] = BUILD
     log("cut %s: %d of %d vert(s), %d face(s) in %d shell(s), %s, on %s"
         % (arms.name, len(order), len(mesh.vertices), len(faces), len(pieces),
-           ("carried on %d bone frame(s) onto Halo's fp rig" % len(frames))
+           ("carried on %d bone frame(s) onto Halo's fp rig, moved %d vert(s) up "
+            "to %.2f units" % (len(frames), moved_verts, moved_worst))
            if frames else "kept in place",
            ", ".join(sorted(carried)) or "no bone (the rig has none of them)"))
     return arms, holder
@@ -840,6 +856,16 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
             return arms, armature_fp
         arms, rig = arm_region(merged, armature, armature_fp)
         if arms is not None:
+            try:
+                worst = arms.get("carried_units")
+            except AttributeError:
+                worst = None
+            if worst is None:
+                record["arms_carried"] = "arms stayed where they were"
+            else:
+                record["arms_carried"] = (
+                    "%d vert(s) carried onto Halo's fp bones, up to %.2f units"
+                    % (arms.get("carried_verts") or 0, worst))
             # Already on its own bones and weighted by arm_region: a second,
             # distance-based bind here would re-guess weights that came across
             # exactly.
@@ -1207,7 +1233,17 @@ def halo_note(stem, mesh, armature, arms=False):
         "export    : BlueStreak 1.0.4 .jms exporter on the mesh",
         "merge     : append another item's - halo.blend and join the meshes;",
         "            every item is skinned to the same biped",
+        "build     : %s" % BUILD,
     ]
+    if arms:
+        try:
+            worst = mesh.get("carried_units")
+        except AttributeError:
+            worst = None
+        if worst is not None:
+            lines.insert(4, "carried   : %d vert(s) moved onto Halo's frame "
+                            "bones, up to %.2f units"
+                         % (mesh.get("carried_verts") or 0, worst))
     return ("READ ME - %s.txt" % ("fp arms" if arms else "halo"),
             "\n".join(lines) + "\n")
 
@@ -1263,6 +1299,7 @@ def rig_scene_lines(armature, nxe=None):
 def report_text(options, records, stems, armature, nxe=None):
     lines = ["Avatar item rig report", ""]
     lines.append("rig file      : %s" % os.path.basename(options["rig"] or ""))
+    lines.append("build         : %s" % BUILD)
     lines.append("arms file     : %s" % os.path.basename(options["fp"] or "(none)"))
     if armature:
         lines.append("armature      : %s (%d bones) from %s"
@@ -1303,6 +1340,8 @@ def report_text(options, records, stems, armature, nxe=None):
             lines.append("  fp arms   : %s" % record["arms_file"])
             lines.append("              %s" % (record.get("arms_binding")
                                                or "not skinned"))
+            if record.get("arms_carried"):
+                lines.append("              %s" % record["arms_carried"])
         lines.append("  vertices  : %d" % (record.get("model", {}).get("vertices") or 0))
         lines.append("")
     lines.extend(rig_scene_lines(armature, nxe))
@@ -1386,6 +1425,7 @@ def ship_source_rigs(out, options, armature):
 
 def main():
     options = args()
+    log("build %s" % BUILD)
     reset_scene()
     # Halo's two rig files are optional: without them the item still gets its
     # NXE rig, which needs nothing but the skeleton carried in this script.
