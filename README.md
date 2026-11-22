@@ -63,6 +63,11 @@ no colour table still gets the text file, saying so - there is no palette to dra
 In `catalogue.json`, `mp` means the item takes your team colour and `sp` means its
 colours are baked in.
 
+If a base map or a colour card is missing, `catalogue.json` records every block
+the container held - its id, its size and its first eight bytes - and the run
+prints the same list. That is the evidence of what the item actually contains,
+so a missing texture can be looked at rather than guessed about.
+
 ## Working on the extractor itself
 
 Neither script is needed to run the tool.
