@@ -21,31 +21,31 @@ Test Item\
     colour_00.png  the item's own palette, when it carries one
     Test Item_colours.txt
     card_art.png
-    Test Item.fbx, Test Item.jms  rigged to the biped and arms
-    Test Item - unrigged.blend, .fbx, .glb
+    Test Item.blend  the item on the biped with the FP arms, ready to export
+    Test Item.fbx, Test Item.jms  the same rig, for tools that cannot read .blend
     Test Item - NXE.blend, .fbx, .glb  rigged to the 71-joint NXE skeleton
+    Test Item - unrigged.blend, .fbx  the model with no skeleton
     report.txt, scene.json, skeleton.json, blender.log
     catalogue.json
 ```
 
 ## Choosing what to write
 
-The tool asks once, then gets on with it. Pressing nothing picks 1 after 15
-seconds, so a double-click and a walk away gives the full set.
+The tool asks once, then gets on with it. Pressing nothing picks the Halo rig
+after 15 seconds, so a double-click and a walk away needs no input.
 
-| | Profile | Writes |
+| | Option | Writes |
 |---|---|---|
-| 1 | Everything | all of the files above |
-| 2 | Blender | `- NXE.blend`, plus `.obj`, `.mtl`, textures and colours |
-| 3 | 3ds Max | `- NXE.fbx`, plus `.obj`, `.mtl`, textures and colours |
-| 4 | Halo CE | biped `.fbx` and `.jms`, plus `.obj`, `.mtl`, textures and colours |
-| 5 | NXE | `- NXE.fbx/.glb/.blend`, plus `.obj`, `.mtl`, textures and colours |
+| 1 | Halo rig | `Test Item.blend`, `.fbx` and `.jms` - the item on the biped with the FP arms, ready to open and export |
+| 2 | NXE rig | `Test Item - NXE.blend`, `.fbx`, `.glb` |
+| 3 | Unrigged | `Test Item - unrigged.blend`, `.fbx` |
 
-Only the Blender-side set changes. `.obj`, `.mtl`, the base maps, the colour
-cards and `catalogue.json` are written by every profile, because they need no
-Blender at all. Profiles 2, 3 and 5 skip Halo's biped, so they work without the
-two `rig\*.blend` files; profile 4 falls back to the NXE rig when they are
-missing rather than failing.
+`.obj`, `.mtl`, the base maps, the colour cards and `catalogue.json` are written
+by every option, because they need no Blender at all.
+
+The Halo rig needs Halo's two `rig\*.blend` files. Without them it names the
+files it is missing and stops rather than quietly writing something else. The
+NXE and Unrigged options need nothing but Blender.
 
 `--profile halo` works on the command line too, for scripting.
 
@@ -62,9 +62,11 @@ way. Blender exits 0 when a pass quietly does nothing, so the extractor checks
 the `.fbx`, `.glb` and `.blend` files it expects are actually there, names any
 that are missing, and keeps the window open rather than reporting a clean run.
 
-`unrigged` is the item fitted to the biped with no skeleton. `NXE` is the same
-model bound to the NXE avatar skeleton in the package's own space, y-up metres,
-so it drops into the 2008 editor's rig as the game ships it.
+`unrigged` is the model with no skeleton in the file - fitted to the biped when
+the rig files are there, and left exactly as the package stores it when they are
+not. `NXE` is the same model bound to the NXE avatar skeleton in the package's
+own space, y-up metres, so it drops into the 2008 editor's rig as the game
+ships it.
 
 Each `.blend` is a saved scene holding just that one model, so it opens straight
 onto the item rather than onto the whole rigging session.
