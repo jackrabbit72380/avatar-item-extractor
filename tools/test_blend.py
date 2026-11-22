@@ -273,10 +273,11 @@ def main():
             fail("the fp arms note does not say it is the first-person set: %r"
                  % (arms_note,))
 
-    # What belongs in the first-person set: a vertex mostly on an arm bone, and
-    # a face once most of it is arm. Anything looser dragged torso plates in;
-    # anything tighter cut holes along the seam.
-    for name in ("arm_share", "face_is_arm", "ARM_SHARE"):
+    # What belongs in the first-person set: whole shells picked by the bones
+    # they are mostly weighted to, and carried across rigidly so no piece can be
+    # stretched or torn off the arm.
+    for name in ("arm_share", "ARM_SHARE", "arm_pieces", "arm_frame",
+                 "carry_point"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -294,11 +295,103 @@ def main():
                 fail("arm_share(%r) = %r, expected %r" % (weights, got, wanted))
         if abs(module.ARM_SHARE - 0.5) > 1e-9:
             fail("ARM_SHARE is %r, expected 0.5" % (module.ARM_SHARE,))
-        if hasattr(module, "face_is_arm"):
-            for kept, total, wanted in ((3, 3, True), (2, 3, True), (1, 3, False),
-                                        (0, 3, False), (2, 4, True), (1, 4, False)):
-                if module.face_is_arm(kept, total) is not wanted:
-                    fail("face_is_arm(%d, %d) is not %r" % (kept, total, wanted))
+        # Whole shells, not loose vertices: a sleeve, a torso plate and a
+        # pauldron are each taken or left whole. Cutting per vertex left half a
+        # plate behind to be flung off the arm.
+        class Poly:
+            def __init__(self, *verts):
+                self.vertices = verts
+
+        class Group:
+            def __init__(self, index, name):
+                self.index = index
+                self.name = name
+
+        class Entry:
+            def __init__(self, group, weight):
+                self.group = group
+                self.weight = weight
+
+        class Vert:
+            def __init__(self, index, per):
+                self.index = index
+                self.groups = [Entry(group, weight) for group, weight in per]
+
+        groups = [Group(0, "bip01 spine1"), Group(1, "bip01 l clavicle"),
+                  Group(2, "bip01 l upperarm"), Group(3, "bip01 l forearm")]
+        shells = [
+            # a sleeve, mostly forearm: kept
+            [(0, ((3, 0.8), (0, 0.2))), (1, ((3, 1.0),)),
+             (2, ((2, 0.7), (1, 0.3)))],
+            # a torso plate, on the spine: left out
+            [(3, ((0, 1.0),)), (4, ((0, 1.0),)), (5, ((0, 1.0),))],
+            # a pauldron, on the clavicle: left out
+            [(6, ((1, 1.0),)), (7, ((1, 1.0),)), (8, ((1, 1.0),))],
+            # half an arm by weight: under the floor, left out
+            [(9, ((2, 0.45), (0, 0.55))), (10, ((2, 0.45), (0, 0.55))),
+             (11, ((2, 0.45), (0, 0.55)))],
+        ]
+        vertices = [Vert(index, per) for shell in shells for index, per in shell]
+        polygons = [Poly(shell[0][0], shell[1][0], shell[2][0])
+                    for shell in shells]
+        cut = module.arm_pieces(types.SimpleNamespace(
+            data=types.SimpleNamespace(vertices=vertices, polygons=polygons),
+            vertex_groups=groups))
+        kept = [sorted(piece["indices"]) for piece in cut]
+        print("  arm_pieces          -> %r" % (kept,))
+        if kept != [[0, 1, 2]]:
+            fail("the cut kept %r, not just the sleeve" % (kept,))
+        if cut and (cut[0]["side"] != "l"
+                    or cut[0]["bone"] != "bip01 l forearm"):
+            fail("the sleeve is not on the left forearm: %r" % (cut[0],))
+
+        # One rigid transform per side: two points keep the distance between
+        # them when they cross to the first-person rig, so nothing is sheared,
+        # and the shoulder lands on the first-person shoulder.
+        class Bones(dict):
+            pass
+
+        class Identity:
+            def __matmul__(self, other):
+                return other
+
+        class Rig:
+            def __init__(self, points):
+                self.matrix_world = Identity()
+                self.data = types.SimpleNamespace(bones=Bones(
+                    {name: types.SimpleNamespace(head_local=point)
+                     for name, point in points.items()}))
+
+        def span(a, b):
+            return sum((a[axis] - b[axis]) ** 2 for axis in range(3)) ** 0.5
+
+        source = Rig({
+            "bip01 l upperarm": (0.0, 0.0, 0.0),
+            "bip01 l forearm": (0.0, 0.0, -1.0),
+            "bip01 l hand": (0.0, -1.0, -2.0),
+        })
+        target = Rig({
+            "frame l upperarm": (0.0, 0.0, 10.0),
+            "frame l forearm": (1.0, 0.0, 10.0),
+            "frame l wriste": (2.0, 0.0, 10.0),
+        })
+        frame = module.arm_frame(source, target, "l")
+        if frame is None:
+            fail("no frame was built for a complete pair of arms")
+        else:
+            first, second = (0.1, 0.2, 0.3), (0.4, -0.5, 0.6)
+            moved = [module.carry_point(frame, point)
+                     for point in (first, second)]
+            print("  arm_frame           -> %r -> %r, span %.6f -> %.6f"
+                  % (first, moved[0], span(first, second), span(*moved)))
+            if abs(span(*moved) - span(first, second)) > 1e-9:
+                fail("the arm transform is not rigid: it changed a distance")
+            shoulder = module.carry_point(frame, (0.0, 0.0, 0.0))
+            if span(shoulder, (0.0, 0.0, 10.0)) > 1e-6:
+                fail("the shoulder did not land on the first-person shoulder: "
+                     "%r" % (shoulder,))
+        if module.arm_frame(Rig({}), target, "l") is not None:
+            fail("a frame was built without a biped arm to match")
         # Every bone the cut keeps has to exist on the first-person rig, or the
         # carried weights name a bone that rig does not have.
         for bone in getattr(module, "ARM_BONES", ()):

@@ -112,17 +112,19 @@ from the body and the player sees the arms, not the body's:
   and join the meshes; every item is skinned to the same biped.
 * `Test Item - halo fp arms.blend` - the item's own arm geometry (sleeves,
   gauntlets, or the base body's bare arms) on Halo's 37-bone first-person arms
-  rig. A vertex joins the set when most of its weight is on an upper arm,
-  forearm or hand bone - shoulder plates weighted to a clavicle are left out -
-  and a face joins whole once most of it is arm, so the shells stay closed and
-  the seam falls where the arm ends. Each piece is then moved on its own bone's
-  frame and its weights carried onto the matching first-person bone (upper arm,
-  forearm, hand to the wrist), because the biped's arms hang at its sides while
-  Halo's first-person arms run straight out. Nothing is modelled again and
-  nothing is retextured: faces, UVs and materials come across as they are. A
-  hand item - a ring, a badge - rides its hand bone instead. An item with no arm
-  geometry at all (a hat) still gets the file, on the arms rig with an empty
-  mesh, and `report.txt` says why.
+  rig. Whole shells are taken, not loose vertices: a piece joins the set when
+  most of its weight is on an upper arm, forearm or hand bone - shoulder plates
+  weighted to a clavicle are left out - so the seam falls where the arm ends and
+  no plate is ever cut in half. Each side is then carried across on one rigid
+  transform onto the first-person rig's rest pose (the biped's arms hang at its
+  sides, Halo's first-person arms run straight out), so the arm, its sleeve and
+  every plate on it keep their exact shape and their distance from each other,
+  and its weights are renamed onto the matching bones (upper arm, forearm, hand
+  to the wrist). Nothing is modelled again and nothing is retextured: faces,
+  UVs, smoothing and materials come across as they are. A hand item - a ring, a
+  badge - rides its hand bone instead. An item with no arm geometry at all (a
+  hat) still gets the file, on the arms rig with an empty mesh, and `report.txt`
+  says why.
 
 Both `.blend` files carry a `READ ME` text block inside them naming the game,
 the rig and the mesh, so the file still says what it is after it is copied out
