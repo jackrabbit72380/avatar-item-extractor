@@ -626,8 +626,8 @@ def organise(out):
     Blender ran or not. A file with one home is moved; a bitmap that two people
     need is copied, so no reader has to go looking inside another program's
     folder. Anything this does not name - the icon, the colour card, the hex
-    list, report.txt, catalogue.json, the raw block dumps - stays in the item's
-    own folder, where it describes the item rather than belonging to a program.
+    list, report.txt, catalogue.json - stays in the item's own folder, where it
+    describes the item rather than belonging to a program.
     """
     for folder in LAYOUT:
         os.makedirs(os.path.join(out, *folder.split("/")), exist_ok=True)
