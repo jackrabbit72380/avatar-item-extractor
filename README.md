@@ -29,33 +29,15 @@ Test Item\
     catalogue.json
 ```
 
-## Choosing what to write
-
-The tool asks once, then gets on with it. Pressing nothing picks the Halo rig
-after 15 seconds, so a double-click and a walk away needs no input.
-
-| | Option | Writes |
-|---|---|---|
-| 1 | Halo rig | `Test Item.blend`, `.fbx` and `.jms` - the item on the biped with the FP arms, ready to open and export |
-| 2 | NXE rig | `Test Item - NXE.blend`, `.fbx`, `.glb` |
-| 3 | Unrigged | `Test Item - unrigged.blend`, `.fbx` |
-
-`.obj`, `.mtl`, the base maps, the colour cards and `catalogue.json` are written
-by every option, because they need no Blender at all.
-
-The Halo rig needs Halo's two `rig\*.blend` files. Without them it names the
-files it is missing and stops rather than quietly writing something else. The
-NXE and Unrigged options need nothing but Blender.
-
-`--profile halo` works on the command line too, for scripting.
-
 "Test Item" is whatever your item is titled. Folder and file names are the
 item's title; several items at once go to `extracted\`.
 
 The `NXE` files need only Blender, because that skeleton travels inside the
-`.bat`. The biped, the arms and the `.jms` also need Halo's two `.blend` files
-in `rig\`. If rigging cannot run at all, the reason is written to `blender.log`
-in the output folder and the window stays open to say so.
+`.bat`. The biped, the arms, the `.jms` and `Test Item.blend` also need Halo's
+two `.blend` files in `rig\`; without them the NXE and unrigged copies are still
+written and the run says which files were missing. If rigging cannot run at all,
+the reason is written to `blender.log` in the output folder and the window stays
+open to say so.
 
 A pass that finishes without writing the models it should is treated the same
 way. Blender exits 0 when a pass quietly does nothing, so the extractor checks

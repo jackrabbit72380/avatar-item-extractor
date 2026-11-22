@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove each option writes what it promises, and that failures reach the .bat.
+"""Prove the rigging pass writes everything, and that failures reach the .bat.
 
 Three things can go wrong and all look identical to the player:
 
@@ -7,11 +7,12 @@ Three things can go wrong and all look identical to the player:
     --python-exit-code, so the failure never reaches the .bat;
   * the pass exits 0 and quietly writes nothing, which is what a missing
     .fbx/.glb/.blend actually is;
-  * the option asked for the Halo rig but its two files are not there.
+  * the pass writes some of the sets and not the rest.
 
 The stand-in below reproduces all three. It follows Blender's documented rule
-for exceptions, honours --sets the way rig_items does, and can be told to write
-the files a working pass would produce, or none of them.
+for exceptions, writes the files a working pass produces (including Halo's rig
+only when --rig was passed, as rig_items does), and can be told to write
+nothing or only the NXE files.
 
     python3 tools/test_rigging.py
 """
@@ -28,22 +29,22 @@ ROOT = os.path.dirname(HERE)
 BAT = os.path.join(ROOT, "Extract-AvatarItem-v20.bat")
 MODULES = os.path.join(os.path.dirname(ROOT), "recovered")
 
-# Halo's two rig files. The halo option cannot work without them.
+# Halo's two rig files. Without them there is no biped, so no halo set.
 RIGS = ("master chief skeleton.blend", "fp arms.blend")
 
 # A stand-in for blender.exe. Modes:
 #   crash   - the script raises; exit --python-exit-code if given, else 0
-#   ok      - write exactly what the requested --sets produce, exit 0
+#   ok      - write everything a working pass writes, exit 0
 #   silent  - exit 0 and write nothing
-#   partial - write the NXE files only, whatever was asked for
+#   partial - write the NXE files only
 FAKE_BLENDER = """#!/bin/sh
 echo "$@" > "$FAKE_BLENDER_LOG"
-pec=""; items=""; target=""; sets="halo nxe unrigged"; prev=""
+pec=""; items=""; target=""; prev=""; hasrig=0
 for a in "$@"; do
   if [ "$prev" = "--python-exit-code" ]; then pec="$a"; fi
   if [ "$prev" = "--items" ]; then items="$a"; fi
   if [ "$prev" = "--out" ]; then target="$a"; fi
-  if [ "$prev" = "--sets" ]; then sets=$(echo "$a" | tr ',' ' '); fi
+  if [ "$prev" = "--rig" ]; then hasrig=1; fi
   prev="$a"
 done
 mode="${FAKE_BLENDER_MODE:-crash}"
@@ -54,17 +55,16 @@ if [ "$mode" = "crash" ]; then
   exit 0
 fi
 if [ "$mode" = "silent" ]; then exit 0; fi
-if [ "$mode" = "partial" ]; then sets="nxe"; fi
 for obj in "$items"/*.obj; do
   [ -e "$obj" ] || continue
   base=$(basename "$obj" .obj)
-  for s in $sets; do
-    case "$s" in
-      halo) : > "$target/$base.blend"; : > "$target/$base.fbx"; : > "$target/$base.jms" ;;
-      nxe) for k in fbx glb blend; do : > "$target/$base - NXE.$k"; done ;;
-      unrigged) for k in blend fbx; do : > "$target/$base - unrigged.$k"; done ;;
-    esac
-  done
+  if [ "$mode" != "partial" ]; then
+    if [ "$hasrig" = "1" ]; then
+      : > "$target/$base.blend"; : > "$target/$base.fbx"; : > "$target/$base.jms"
+    fi
+    for k in blend fbx; do : > "$target/$base - unrigged.$k"; done
+  fi
+  for k in fbx glb blend; do : > "$target/$base - NXE.$k"; done
 done
 exit 0
 """
@@ -95,8 +95,8 @@ def make_fake_blender(bin_dir):
     return path
 
 
-def run_case(boot, tmp, mode="crash", rigs=False, profile="halo", item=True):
-    """One rig() pass against the stand-in. Returns (code, argv, out)."""
+def run_case(boot, tmp, mode="crash", rigs=True, item=True):
+    """One rig() pass against the stand-in. Returns (code, argv)."""
     bin_dir = os.path.join(tmp, "bin")
     os.makedirs(bin_dir, exist_ok=True)
     if mode != "none":
@@ -128,7 +128,7 @@ def run_case(boot, tmp, mode="crash", rigs=False, profile="halo", item=True):
     os.environ["FAKE_PYTHON"] = sys.executable
     os.environ["FAKE_BLENDER_MODE"] = mode
     try:
-        code = boot.rig(cache, bat_dir, out, profile=profile)
+        code = boot.rig(cache, bat_dir, out)
     finally:
         os.environ.clear()
         os.environ.update(old)
@@ -137,7 +137,7 @@ def run_case(boot, tmp, mode="crash", rigs=False, profile="halo", item=True):
     if os.path.exists(log):
         with open(log, encoding="utf-8") as handle:
             argv = handle.read()
-    return code, argv, out
+    return code, argv
 
 
 def main():
@@ -147,7 +147,7 @@ def main():
 
     def check(label, expected, tmp, **kwargs):
         try:
-            code, argv, out = run_case(boot, tmp, **kwargs)
+            code, argv = run_case(boot, tmp, **kwargs)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         ok = code == expected
@@ -176,36 +176,31 @@ def main():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    # Halo: the item on the biped, as a .blend to open and export from.
-    argv = check("halo: .blend, .fbx and .jms written", 0,
-                 tempfile.mkdtemp(prefix="rig-halo-"), mode="ok", rigs=True)
+    # Everything, with Halo's rig: all three sets are expected.
+    argv = check("everything, rig files present", 0,
+                 tempfile.mkdtemp(prefix="rig-all-"), mode="ok")
     if "--python-exit-code" not in argv:
         failures.append("the blender command has no --python-exit-code, so a "
                         "crashed pass reports 0 and the failure is invisible")
-    if "--sets halo" not in argv:
-        failures.append("the halo option did not ask for the halo set: %r" % (argv,))
+    if "--rig" not in argv:
+        failures.append("the rig files were found but never passed to Blender")
 
-    # The halo option is the one that cannot fall back.
-    check("halo: rig files absent", 6,
-          tempfile.mkdtemp(prefix="rig-halo-miss-"), mode="ok")
+    # Without the rig files the biped cannot be made; the other two sets still
+    # are, and that is a success, not a failure.
+    check("rig files absent: NXE and unrigged", 0,
+          tempfile.mkdtemp(prefix="rig-norig-"), mode="ok", rigs=False)
 
     # A crash must reach the .bat as a failure.
-    check("halo: crashed pass", 7,
-          tempfile.mkdtemp(prefix="rig-crash-"), mode="crash", rigs=True)
+    check("crashed pass", 7,
+          tempfile.mkdtemp(prefix="rig-crash-"), mode="crash")
 
     # The reported symptom: exits 0, writes nothing.
-    check("nxe: exit 0 but wrote no files", 7,
-          tempfile.mkdtemp(prefix="rig-silent-"), mode="silent", profile="nxe")
+    check("exit 0 but wrote no files", 7,
+          tempfile.mkdtemp(prefix="rig-silent-"), mode="silent")
 
-    # An option that asks for one thing and gets another is a failure.
-    check("halo: only NXE files written", 7,
-          tempfile.mkdtemp(prefix="rig-partial-"), mode="partial", rigs=True)
-
-    # The two options that need nothing but Blender.
-    check("nxe: .blend/.fbx/.glb", 0,
-          tempfile.mkdtemp(prefix="rig-nxe-"), mode="ok", profile="nxe")
-    check("unrigged: .blend and .fbx", 0,
-          tempfile.mkdtemp(prefix="rig-unrigged-"), mode="ok", profile="unrigged")
+    # Some of the sets written and not the rest is still a failure.
+    check("only the NXE files written", 7,
+          tempfile.mkdtemp(prefix="rig-partial-"), mode="partial")
 
     # No Blender at all keeps its own code, so it is never confused with this.
     check("no blender", 6,
@@ -219,7 +214,7 @@ def main():
             print("FAIL: " + line)
         return 1
     print("")
-    print("PASS: each option writes its own set, and failure is judged by files")
+    print("PASS: every set is written, and failure is judged by the files")
     return 0
 
 

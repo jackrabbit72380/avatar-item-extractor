@@ -19,11 +19,8 @@ rem      rig\master chief skeleton.blend
 rem      rig\fp arms.blend
 rem  and have Blender 4.x installed. Without those it extracts and says so.
 rem
-rem  It asks one thing: which rig. The Halo rig is the default after 15
-rem  seconds, so leaving it alone needs no input.
-rem     1 Halo rig   2 NXE rig   3 Unrigged
-rem
-rem  No folder picker and no drag and drop.
+rem  No folder picker, no drag and drop, no questions. Everything it makes goes
+rem  into one folder beside this file.
 rem ===========================================================================
 
 set "CACHE=%LOCALAPPDATA%\AvatarItemExtractor"
@@ -65,24 +62,7 @@ timeout /t 20 >nul 2>&1
 exit /b 2
 
 :run
-rem Still one click: this picks the Halo rig by itself after 15 seconds, so a
-rem double-click and a walk away needs no input at all.
-set "PROFILE=halo"
-echo.
-echo   What should be written?
-echo.
-echo     1  Halo rig   item on the biped with the FP arms, as a .blend to open
-                             and export from - plus .jms and .fbx
-echo     2  NXE rig    item bound to the NXE skeleton - .blend, .fbx and .glb
-echo     3  Unrigged   the model on its own, no skeleton - .blend and .fbx
-echo.
-set "PICK=1"
-for /f "tokens=1" %%k in ('choice /c 123 /n /t 15 /d 1') do set "PICK=%%k"
-if "%PICK%"=="2" set "PROFILE=nxe"
-if "%PICK%"=="3" set "PROFILE=unrigged"
-echo   Writing: %PROFILE%
-echo.
-%PY% "%BOOT%" "%~f0" "%CACHE%" --obj --out "%OUT%" --profile %PROFILE%
+%PY% "%BOOT%" "%~f0" "%CACHE%" --obj --out "%OUT%"
 set "RC=%ERRORLEVEL%"
 if "%RC%"=="0" goto :done
 if "%RC%"=="3" goto :unparsed
@@ -248,21 +228,7 @@ def write_reason(out, lines):
             handle.write(line + "\n")
 
 
-# The three things the tool can make, and what each one writes:
-#   halo      the item on Halo's biped with the FP arms loaded, as a .blend to
-#             open and export from, plus .jms and .fbx
-#   nxe       the item bound to the NXE skeleton the package ships against
-#   unrigged  the model on its own, no skeleton
-# halo needs Halo's two rig files; the other two need only Blender.
-PROFILES = {
-    "halo":     {"sets": ("halo",),                   "biped": True,  "strict": True},
-    "nxe":      {"sets": ("nxe",),                    "biped": False, "strict": False},
-    "unrigged": {"sets": ("unrigged",),               "biped": False, "strict": False},
-    "all":      {"sets": ("halo", "nxe", "unrigged"), "biped": True,  "strict": False},
-}
-
-
-def missing_rigged(out, sets, biped):
+def missing_rigged(out, biped):
     """What a pass that reports success should have left behind, and did not.
 
     Blender exits 0 when a pass quietly does nothing, so its exit status alone
@@ -277,34 +243,30 @@ def missing_rigged(out, sets, biped):
         return []
     absent = []
     for stem in stems:
-        if "halo" in sets and biped:
+        if biped:
             for kind in ("blend", "fbx"):
                 name = "%s.%s" % (stem, kind)
                 if not os.path.exists(os.path.join(out, name)):
                     absent.append(name)
-        if "nxe" in sets:
-            for kind in ("fbx", "glb", "blend"):
-                name = "%s - NXE.%s" % (stem, kind)
-                if not os.path.exists(os.path.join(out, name)):
-                    absent.append(name)
-        if "unrigged" in sets:
-            for kind in ("blend", "fbx"):
-                name = "%s - unrigged.%s" % (stem, kind)
-                if not os.path.exists(os.path.join(out, name)):
-                    absent.append(name)
+        for kind in ("fbx", "glb", "blend"):
+            name = "%s - NXE.%s" % (stem, kind)
+            if not os.path.exists(os.path.join(out, name)):
+                absent.append(name)
+        for kind in ("blend", "fbx"):
+            name = "%s - unrigged.%s" % (stem, kind)
+            if not os.path.exists(os.path.join(out, name)):
+                absent.append(name)
     return absent
 
 
-def rig(cache, bat_dir, out, inside=False, profile="all"):
+def rig(cache, bat_dir, out, inside=False):
     """One rigging pass over everything that was just extracted."""
     rig_dir = os.path.join(bat_dir, "rig")
     blends = [os.path.join(rig_dir, name) for name in RIGS]
     missing = [name for name, path in zip(RIGS, blends) if not os.path.exists(path)]
-    plan = PROFILES.get(profile) or PROFILES["all"]
-    sets = plan["sets"]
-    # The biped needs Halo's two rig files, so anything that wants it without
-    # them falls back to what needs nothing but Blender.
-    biped = plan["biped"] and not missing
+    # The biped needs Halo's two rig files; without them the item still gets
+    # the NXE and unrigged copies, which need nothing but Blender.
+    biped = not missing
     blender = find_blender()
     if not blender:
         print("")
@@ -321,29 +283,13 @@ def rig(cache, bat_dir, out, inside=False, profile="all"):
         return 6
     # Halo's two rig files make the biped, arms and JMS; without them the item
     # still gets the NXE rig, which travels inside this file.
-    if plan["strict"] and missing:
-        # The Halo rig is the whole point of that option: without its two files
-        # it cannot be made, so say so rather than quietly writing something
-        # else and calling it done.
-        print("")
-        print("   The Halo rig needs Halo's two .blend files in:")
-        print("      %s" % rig_dir)
-        for name in missing:
-            print("      %s" % name)
-        print("")
-        print("   Copy them there and run this file again, or pick the NXE rig")
-        print("   or Unrigged, which need nothing but Blender.")
-        write_reason(out, ["The Halo rig needs Halo's two .blend files in %s" % rig_dir]
-                     + ["  %s" % name for name in missing])
-        return 6
     extra = []
-    if plan["biped"] and missing:
+    if missing:
         print("")
         print("   %s not found in %s" % (", ".join(missing), rig_dir))
         print("   Making the NXE and unrigged copies only - put Halo's two rig")
         print("   files there for the biped, arms and JMS as well.")
-        sets = tuple(name for name in sets if name != "halo")
-    elif biped:
+    else:
         extra = ["--rig", blends[0], "--fp", blends[1]]
     # Straight into the item's folder, so everything it makes sits together.
     target = out
@@ -352,11 +298,10 @@ def rig(cache, bat_dir, out, inside=False, profile="all"):
     # Blender exits 0 even when the script raises, unless it is told which code
     # to use. Without this flag the status below is always 0, so a crashed pass
     # is reported as a clean one and the player gets no .fbx and no reason.
-    shape = ["--sets", ",".join(sets)]
     result = subprocess.run([blender, "-b", "--factory-startup",
                              "--python-exit-code", "1", "--python",
                              os.path.join(cache, "rig_items.py"), "--",
-                             "--items", out, "--out", target] + shape + extra,
+                             "--items", out, "--out", target] + extra,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     status = result.returncode
     # Blender's own account of the pass, kept for when a shape comes out wrong.
@@ -378,7 +323,7 @@ def rig(cache, bat_dir, out, inside=False, profile="all"):
         return 7
     # A clean exit is not proof that anything was written: Blender exits 0 when
     # a pass quietly does nothing, which looks exactly like a run that worked.
-    absent = missing_rigged(target, sets, biped)
+    absent = missing_rigged(target, biped)
     if absent:
         print("")
         print("   The rigging pass finished but did not write:")
@@ -400,19 +345,6 @@ def rig(cache, bat_dir, out, inside=False, profile="all"):
 def main():
     bat, cache = sys.argv[1], sys.argv[2]
     rest = sys.argv[3:]
-    # --profile belongs to the .bat, not to the extractor: take it out here so
-    # the extractor's own argument parser never sees it.
-    profile = "all"
-    kept = []
-    index = 0
-    while index < len(rest):
-        if rest[index] == "--profile" and index + 1 < len(rest):
-            profile = rest[index + 1]
-            index += 2
-        else:
-            kept.append(rest[index])
-            index += 1
-    rest = kept
     bat_dir = os.path.dirname(os.path.abspath(bat))
     with open(bat, "r", encoding="utf-8", errors="replace") as handle:
         text = handle.read()
@@ -454,8 +386,7 @@ def main():
         # A rigging pass that could not start at all is worth a code of its
         # own, so the .bat can keep the window open and say why.
         return rig(cache, bat_dir, out,
-                   inside=os.path.abspath(out) != os.path.abspath(asked),
-                   profile=profile)
+                   inside=os.path.abspath(out) != os.path.abspath(asked))
     return result
 
 
@@ -927,126 +858,124 @@ ebxw1@7}?yySQ(lCA)o3lZ(!|Ks$#(+_W653ykh`@)RLB<cjG==8xs1X8X8RFbIDeJcP`_o)ShRP
 Cqg*<Cb{)V&yX6k1$SU|QNP%mk7H$phGMm;fp-knxCv4{iE*cZ0u?uCS*co(R(%DD-_Nc!|5DNUM
 y8oo?^w01y|3Km4yZXRkjPXdCtq4q8|Q{^8%p2M7ID(8dQxkIfhM-yZ!1AvbuS82+&P2ixgc?R?e
 k;ormk$6qy9_chb6nrZ)$cJ{o}IyyM|%xQ_h8}`g%NBfUue7(c{?b<m|3uc06@9|dx=HA|x^E&jk
-bI`+Bq%^O?gYDW8U(j&Rg7fbf(2=*H|F^p*ZEo90_OGDqauvCu5Z;oQ<yM?TZ`WH+^2*M>qZk$n5
-+Rv3L@)$tiFWzFzdq-{LBe9*mvy;p5SZzi>FMd|>FMJMJ-V#KG$EKfbkUFym7>Rtq7hL}uXj0OK!
-b~hQ`S?GmI0hoz02{X^r+kKH3Zc6d&H>i4;4^<)O3vv{2s~oepje^FzPo1q+~4>Pe9VhcIoUiER7
-3&dODiU%V+{py6h^TUehiqarbmET%tF)><Lx&o8rlkH%(EmKk5pe6yuFKq|!H!qSqZTT40xO3BCa
-!rSBdu)l>SU6yD>SCv<91jq>ieE1ao+K5hs~iM-E*bU7UJ@J2Gc{$<0->yLa$-OCGxbZ#IuB+dTV
-gLDeYmB{;yms5s!Q2=$q_%3}=Ck$}VH8KuuO_$1920bN&hBP(k`H;?g=K|?mAYBX^Lh5^vhQkX%R
-PRFj)R46dl+OEH^OWHY3!qLI-^d4b$^ezp2h{dxbWV)#axmaMsyAxdr}F}!OQxv7P(+SiQ{FPTC_
-w5D7*bDI%dqJVGr062(S87s`eQ-U`JkzM+4Ujy`-JfG^YP_ZB7E2@;)x(#jJjVtb;G^~sZ0dD^M-
-Q9P^ny`!KYKfa9D)&WHK0zilClM2g7jz)Cq)eUI29hC0vwn^<+}G^g*3K3nN46gpqM~*ej4iLrje
-fp<gf{KFc|jFmAZTj0~Y)GNf*|KnUZ8cp53852?WDocCUb4u(x3DWMN}8TW>~V*0$jcL)83D`uo*
-K4eMi1cWP<4@Uy&=@?fkAC3jo(^0NeKIC2Q6r3xSkN8;sbfk}!$VaTV81N?k^*A4!!)KorAcM;%q
-I|4G&a8Gk7>=HZ@v%964tco<3;ue9kCn(-eKi`6nFDu)nT&c35Bp<t{1ke6I>MF6M@&wqVBDNPFQ
-ijXN4XOD=u+0p({ZjuJ{BT>GSbhxMrBKRJ06oL#uUL6xj(*7roTT!U8`zuZ7zDg2l)X#n?<90MjG
-9~E#9Haf;_|f!ffTHtGZ3IY!kFdE86z%*Tp{Mdc6<vG1Ttl;VOA>)1l%WkW((ZexG1sS}i3BP~@H
-oN}*9v^0*E2n`D*1uQW|4<CLkHE>|B~0JWmd$7S*mrSU%5n9?y+{)k3cP{UTp*141jQKyWNmRk4#
-c)a@Q)o<p)8F3=^ErhmNe@@pNjKk$BuqtBh4qchpT)IvU-3mQ7JpBQWf8g^&+t07-fOa#5;H3*Eh
-6zy@A5nvZ&flK_T?Cl@)@HtK`!y+~3M#X)3up<Mp>E!dLZ$hQNsGS8B;g8a*O$2_D3zO7%s#o??k
-PJQzSzdglrB4S7oNGH<WxF0@0b>2y=_F*`xY-th4cuwVWHmydg_efo1kTH-CC_b9$aj;+YK!7zn8
-1J7T&edvg5;hyInw<$(o8k+V#^K!H)>qk6<<<>`a8ciT<FU&1QFb8+6f}jX_H09qL0V=?=b}Q5WW
-+6rajl{y9HTVV7fC+SLjW;D_OK#wAxY$2%=F<uyPTa;5~$`G#{Ga4~wr#i&jC-3c;GDp=cQy%jQ6
-!#oJnDffO}igBo2m=ts97EKs$;|)N|+0FE^rS&?&hh#rZ<NNCc8m9n>qFEBLfiuEDJM=6^r0JFc=
-a)jeU*PYfL$fM0uMiq>uU~)o=hcsvf2G-7%ikI%n2eGy^=!7@<sCC;rZnH!hWMs#Jn`l(H!(%v2L
--p=!vcZFnLdQne`xpY4Aa_v6Z9r?#09^g0LfC4O)QmFO8Q1j{%ce5{{GAu6!29h_6Oeo0$uHpwSf
-DJ5=KtA)Lmk)SnVIEaZO2{(e4tfyytfGC+<lGV!1L#V!_Xt=_F1w?h>$Fe%P(F-L@nRCRA7>KXE#
-tm%O+U4PG`R%;GvF+|DXU`9YGr5_Sbi9l|W(g&z?o{6zTRM;=&_jWEt<2zJ(=%;#Ry6a>9soyhN}
-LBEhXj{803rpP?QWY{dUB{MKD$N%*j=pAl=r>&*|`glqMGR=O?IRC)ueDg5hZkFp7EM~M)lSn0K#
-#KaKn6J|%CPMAlbiSqDa$}ShkMiB+7Ti%XBXdz|7(3T)GFc^~-y%jdusZe6u6^Vsu(hLEkjbDYxn
-^h3pSdQ`)iSmwr2&mdpfk)v`PjofI~U)^xEJq{m!U9_w{VN1*aT`JZFmrE#u17Yl+wNvJj5XWEy$
-lJpW?#xrQerSAxKEBVZMomg|V@cLj!e|U~YCB+DTdXtgt7=1~K<DK5J6i<Z+o(7)L*Rx}Z_H8yV#
-oF*sdbZ(=l>2+=}Q#(|RUlt`A6flKOglaqVmrsTjkD&!(flJOJL4Lz6)=UPNM5ib@@!j5#xCD`Db
-;y$^cec8k-niG#ax}W08a^{Cj&m1@*d4VB1p>4O|QNYa)3r=&+3L#vmXjd*G(?_K&@sTx`J$p$rI
-yDvOJch?mz2JaO-~9aYw|~94Dls1Eic`z$B2I&v^PHXh$CxJOI%Z>8$o77eAUls1%Z<Ox_}n0yI9
-uwlQBL5bu7@|~SB2F!Eiaqy8RZn)9I`%BIV6L=XMX1FBP)`np;Z?6P_R?NyX?>ouj34eMiwo|8px
-HC)lG&O)<Fi_ZEw#mkT=5`MnkXET_kq&Q?g0q_0Pr3*<!aUE>fG`-S(YRY#Sk9=4F`R37Gn+<>@8
-%3?P2~;uw)%zb_VrSDwYcV3-YHxd=^lF5n3L*YA&u*O<<$eue=A><8;KzDb~kZ*g2uG*8xrH0*_$
-MyTcNL4ZbG-z^?ohuUv@((wxn7>rV}of@`eeHVXB0yQ*tEmbv%J2uef9QTK2rCpGysh(viY(pBs$
-UTC+MypHq9^1Bx>JyW{{g*6=0R@O?Ot*(;btGs4ISIB|gyKU)7ISc%S@Xet%{F~(dW@%cg{Dhi?4
-IMtgrYw0O<d!c0f<Nr)Bdo@wq#&_AC~rY=xfA1Y2hx5gPZc2*{vh&HLR8YMI6CEAL7lzd8aD@BnR
-XNGnc7WFxet{ihGr8FN{)IRUoFkV@=Hw;M|E?uKn}X+kb%c=28?78o1yK*u-DJWcjqCw2S85EB4d
-al7+8#(m>9_%Y#T1X4g5f;Uw{h@%{1!0~yoNolMGCGB{e8#PIMpVAZEXE@TN28;kg5i~sA8G~sx8
-5DTDBWkH9xAt{KR)K2`(3yxGczyb*(QsXpj#k6$;0sM6J_Ug5JjIG&QOFa=@W@br%;|eOc*)`P~a
-uc)eymkOIMGj<3SB=^*)Cf}7qTC?A4_6$;n$B?Udm3fwqnTeUW9Qf72Cl@T5@z%+S>C<d7Nlp_uL
-b=M_Gi1bnBDSbNLJ=*JNupW!ax!66BZ`ZbQ3H76+ya1j&$~kA)qO*TM<9z!Pz5!{RCgb;B97k7qT
-)k9wzO&s8id)+24ZJCswbv$$%N8;F~zbkgl0ya?c*d+bmnC%8}IEp*w2v%yMW6B)-k^F@jTKit|+
-WDSRbbQIlxno_UyC!HRJAxIfWm-@=ugJOagpFb4bM(fzUKWzH{j2^bzQ_tz<bF0E5#R1c!#0_t76
-s_nI^wz<9xf+<6EVh77(nr#9u8g!fh)Hr)27W^fs@<nI|-%<lys1x*(GxdAFUoN6YiUx%pMqM8@?
-l$}lcdqIi0`7-h3u<pc^$vjQ9RX!0qhk^AX}NBB^U~3}&SaQ5#f}I@yBLp*2HFM$5#~CgWW=8Ex4
-r#VqvW>pqf=q3I3yYF){EGNr4U&tM}Mj<ub3BM@77&5<Xh6>34IX`ZcF=`L*ab2(`3#&(zEuTcZ4
-}3&l3(pBF8q^n_wHb!+?Q#OOJ0w?^AMfF<vdiPEcptp^J?+t9Q62`yhBn7ln@c%P*EX2%J;XQMCG
-JLb}?}!@KJ;Q%dr~?aWMtIpu!Wn~^BZ0G~iu>wOEjpt(Kq-uuTU1vx<(Fb)<=jNJ<_K;T383rBgp
-%M($gT$}Cw>xTMgkHMtAV32mZqg9}j4yOxrmAXlIadZM_VpW|@{vcDn#bRx}EDerlng4;xQ7jaiH
-#^u67p~AF1^<ey>#{5(Ro)l~v9LhR9F}gRkUjPAp-^j)ZClh2WJRXU0zOQgmRy(d@ctt0v~A;xFI
-+ReRG<@y$M)NF2S?l_pY{u@M(`Ru&?3isy!b9&uJWztj+q4@)}*PZf8a=_auT{@8qwefq#)?;)`4
-~#qobW{)aX>1CTHj^yHJSt8MGA_q?C@{-}1dBkZm3)2_SEy%rgtS;xWAqQwlocZZY=;dP^>rH|)Q
-};8x<hxyc@KcA~rk5suG9IWAr9b}ma~vs+aN6%M1QVN22&<;j@_DRjG~h2$GL1h0wJtSEVp%X)cd
-iMWWlXP=TJ?`a6BfiH^tV}ea_!?VgQE7O=AZ{lVYUeeVh!~foHd``NX8}f^Uqb?nrT0XOo-Lc6^m
-h(zsU(_*oO6***8nR-mT{wh!SAOwwGogQBn{Ll0c16tH%kEcn3<nA&)<CY1*)3*&Ph!k-#5{75!P
-1Vg?@BNE?*1N$9VoNsTz%_j6c2d>J#y4U7NKY$DQO5hJmz|*vDz<27fc9tI_icv;6^maf&4;cEH_
-Sv$X?j>c|G^0RJg$BnFdKWJrCo>qBWD*=bJ49;9Kqx9(mtf{pahKKVCTjlw2Y+7u~v6YUOk;87+A
-}oEpBgPT!H{R5Hq7_ghjt2M?&ccGeS|jI<AMR!4on)K%dY;K`}4)N>ZQNL*ok0m@wqz6Yk$euY$p
-XKPx!?LSp$0<lRVeaME8Jd$GSJ*<qHZNb%7F^iK31EN5(KJ!R4_vk;2mpyxS70$9WOdfqHN|~OO4
-33EwbKUmnIP=-mo3Pj*vrU4-F;F75rAsm4`Tf~<&!0aJ{&Ds4r>i#sJhE2iqTlWE6Mg=#t2b|7{r
-Zdje(rqy<=3CC-twoiL6COE8aq^U$~`m~@+UOOJv$APzl6->RhpFIbjg0!t2Eef#4U$Apa3x~;}1
-g_S=U@w=|Lz{T`L_UfQVm&<J-gkFol;*AZQ$p9$3_25iF}tpyoE%b37f>|9koWQ-OoyP_PjFznA|
-%$^Q>V5ll1wjh%8>#aC}$y?pIY-8~L{8K;q<QVb#;>T8kSIaalK%jl;Ncl7&(W1UrJrR2~E#l7}u
-q`>UBM_4Rx&yiQpY+F_@>Cex1s#^3%RErKE@!wwk=n(SPhzzs|7?gdcpG>+F{$`gs{VWO=o;>qKR
-n`Ce`7K=+vhcM69wR)5PG+$9H@Kg24@KWiF$v67uUTqpsPT0h#R~aZN<_c~U~LQ@2d%ahakxlRk!
-gOafTbh&K4_I>EoZ4puS|Kj<1#3Jmo8S7aV<Z2AuV|)ccr*ii)Z&ilsOI^%=ioaJ3nlz=aGf<OQc
-^|X$~Cx?ljTv90I#ZXzXlSFq`zt_F_7of<)sCbH;}=9uUZc^J3;d+^4mC8;*qi8d&CzicWp{7C_E
-=bNAXyfOUD}K+9lx)8jY2Hj3G{x&y0MA^Qn5I2sC+lAu@M8r@?Yec^HaD&|hK8mh7k88SZrM;79G
-G*5f;RAlPK-LGr5yskOdFx%}Oso66%dq-+2wv4E%NRt=tM3J7qLggFoKJp!aD*rvIqb~&#*-_eQx
-;CH?dEUYVaDM6HF6__5?js@>4-jVnH{82DuCNL!PCi+qce{Z;I1+kkzxWOI&R_oix<c|<XX*Zqui
-Q)6k#D(oW1p?f8CbrD_!0#B1zmgjD8yvBSOu5c;P_oM8lGmG6`Pz&lBtdh<*b~`u)HXk>=$Kmoh^
-M3(v1J@&gZ(F@%G*<V0h_Xs|1)w@&5~*4BGq_Jb}RxFOUYVe))-Kzg=fH@lddvi1VA}lHOrpIJ^l
-K39!zVf?tFb#|xVM9m77cTtgi~HNL#{l-zu0O?R_$uiC*Ggv}nWYMb8B9{EEVaqD*PKLM037IOw9
-6<+)?i70NCAh}?lBsY2i$JPq=*)F)j^basA9C3{7s6dp?(gj=OQ!e8K_@Ulf>YA^xWaD{go49J^q
-`(2GxzHZg7#VnPVdmgFx8`W-5;n)f{zzgXj#QRqn1FeceMnYe@D|N7OlLKgooMYk4zZCEj-#{@OW
-&=~8q5h)b)S*K51YWCk|ZC-w;&OtH9{_eAu5|mPJnrcRoS=M(e*-*Cpp?&i0Db3M?Gs&rS_xVPRn
-L%{P{zYti{;FxABN6G$8O+y4!az`B^boWBEoK8<iB}2W-GSf(j4<KXG+&HI{UYJ+eH|IGLM$#l8N
-+eMn>&=Me_yMw}GQKMYFM%wxHV)6@lasD}r8S?r^~;%RkPFK%ZQiQYp%`YWjud;repuc!Y;dJo?3
-SmkZkN{7jCl{se(hajF}2;t(T!m<#pLaJ>Zn%X<a3uAu(M1%uoQ<tJqw~jy%#*+etO6EQ}YPn^qX
-yTjjKiE#veMFaoQMSgaxF!6@5C0Rr{qf~%Os@30!oI(LZ)5Y|&uX#rMKD9Q-*$|5>Gkn3-lf~y;v
-l5}>$#w#e}DZ$v+h-($8^n;%4)fL-4*|nNuSNjr4_uWag}~`3m|4ohi!J35R)h3cTd_9U{aNx+wA
-1!K=;_y1aFqyY3sq)*8V%L2CK5}1ph{BW9F0X{7+mYB;Q16yen-<oMl}U$0gl^7Q$o|yx85ZZTw~
-~(;=PUYCG+>56i$O?0qzc<cwkOBRlAC?D<tVeg_pIMbR2_;u#wA`r@O)XP*SD_Z97AblXuZ!KqE8
-1pX+MKvgwT3znKu;N;fFI7Q?0p;%AhFYGA6(BktFAoYH22uO=Z$u5PnSP2}h-G;EJY#D@}9}r5N8
-K{VTB@5MRwT9Id6Hr!Y8-1)QpKUv)^t=?c{y?iUcPL+cLj_<#5?&ZPfV2a|5sEQ$gpO9LyHcmoAS
-p5kEqj9ScX1_RY-$+uA}GV*0g%}=RFiMEE*eIKPat_^MJ^2ZZK|U`c707*3|L7Xzqr;IY;tpSEmk
-?4>%~&leNuT?zT<%B@m#w=%`Hu7RD3;S$~YHOmG@GWnBj1~$5u+={;IrO@SeXR7;9ZrMXEFh?3j8
-QxnL+>wE4J!4sCT6^EF>bzU7KKz3X5)at}w?o0<3n&dc3W3hY$2hF_iA#RI#r)1TSr<5OP?<#dXu
-1^qNa`O*ZsyN-OEX?=C)!0B+E9ZA+fX4Dcvts|~A@Q|aSi7QPPm$P&E>{wott0F^YIj!zy&$u+wp
-Gob$FFl)yKlPkF1+0re0W1YhHgKDOMIU5=+FDWEglCS`p^kr2d)Z)?l4+6DbxgFb;i>oMg~Rf!u|
-(Cadb?VVJkkpqN^nNeQxMgtAZvSGXpaY=xqkT0nAjWt;Gpc1u2{k~bH=uC`e&jVY6L)3SX0f@HK^
-BAE}|WpHv6>Pt{ZM{l`s{p0J0WN*O;6<2ejovDZPCN%yzjgQf147Lj}Z1?I^VTT}+BkGdrpgE;?j
-74M-i+#BTLrl|8IV2OQ{165j_mS(@!O7zg3D77hte_iGiOFts1*ExBrbWDF__I&<Et@&fDxpTD%_
-l@%;$5Zwa}6qB)3=-n+dL=B*E`4;BDAqMi60pmD_>+QZI-zcXtVHj~bF^N6U_spi#$hXTh4Pa2@-
-e$byc)51)V)o`;uu75zg`OeZ@HGRmE0e?7FHF!IPGu7MdIcDT=kQcysLrx*subLZU03!ZfOgsWvV
-v=Rru(S2&s}{ZGwCAWYR0F&v7EI7?OIn8I_i>LqGSnxPdPC?m*-V6bArasJTF8Q<eRm9C7TvJ67f
-_bjrJQKWmvuvRi(@|?B#73i0gc3PNKd}dc*uva6p`PT5^=Oy%TrPxo>w*Z!6}2>2gc7UzK)iU`!)
-(IFJEnfblquQP7V$YF(E3Hp)KO01CVsFy#Zzu~{@A!0b=~&k2FletTkOy^tFs3|?)G_tkS)Kg$%e
-jNGt$w-)9k4Y3KlAbzC?5B2}33A`ppXBg*FR~H_pIAE9;;;hhlC)Ew#yX?~R%%r^0@KlsNCsC*LE
-ow@TcyDhf3M&pU3KdK%oA;s{@O74PA{O=gMc=TP*1!X&`k{n8fT?Vk0zvCd5506*g1dW?SGydez4
-?x>$w#|YxAD;hCjR}#-zr!X*WFR0ka)z8!uw*+;dZE<Qlug3aLesu!4l_slf)kk!D5B-3fBxpC0B
-pD8{_9$ckXqab{Y9F;~~%OdSdl+r3ZXHGL7G5(Vx1E?+RQ}hxonr$3bTv3A%Ww9JUPSn&?}7^K%`
-MYY_g@Sq@l)yeG+VkMovbPM?+BQs&!iy{0WGfhi4o;cyh(o0Z1!?j^GnI%IJwD0F5dY6N~pzj%A|
-5=aF*RIscP6xQ7+B57(PT{#Yj`wC~`f@NBT>Z$h729iL$OSe-Du2%4QTJQ}oaYMl}WgL^9{gseVx
-8EVYa`ZfX5%xjW=#a;&ZdWd8G9l9RcNBIpMx3D^dHBX9B%0XX+;j64hutc#Y0Hb5y67N8%~wQJAV
-5cLRcxjn;-2W0pX;J?T=tpH&Ri$mj(F|6u%Oh3_zu%YW$4DcL`NaSyLUZf_`i{is6D_pGj|tYZcD
-SUhC&qC4g`0A0_h#HcAf6na#p&=am)-K+4Gt_oY~jQ`xr{>N!JIus+jmi6RAMQBsh`rr!K=Zp43w
-LDY0gtuG0<jse)G>-PuYKN|iw8J8E;6JCyjVK(hp1zZcwxEF&$&z|b1lSHpD0|3kk;I19^_fS42s
--@R7jh($&wp=_2#X+&%wL{O^Y>rSUC+odC@4IDy&wMfTO)In5)F)1_mcH86A)UleAE1yQNLlY}9i
-9edSw~-8qS2gqlO<%;qhE@xivv`YTyNSu~h0;XA;>+n@G{wn*>3|@1oyeUTTB}I>Oc0ET2T(Rbe^
-YRB6<U{zj>+9fISrSNn;LI7h<)9ATxis3=nSsX4Q(+poUoF3sTqw^MurJy?j^F>q;ywci*Ts6s*K
-*&`=m(W9Y1^wP*{gnc}T!umD3Cs){1|%T?0UJ4k`#sm9}ZQt|+CaZv>z2j1NPnA|Cn4!E0jWW$(C
-3Q4xfnyNNwjjt>iRA*qd<%oEZFUH)<)I_g+QuYp}e)X&~QY_J|JR5=lGBGv`R?c-dYDwSN6{YxU`
-O~lR%J&<DB=Qv@aHO=w&Ha0*jV$8<ddji@7Np@=Mv85JAwdm50JPl`fCyw+sHwcsaYI~nu)iUpQ5
-^k$ge?v^$Te}%ZJxN-q2d=w3z~*kf3NCBN!|mgifPUr0yLXjdsm7m)sPFDuuxCbg!<ws#zlljl-5
-}kIdv8eoG1w9N*2^1W#fxlrO{%h7PGcL)6)Q*iB}g!w>D5Ss&q>k*Hi7wBMeRkQR4JnF114&=k()
-`PzK_?T-Mm#VoEHvbWa=$_;$;BLZ;i@LVSYl=2BiC~U9q4fO)$cuxvo&HROLmd7>LDiV+^aK9jx#
-_DF+y1NL6i6JCqKVgix|~)WD5ZG<rjku3$=O$aRsbT@r9>urwgczkUFP<NE<K|LW65Mg5Ap6)_pP
-j;A2*vN{-W8j)*G6tR9gBKy!NGA2dOO=ejpdX%Hk`yXBXIh!=uBP#{#OUfsnvqD$_X_n$Mn7-{9W
-tES)-~yQKO+wTIQWga(*JfocVU+-@bQBu9^I*_o{MKsIG3fzayC0kk+3PsZMgPnO%lYmGj>Y-yE)
-7-uh4oHH%-F_^LVrPeUrLewW(VlKPc%(BG8m&JfOd%$($HS0$bw)nW%-x?1LFuGJp
+bI`+Bq%^O?gYDW8U(j&Rg7fbf(2=*H|F^rR|83hy_Fo}d1dy&Wt8d%t>Cm+GyUQU>AClhtfGP;IB
+|B<pQ5B`wN|68k&F6lRlxVB(mkWY~B6nwZXJ=+-XJ>Yv(WA>!OcR2+Ll-p(Q7L-JC>jvubUK#<2G
+qN#Ib|IsX&Jyd)w>*CN{`yzPE9~vzekMPZeIa)2X%R@=l4jyciTeMy+OAoASG+5cmk3Jwo7NHVQC
+oj>G^0nFQN%Z>9VbWI(56G#NE-saEVUuvLjU4t&1l^-ZVv>?w~DrQjFJ@kV@Y?icY)7Xn|G2CHNY
+El)gL6s;BfxDZIlqPv}&y9Odm{TO?EWd{`5d5_y*i>9RlM;SFSX-OHMj*B$tf+Lsp$>D)l7Nt)fE
+2k8`)E0K2@FQ*LeA^>&5_%3}=Ck(LHHaZS1O_wTJdL1Q%nl#nx_>j&!=K|?mAYJroLh5>u`uz(*R
+OdqbR8zF{l+L?c^OWKB15hW7Z{UMEWq?ZQJ!*R}I48k(+3WEd)fv?7(|G{sk}0a!7nP$^SGM#n0!
+ZB+L+XfV>DOIhdY3*VS`PqHcPMB&@72{W+diajmk@q_KD>M)!uy>NPXy^=(0=OF^}8OVA`x`XYw8
+(&rE<{*pHBt-ehBH=WY8akpq@<!{b2y=1VT6uK%GDd7X@5Bn-ng6P$$sBz)(72WZ3R^0#c}nsevK
+%3kJk{IfoL4HJ6xyA@oaz)NTiaFszBEff9P33JlJ9?RDs&Ul)=RdY{?2(`Sz9^77v9b!&3WK*_w%
+n$!shS1Ruh1k&>{u2kM13aIC!T&cXztK2C#S1KRyw*L7@A1aX#*ly9|Mf~YFADYc)mkl7j%V(l|s
+6@`9cG&9=o{90H*?#t!T|@*w9pOVIayDNL`a_n$Z4oAePR-5!&}=`2o}Q0zCGr82(<vA?`_BvM)b
+mlUL_W9_etAC5mB@!e<j+R>dE1z5DR0N)VwPZvV7j?KxnGQb`wDHXYQ43&==mJv2aIeMi|!d&bR)
+NTiw+C&49^R*m7A{WHqEk4)F7*9(>q@m|B&nTKE}sbyOYPO#e<s;70-a2a@qCo3rtL_r6d80oHIc
+wbShdrZsYuBv0A{dG+j`}DN{3Du0AvXYDt}s%f-ViP4<h8DV;#&kLZL2HEe}!olA)rZOVAlQUf0V
+k5@mv`qdmbBTmG>h0r$XPU)C~akyMX)<mq`p(7KUOV`PvTVm&ir$6BF4}5-T`uTMo&~By>Japm2F
+frQVXVf5}^S7^nE+Wi+Yct<A{hD;83L3Mq3+M@%p>5v1g-Y`qlNEiFNx~Jft}k;<P%0;}n0<1&-B
+Wfre6dZIDIIp^E<AHW$*FX1-ZL#GdfJGl_bncl3h5DU<DlOJdhCqho2X$=-5QNQ9$aiTn>9S~zn7
+!B2A;JM+wtbT*$j|ovZmsXX7#kr;KvNwpTTU-uro94&Fl~QS#Nfiw^1A2*%+i`-l0AelJ4Nk33Xu
+_OYyP1<)7076?QqMrCqH60sb|d&bZ`==6I)tro0B|K+cq)Ip1)O11?5yxEQrbzgtm;Nd+t0toB02
+YM2LMJm%g{3wIo97e-+Y-Oz>cHrW8QoWo2X8(OaweOT<rX>xx(N9PnEQFKcpF>pp0XvUuBh&0_W;
+QUhP_Y3lUaA;PA<`qIM>GjJG|GfIq%C9uLYxqmU2$NCrp`OjwyS!uJ%#`Lk+mPJUg(unE<>pQi_(
+7N3?SVnyaiR|~^&i?jJHxcL-$b3!6mh{X=z?S^$u5>EDkXg*CjYgmcz^rKI27<vCiVy3zk#l{$Xm
+euMF}HET<UINk67&=sBuk6p3(0TtNhOG=ucde6rv>lrQujdJqaA4m&~9z6fdI@W?~%^ekLX4_#lZ
+|2}3f_7Ga0R#*a8Iexfn)BX=$o1&p@|f}M0n)2Y`qU1T1381nmZ)D6<Valgmh6uDTKESW)Dg2id^
+4qvZ<&fx|a^%V`!$0s#V@MaB*>5bvkge7WZ5?Hg)-^HYclO(DWn31VwhSf5*Cgr!Bk)~p}LK*boo
+}*@O6I^8W$fUT+<qed*6m+kyzlOPJm6_psNx9lv(L(}y&71;d@-b4RuhzY!3ekcVY!(RUF_#$kFZ
+8_TrTJ#Jp(TQ~suD*@Y!H(g<FjU4T|6#xx}VU$7hKS&Y)jrIM!!p!*P8^r0b+DLlyRWSHl}%`EZ3
+5g+a#MFxw$6rjcRYWUXWK0E)n!#Qg>?+=|nQ0bE;)W?cx&b$xIg-xuE?;*DIP6^B-L(ke;3SA)hJ
+-PE6rVh)!tREqD}geJ$8&&RKQ{7pk)qi^%j*DNB6hrerr2(u__`2|ADAG1l-dpwqWMzx?%IZ?6i>
+E?seId0oV5P(PKklm8f>yIjX?T;|x3jWR#yv-xu4vl%PIvO2K~3VWMGPEK}sWAoP+-I0mCg4FS*x
+dRF0g*%UMBro%;Eb^gXr$lzyp&jO9%2m%y3ybJeGS%DBk2z~S@jn+cO7m_NGO5j5Zu`!;qs_`V@l
+q%71dRQh>GTqN1`t1galE6ie-DeoE6<f(FwCBvT!f}N7jT6B>)(&-jhLsZdWHc6tOx5fxmiF9-{Q
+ESXuenn`Ne~oMySQKIDkgw?*<R9MeR2|weJPqgp2B)of>x0e4oIMSUqT67fj7gjtw+9dHbPRX$Gn
+y)w3dnog-&3a*trI(VdXPqPC6DE?^RqzsaHmP=JWWJaV`RMS>=fqiCDW-b1%$<O&9Q`kHs7Yj##+
+pIY3ODl}z%ap+AR7j&KR-dxz5FaXgtVcH*H?@ON3_i<rehrZ6ZCk<R>ad2bincaGZy#`+SU&Ij%^
+dZ^Iop;I!pgEvCn7Bf<M97Bd3D+uFUKpjqRiLK4XA{H`;M|Eysr~cSyMKTN=28?78l>P0Sj1nzWc
+jqCw2OYrD-J-|lIyCcf1_k!_8=04*>$!eI7vKWe80TG8+vI^O1{!785}Vt2|WA_SoP_U3t2+M#%B
+Do!T+^Ln{dJxNCeQQqN2mgkQBsDYA62Y-TD*k%zy+DsY#kP5?Z=}0Dii9clFxcpH-}_g`S8kGqWV
+Xk%NNxvAX6kZUXkql>?wDav)o}s?~;}M$o$E#RmC(yyEMbX=CHQr%@I@n)$^tc78o+;A%XoVb0z!
+mUr*Bf%fbMY@kE^{%p4ve^Ooy$$eU#Lcg=&1*jr^!ouWpZ7xB7MUZY$BAtC=2<W5gR>Y5aboR(!K
+f%{HdY4(*g`$kSV##bQcEV<K_P40<iS33>^2`M-_$Ep5uF}l$CFjuDZI;c|mPYp5*d4Wm967WE8s
+BF5ID@@eit|+UDSjp9K9fP>o@JO@!K!fgxIWQh-#|`YJOahUFb4bM(fzS!Hs=@00!9W*eLf}71wK
+_l^&rL@px(7>vt6srmg~zPm@>rJbFe(-k0#(^8pa7gQ>sT|(O;r6C;MjfEj7S}T2W_lrUBje%lYh
+)t~tUEqY;Z5cN_kOJ6HA%0e9oJ1+}-JItM^?j)1b0(Xxp6v|Km5d1+}~XEMy3Vn+m{ZM<lU2HFG!
+5$0NAJ;R>xx4r#VVZF8Uqf=q3I3yYG*7L;Pw;;Muj)6j3=9m|8=hkH#3Yuu}guaM-w}o}hp>RI4s
+59p+=~?s7+rpetNCn@nA=@@sn_wBZ!<+E(hHl@&uu6*GFyR^`PS6<HB8xp4rnM$J*LzzRg^q@~FP
+1t8oKw@WAo_bkvf1nA-Hin)WUt|NCZ@ualA5c@f0kx|Pav%Iz5!Cu91D2w{cV$i9H9=FMDyh>C6q
+^n58=-ptLQFYh#}?LEcZ_v>YqIZlhc7g+U1V8Kqnn`7Z?L{vtZ_EMb5;kot6R}#(X@(W@upzzNj(
+(11*MFC^m0)uprJ|rAG?>6-C!&QAa8@g$uE;Ld_DEj#^MWb?_mmHP5yU>IaG<(`JAVQ>P*4Ks>y^
+NIOm2xZ(?W#@7mTB5~V(o9<wXyU54gfNKP=(E~9#9#AEB$#Ru%y*R@x0<|Vh#ry+XGS!nX&d{g^K
+OhA`f42^_+XN%XWTD1r!E|wkVW4w`c%MOANuZ^)^k9+?<bZ7RNJ#)?8>Lj4TaL%PElepGWxB<r5*
+P+JU*2$F4ue}sP~s+g$T>Rj4pcba6XnRd-0fUgWV2h9C>4&Ns1Qri7$txiM=5l>p@rldM!K#^)T}
+5gjVpS2WtnjibAUW1P2RH*QUhNU_s0~QaKW?2EvwU*6>sFG%3ac#8^izJE__ZNmm3QBgRL%Yn;O2
+bkkzpcC(C{%SQmB7t%5jLtj28EY6hDy?<^}>ZbtMkEYr=&$a2KgJ;i-R+i;*z5)BmNm)&Ao^F@LQ
+d{{=#Ghpom`>yno@9yuB*nu)T&Y7-$M)i<K(4h!K6cLIB(vteH!ebJ18ms+cY{7(Jr=xD{J~yJ#`
+|=BovD`RqB0F*0m-XD6Lg7HpGYyh$dKxG5d1E58&&NFmz_;8X-15G?`p?%df4p*T26BnaoZu?2RO
+;zma<=68aBBG4I(<i)Q_U!Y)o)1`6?j19wZl)aGtxf5ULEZLW7mWmz>{5Hq35i2k-Eb60@S<ae85
+S&{SvJT_twO_%|BIX0<}r5u#g2|@koZL-+?nKmIc>d#Uf5Z=f!|zgTaw#?lCYH4}10;1Dj=Oym<7
+rC>45EGdQMNOm*3#?aXIWZ^UYY%r+?w$3ThNmM+CN<+rcC`}*szqkmkz{ORg#1dnW$x#+gr{6wGs
+>+0>hSHHZm-_M<oZ+`jd>K%V7db(&=>?wXpr`%10A%8-X93ay$`Af_~UbRUnPN&Cbol;K(N8NIy1
+1b>XBL47>9vgG&8a)VQYHOu!1Q79yczApGAExl)**=ZKu>*@aYzA!Aiqww;dyczf`hPF~e+ncx4h
+0L*|9koWll=c+48b(x-`FV!F1~vE>g8*H>h5vq%Osr{D#hE8V|^{!J72<V-ZJ{>?l$`U!f`vQa=&
+qCgf4XUXe1DJ+#@WOH>W78C$=qXm-Of7J2fr(BdSCPkod2!esl==DJlak0tRKD=_ix!h`(7jr=Ou
+>;psD9)KvY?pWo4OAuC@ikTD{2XlDk@zrppCdnop93br>#y@u7)d*Nvd#R}zFN<_c~fH!)Ny++fj
+I9#Nz$}~My!O{_YA2kZPmcy#jD^uR>xD3i)rNgQ+uH`51u0~$TT`jKB;Msi;V~#@y6aGT~P7gbwd
+1N8|673f_&4Gj8ohF*CLtr-x8auldOh(<JBb1IO&}f`tPIz<10|K3J8m6?vby~|eVN2MpfMw38Xx
+FE20pz4Jb&tISSeq9Pba|CG9e&ekqMB{1JFq$>x}QLUt)W0ED0+d^Xdjd4b5H7*33sB^SdC>Ukof
+^5vJls!dD@$&P^gEiU)wBsZL_aovD-dUvtw#@j?`3a8C6x0CNJEHB0GPH$v578<TC&@{(DqMUjh=
+@Q9fllHlVxTJjMiYe(7)(_Ge=E5s`}<h%<m2@7*4kcm;)%Pj1%jcBBuEhF(}NeucI3&EH>_Xg=#K
+-QV$%djUK0E%#3Bv$fd+%l8;xf?_|XV=o_tm<1NAAiMRBpGBibWwu$dFQsHpYPnF(ib?v4Ou=M7F
+RJV8>4T6a{BL_Y)#Z$r_j)&B7tXZ`fO!=EztG7=&Tqj}7##HiY2fP3Pdxk0D!++`z;7bSZ<b4Xhc
+}+#Nw8>uRlXGbBBl$fpxNK>J|os^s6%MRm$#mgo6oH2Y*x-yTR4NT*yB-c-4og)e<;;!)$08xfKp
+~Ldq6VbB_9_vx)4f`9QY^6iC)B)Mn(H<7u{f91DF-QN{jrcK$XtYIlG!ulHLW#Lp`-ro-gra<9TS
+B3&Y6!o^M*_LVMsb@?74+%)xhV&9T%i*c}i1BN=!23a%`}%)*=O!(tUj@6av7bXG5E6RTazAvQ9?
+@%3XQ(swKL26Jv;y3feqhfUyZiKHJUx1bTDH$pCoAsU-WPk?zy)Y!M#(eXl*FLLy`5Y>}9k9O8Yn
+c0teJ1)Ad@#hbV#af&_d>@a5?z{upN@x4-AwL@iD?Hz5VWX1b{D2L(TTlT);76`4uELX!u}7W<dI
+98SUvjSha32#HCix6+okpC5?jHuF>gKUrC28scJJiF2y$t*4b3Ac(IdeN)Bz6x0>2p#m`T&y8=co
+ThdXIkJvB}%=N{h*Gl{tG2hajHg2;t(T#Iq2+Ldty}>iRp#3*&zPM1%uoSC`P!Sw|oU<4J)+1$Un
+ut=uwIH1T!hA1o*7eny9bvuur3aY^`(AO2_d?#Gv}F>BE4636xGwT<0_KdZ;i7r_j9T-!0;rPs&D
+c$aQ(!$C>`wsS#8|Ni=idfh8QkLjAHl~qdjsw4hqlRk$9NGo_y;~M>{7$9L!hi!JZAR$l0@9wna=
+0r7iZnKlwfzGkZ3Er^WY5d?@YyTa&!J4dF(Z3OIOnkDP{)tRN`ppcTccm@4Kv<dLxTbs1LzujR=e
+zs0y_lHGw8$p7+K#);!#eN@Yah)a1!LIr$QB0DdT|v_+(C&-5qe{eJV#^ZFWxGA_DR5o712sYryX
+Gl&e<U)@JFEpnyQgnu+)TZ1a5pxQglA=i}w`%!j2LQEj}#((y-2&fVB8*u}fhuRscu5TN4(QErQV
+f145~C0~NKe;GtS>*08o>0?Gz$V~<tivu($eo))fSKhWyL9m*HqQ2|7d+?$IXK-vM~h{c(CmT%FH
+Tj(@8B+U#$i;*DwT|$W%n|eQY2+Bx!0Av;owd9+ni-tkra|M!hg3J*H{5I7w(73v$FauVS$1koo2
+D{uG<;Ai{YCTvgJ5MSO%MTpzLU}70)SS{3M#aZ7ri^niReCN}iW$DA_86xG=T}8`!E^qaV61mh8L
+847aKz<l<brq1qR+<-bZDzw%*T8!`Ial{^sIyF$lV-aZze=}9Qqe@ODV8b+8Ta!P8ScX!cKoCpN~
+&{C6v=Cq7wA;2<1y1=q?}mIMezX&Vke620N0jgTkmGidsuTYv3VAM-x|@4%yi`e0DsqDO8amvz}I
+UvS&gX>CdQg-ItzCBv5$DkpebEAOK4@0vot>z+zyoKy9q(LV&LvuR|UGsPeGEu##z!%ymq(uH&iq
+=Y=Ektg}Sfsd}?qk37-~8cK9V*McCb(LmPpqR<`>Kyw4koiTBk`N2V1mM&r8iaBFnIQ=tH3pD~DD
+y*pH*%~xzDi_rbU7LMcZdMI9w?>$fRsdOZr)x}3UI5y1u9V(91ZKP3hE&<`;7|bxQacJQf1i-y)6
+9-qgu{SLrva&Bn%J#Atg?qyVS@u*StR$-O_pZ64F>q%R>C0#>VB>26XvW#yCql6kBmW8L1)ezWl?
+~w=<}DRyt0ZV4WfOZfiTNRiQU}_L$m;zkZ%zV9Cx2L3>YUkTu=8Ut3)wJ2g69xk;zzrv1c|<M7~|
+7X#|6!@HP`A$L!j|gV~$+l-`~0R3Y2&H3PAn$@jF+&2286qa*h13NQ*U;3*WS4qG@?g79HClsyE{
+ECyeeNKMamAI<i;Yj0#B9Re;Fd>R|e=_t^zbv2@`F8L+O_4n{8C!y!cyfR@<&^Vaqg_weTx3(vWX
+~82APbt!9z41|o<x5djNXf!c-bR49!FOgS>f59@EI$PYBx%QmKxx}M2?w3}e)sgYWDb}vw?zA8`J
+{TrH8O_{8At{gkJA|4gfT^{%QD~2vJdtG1?C3KWq@;Rm<AM>9U9;{(~bIXkIbwGNe|-a)z(B`eGU
+AxOfh}N4TpDYVa`5~n2Q%At`y;+{U0rX*A(as<6J6t;bw|&!t(C!3OeuPaN%>8U7DVmTrPU=5~YP
+%Xi)kVEhR|2x3?pOl|*>G5=<+*_hK0Eb(V345smxB*sz3n;DK}4P^KBcRJKcjp!KAOUb-T|T|FtP
+UAEEQd?(iwqur=l_~-x=|9;~y6|9Qu>KJ2?&!*uMKPvC@J>Mfk?G&!ip$<3PJ_epR*PBK1!4ND~C
+~~-_-YJCo+tnC9Puf$j>$J+qhY1gPYWa!H&!rLY)yOn)mtj105#J@aqz>_W?T>@bd?x7Pq4IrPIM
++nq8k?W%h+K#8mkv8%5sIFqz&%dLfyruCa!Q$Rv-O&mqy<cA)QS6p=-zM|!@HN1Nf?mDIgT)xk*E
+>m8U5nr&C84w?a;uoTA;G--XfBw_6jE_0C8UuOdNQom6)C?H*KH^B)fDw##_UJn5Q|P@RBqXEK@2
+i>DgZi303PI;w#6<(-(0Ubd458yy|l0k|q-(O@B*ahnJrj`jLlkTtcFW?M%HeUkTVPi<-8wn5m04
+LezZ8jS2+lsIQ7mK||6Lqw;fQIwxeG>Fmr6(rro9z6%RVeMs&wFH(kKyh{ueLcDv&Ge-U!&4}6qe
+6w(O0p_+eD{H7kk?%ls2Plx<p=j6XPON05V;slL@R1|0DZ-g!y}XaHT&n2CK$jJhxM(63=$KqiWa
+6odFij-2RDRA~Gf>y*2E|mttCp^81r4Q4q4NW^xyvoeXcf>bf!FUr_>dK(g*z~`2KLnmU5WqDZ!?
+^Q<w`(|Lc({C)%eCDqmxjY#!wp(9|%#D%H+D!snT|73u-S8$=B(UZ7iV;qU0KrqHu3EJvmJstJt~
+nZUj3tvMQ6rqe*xh>5zC-LqE{<MLcYXTgaWoW0vhEp|}^ye+bN%)4%A7lY`I!MeKSZXJ+WFA{Rq~
+VoWlC((L(*f|G>LhFr8vQbJ1Bw{*hPc)3CB>)PW&qfSF-kV`kT#K>^sI>hVkh4^-|vP9H2wj`wAm
+VY@6&`*naI3{4g!!$nuC-?`~6#yhvo`SG6XPcJ8h(cENTJY&a_%L)T;t`i@t43BE_BNw*=YdFTHy
+@>H>9OxLLx;6|X&yDz(qmh9Xrrf(jcs1B>U20l@dP;R%jU{Hso)O&Un}8r@yEhQp@h~W&e&&NX#6
+#Z9mT50E+e%VFCVhH_*9O0C;fZ+!0`YYr+;cjEr-MQ@VKm1UR>mEt5)@KEUhKYdLVV%W}zN9Tk-&
+#gX}W6Y>tk%k6Qxz#8YnX+`80eJ`ugzT_j+En%UK1s`m6c{u5P$bWh2>A^CewN5@((Z^)c8&vw^j
+m&#@9v%!p`vTt63y1@BDjq3F^sdd1$nB`M!Omrb9-OKub>3;3~zofq2C+pa*lxl>{gPjlgRZE|k{
+6QA2(UK^#NXXfMbiWmE&Dv<PS%gJ%U1G;5%dSlq4u*GoF|3w$uq4={c$*hPYF4DC=j@}T@sV?(-j
+Y~Gqc?P|6ig`%x$3@Smjv7zyz~m|R}UcAD<8=lUsUZ&>X+0lxd4&tc-Gi9+g<^uGm3+m&DfYcBWK
+Ln%=qtoZSs>c(WBCWq4pS8&pC<7`By1eUs6`;oUN}4NORqu!Srp<C^vb+1?M1WZx%#7pwiHl*V?S
+`5>|<@N=u<}><nIgi{Bbe+LJtB9QA{fXL+6ExfpxdJ2>Cnz#cTe-KDYWn!xY0pG)ioO&FX<?+b~x
+-|hgt_X|z7jRMAO$)Q~mg*3DmszD$aOnm+2{{W;Yqn7
