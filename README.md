@@ -68,6 +68,12 @@ the container held - its id, its size and its first eight bytes - and the run
 prints the same list. That is the evidence of what the item actually contains,
 so a missing texture can be looked at rather than guessed about.
 
+`report.txt` says the same in plain text: the blocks, the mesh counts, the
+texture slots the model declares, whether a base map and a colour table were
+found, and each part's shader and texture bindings. The extractor writes it
+before any Blender runs, so a run without Blender still describes the file;
+the rigging section is added underneath it when Blender is there.
+
 ## Working on the extractor itself
 
 Neither script is needed to run the tool.
