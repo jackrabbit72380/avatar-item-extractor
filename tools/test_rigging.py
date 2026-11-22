@@ -57,14 +57,15 @@ if [ "$mode" = "crash" ]; then
   exit 0
 fi
 if [ "$mode" = "silent" ]; then exit 0; fi
-mkdir -p "$target/extracted for blender users" "$target/extracted for hek users/pc/data"
+mkdir -p "$target/extracted for blender users"
 for obj in "$items/extracted for max users"/*.obj "$items"/*.obj; do
   [ -e "$obj" ] || continue
   base=$(basename "$obj" .obj)
   if [ "$mode" != "partial" ]; then
     if [ "$hasrig" = "1" ]; then
       : > "$target/extracted for blender users/$base.blend"; : > "$target/extracted for blender users/$base.fbx"
-      : > "$target/extracted for hek users/pc/data/$base.jms"
+      mkdir -p "$target/extracted for hek users/pc/data/$base/models"
+      : > "$target/extracted for hek users/pc/data/$base/models/$base.jms"
     fi
     for k in blend fbx; do : > "$target/extracted for blender users/$base - unrigged.$k"; done
   fi

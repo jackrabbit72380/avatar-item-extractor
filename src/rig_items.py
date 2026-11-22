@@ -994,14 +994,14 @@ def mirror_jms(out, stems):
     tool.exe compiles the same .jms for either target - which one it builds is a
     flag to the compiler, not a difference in the file - so an xbox user should
     not have to reach into pc\ for the model when that target's bitmaps are
-    already sitting in its own data\ beside an empty tags\.
+    already sitting in its own data\<item>\bitmaps\.
     """
     hek = os.path.join(out, HEK_DIR)
-    source_dir = os.path.join(hek, "pc", "data")
-    target_dir = os.path.join(hek, "xbox", "data")
-    os.makedirs(target_dir, exist_ok=True)
     copied = 0
     for stem in sorted(set(stems)):
+        source_dir = os.path.join(hek, "pc", "data", stem, "models")
+        target_dir = os.path.join(hek, "xbox", "data", stem, "models")
+        os.makedirs(target_dir, exist_ok=True)
         for suffix in ("", " - fp arms"):
             name = "%s%s.jms" % (stem, suffix)
             source = os.path.join(source_dir, name)
@@ -1144,6 +1144,11 @@ def main():
     for record, merged, nxe, arms_item in rigged:
         stem = os.path.splitext(os.path.basename(record.get("obj") or record["id"]))[0]
         stems.append(stem)
+        # data\<item>\ is what tool.exe takes as its source directory, and it
+        # looks inside models\ for the .jms and animations\ for animation data.
+        models_dir = os.path.join(hek_data, stem, "models")
+        os.makedirs(models_dir, exist_ok=True)
+        os.makedirs(os.path.join(hek_data, stem, "animations"), exist_ok=True)
         # Halo rig: the item on the biped, arms loaded, as a .blend that opens
         # straight onto it so it can simply be exported from there. The .jms is
         # Halo's own text model, and the .fbx is the same thing for anything
@@ -1151,7 +1156,7 @@ def main():
         if armature:
             if options["jms"]:
                 record["jms_errors"] = export_jms(
-                    merged, armature, os.path.join(hek_data, "%s.jms" % stem))
+                    merged, armature, os.path.join(models_dir, "%s.jms" % stem))
             export_rigged(os.path.join(blend_dir, "%s.blend" % stem),
                           merged, armature, "blend")
             export_rigged(os.path.join(blend_dir, "%s.fbx" % stem),
@@ -1162,7 +1167,7 @@ def main():
             if options["jms"]:
                 record["jms_arms_errors"] = export_jms(
                     arms_item, armature_fp,
-                    os.path.join(hek_data, "%s - fp arms.jms" % stem))
+                    os.path.join(models_dir, "%s - fp arms.jms" % stem))
             for kind in ("blend", "fbx"):
                 export_rigged(os.path.join(blend_dir, "%s - fp arms.%s" % (stem, kind)),
                               arms_item, armature_fp, kind)

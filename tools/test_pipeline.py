@@ -36,30 +36,33 @@ EXPECTED = (
     "extracted for max users/UNSC Marine Armor base map.png",
     "extracted for max users/UNSC Marine Armor base map.tga",
     "extracted for blender users/UNSC Marine Armor base map.png",
-    "extracted for hek users/pc/data/UNSC Marine Armor base map.tif",
-    "extracted for hek users/xbox/data/UNSC Marine Armor base map.tif",
+    "extracted for hek users/pc/data/UNSC Marine Armor/bitmaps/UNSC Marine Armor base map.tif",
+    "extracted for hek users/xbox/data/UNSC Marine Armor/bitmaps/UNSC Marine Armor base map.tif",
     "UNSC Marine Armor_colours.txt",
     "colour_00.png",
     "catalogue.json",
 )
 
-# Which folder each mask set belongs in, per the user it is for.
-MASK_HOMES = {
-    "multipurpose": ("extracted for max users", "extracted for blender users", "extracted for hek users/pc/data"),
-    "multipurpose xbox": ("extracted for max users", "extracted for blender users", "extracted for hek users/xbox/data"),
-    "multipurpose sp": ("extracted for max users", "extracted for blender users", "extracted for hek users/pc/data", "extracted for hek users/xbox/data"),
-    "change colour": ("extracted for max users", "extracted for blender users", "extracted for hek users/pc/data", "extracted for hek users/xbox/data"),
+# Which Halo builds each mask set belongs in. The HEK side of every one lives
+# inside the item's own data folder, because that is the directory tool.exe is
+# pointed at: data\<item>\bitmaps.
+MASK_BUILDS = {
+    "multipurpose": ("pc",),
+    "multipurpose xbox": ("xbox",),
+    "multipurpose sp": ("pc", "xbox"),
+    "change colour": ("pc", "xbox"),
 }
 
 
-def homes_for(family):
+def homes_for(family, stem):
     """(folder, extension) for every copy of one bitmap family."""
     wanted = []
-    for folder in MASK_HOMES[family]:
-        if folder.startswith("extracted for hek users"):
-            wanted.append((folder, "tif"))
-        else:
-            wanted.extend([(folder, "png"), (folder, "tga")])
+    for folder in ("extracted for max users", "extracted for blender users"):
+        wanted.append((folder, "png"))
+        wanted.append((folder, "tga"))
+    for build in MASK_BUILDS[family]:
+        wanted.append(("extracted for hek users/%s/data/%s/bitmaps"
+                       % (build, stem), "tif"))
     return wanted
 
 
@@ -253,8 +256,8 @@ def main():
 
         maps = ["extracted for max users/Model Table Item base map.png",
                 "extracted for max users/Model Table Item base map.tga",
-                "extracted for hek users/pc/data/Model Table Item base map.tif",
-                "extracted for hek users/xbox/data/Model Table Item base map.tif"]
+                "extracted for hek users/pc/data/Model Table Item/bitmaps/Model Table Item base map.tif",
+                "extracted for hek users/xbox/data/Model Table Item/bitmaps/Model Table Item base map.tif"]
         for name in maps:
             path = os.path.join(out2, name)
             mark = "ok  " if os.path.exists(path) else "MISS"
@@ -333,8 +336,8 @@ def main():
 
         flat = ["extracted for max users/Plain Tee colour.png", "extracted for max users/Plain Tee colour.tga",
                 "extracted for blender users/Plain Tee colour.png",
-                "extracted for hek users/pc/data/Plain Tee colour.tif",
-                "extracted for hek users/xbox/data/Plain Tee colour.tif"]
+                "extracted for hek users/pc/data/Plain Tee/bitmaps/Plain Tee colour.tif",
+                "extracted for hek users/xbox/data/Plain Tee/bitmaps/Plain Tee colour.tif"]
         for name in flat:
             mark = "ok  " if os.path.exists(os.path.join(out3, name)) else "MISS"
             print("  %s %s" % (mark, name))
@@ -351,6 +354,7 @@ def main():
             return 1
 
         with open(os.path.join(out3, "extracted for hek users", "pc", "data",
+                              "Plain Tee", "bitmaps",
                               "Plain Tee colour.tif"), "rb") as handle:
             head = handle.read(4)
         if head not in (b"II*\0", b"MM\0*"):
@@ -376,7 +380,7 @@ def main():
         # instead of reordered passes a name check and still renders wrong.
         for suffix in ("multipurpose", "multipurpose xbox", "multipurpose sp"):
             stem_set = "Plain Tee " + suffix
-            for folder, ext in homes_for(suffix):
+            for folder, ext in homes_for(suffix, "Plain Tee"):
                 name = "%s.%s" % (stem_set, ext)
                 path = os.path.join(out3, *folder.split("/"), name)
                 found = os.path.exists(path)
@@ -445,7 +449,7 @@ def main():
             print("\nFAIL: a painted texture is not read as islands")
             return 1
 
-        for folder, ext in homes_for("change colour"):
+        for folder, ext in homes_for("change colour", "Plain Tee"):
             name = "Plain Tee change colour.%s" % ext
             path = os.path.join(out3, *folder.split("/"), name)
             found = os.path.exists(path)
@@ -543,12 +547,12 @@ def main():
                   "extracted for max users/%s multipurpose.png", "extracted for max users/%s multipurpose xbox.png",
                   "extracted for max users/%s multipurpose sp.tga", "extracted for max users/%s change colour.png",
                   "extracted for blender users/%s multipurpose.tga",
-                  "extracted for hek users/pc/data/%s multipurpose.tif",
-                  "extracted for hek users/xbox/data/%s multipurpose xbox.tif",
-                  "extracted for hek users/xbox/data/%s change colour.tif")
+                  "extracted for hek users/pc/data/%s/bitmaps/%s multipurpose.tif",
+                  "extracted for hek users/xbox/data/%s/bitmaps/%s multipurpose xbox.tif",
+                  "extracted for hek users/xbox/data/%s/bitmaps/%s change colour.tif")
         for name in containers:
             for pattern in wanted:
-                want = pattern % name
+                want = pattern % tuple([name] * pattern.count("%s"))
                 found = os.path.exists(os.path.join(out5, want))
                 print("  %s %s" % ("ok  " if found else "MISS", want))
                 if not found:
@@ -595,9 +599,9 @@ def main():
             for pattern in ("extracted for max users/%s.obj", "extracted for max users/%s.mtl", "extracted for max users/%s multipurpose.png",
                             "extracted for max users/%s multipurpose xbox.png",
                             "extracted for max users/%s change colour.tga",
-                            "extracted for hek users/pc/data/%s multipurpose sp.tif",
-                            "extracted for hek users/pc/data/%s multipurpose.tif"):
-                want = pattern % name
+                            "extracted for hek users/pc/data/%s/bitmaps/%s multipurpose sp.tif",
+                            "extracted for hek users/pc/data/%s/bitmaps/%s multipurpose.tif"):
+                want = pattern % tuple([name] * pattern.count("%s"))
                 found = os.path.exists(os.path.join(out6, want))
                 print("  %s %s" % ("ok  " if found else "MISS", want))
                 if not found:

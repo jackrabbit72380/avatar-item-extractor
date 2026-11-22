@@ -588,15 +588,19 @@ def safe_folder(title):
 
 # The output is laid out for the person opening it, not for the extractor. A
 # Max user wants the model and its textures; a Blender user wants the rigs and
-# the same textures; a HEK user wants bitmaps in data\ and a tags\ folder to
+# the same textures; a HEK user wants data\<item>\bitmaps, models and animations,
 # build into, in both channel orders. Nobody should have to sort through
 # another program's files to find their own.
 MAX_DIR = "extracted for max users"
 BLENDER_DIR = "extracted for blender users"
 HEK_DIR = "extracted for hek users"
 
-LAYOUT = (MAX_DIR, BLENDER_DIR, HEK_DIR + "/pc/data", HEK_DIR + "/pc/tags",
-          HEK_DIR + "/xbox/data", HEK_DIR + "/xbox/tags")
+# The HEK reads a model's sources from data\<name>\ and its own subfolders:
+# bitmaps\ for the .tif files tool.exe compiles, models\ for the .jms, and
+# animations\ for animation data. tags\ is where tool.exe writes what it builds,
+# at the HEK root - not inside data\ - so nothing here creates a tags folder.
+LAYOUT = (MAX_DIR, BLENDER_DIR)
+HEK_KINDS = ("bitmaps", "models", "animations")
 
 
 def mask_orders(name):
@@ -619,8 +623,23 @@ def mask_orders(name):
     return ()
 
 
-def organise(out):
-    r"""Sort one item's files into max\, blender\ and hek\pc|xbox\data|tags\.
+def hek_folders(stem):
+    r"""data\<item>\<kind> for both builds, the tree tool.exe reads."""
+    return [HEK_DIR + "/%s/data/%s/%s" % (order, stem, kind)
+            for order in ("pc", "xbox") for kind in HEK_KINDS]
+
+
+def stem_for(name, stems):
+    """Which item a file belongs to: the longest item name it starts with."""
+    best = ""
+    for stem in stems:
+        if name.startswith(stem) and len(stem) > len(best):
+            best = stem
+    return best or (stems[0] if stems else os.path.splitext(name)[0])
+
+
+def organise(out, stems):
+    r"""Sort each item's files into max\, blender\ and hek\pc|xbox\data\<item>\.
 
     Runs once, after every file is written, so the shape is the same whether
     Blender ran or not. A file with one home is moved; a bitmap that two people
@@ -629,7 +648,10 @@ def organise(out):
     list, report.txt, catalogue.json - stays in the item's own folder, where it
     describes the item rather than belonging to a program.
     """
-    for folder in LAYOUT:
+    folders = list(LAYOUT)
+    for stem in stems:
+        folders.extend(hek_folders(stem))
+    for folder in folders:
         os.makedirs(os.path.join(out, *folder.split("/")), exist_ok=True)
     for name in sorted(os.listdir(out)):
         source = os.path.join(out, name)
@@ -637,22 +659,24 @@ def organise(out):
             continue
         low = name.lower()
         extension = low.rsplit(".", 1)[-1] if "." in low else ""
+        stem = stem_for(name, stems)
         homes = []
         if extension in ("obj", "mtl"):
             homes = [MAX_DIR]
         elif extension in ("blend", "fbx", "glb"):
             homes = [BLENDER_DIR]
         elif extension == "jms":
-            homes = [HEK_DIR + "/pc/data"]
+            homes = [HEK_DIR + "/pc/data/%s/models" % stem]
         elif extension in ("png", "tga", "tif"):
             orders = mask_orders(name)
             if orders:
                 if extension in ("png", "tga"):
                     homes = [MAX_DIR, BLENDER_DIR]
                 else:
-                    # .tif is what tool.exe compiles, so it belongs to the
-                    # engine folders and not beside the model.
-                    homes = [HEK_DIR + "/%s/data" % order for order in orders]
+                    # .tif is what tool.exe compiles, so it belongs in the
+                    # item's own bitmaps\ folder, not beside the model.
+                    homes = [HEK_DIR + "/%s/data/%s/bitmaps" % (order, stem)
+                             for order in orders]
         if not homes:
             continue
         for home in homes[:-1]:
@@ -1268,12 +1292,14 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                  % (MAX_DIR, stem))
     lines.append("  %s\\  the rigs (.blend, and .fbx/.glb), with the same"
                  " textures" % BLENDER_DIR)
-    lines.append("  %s\\pc\\   data\\ the bitmaps tool.exe compiles, as .tif"
-                 " in Halo CE's" % HEK_DIR)
-    lines.append("            channel order, and the .jms; tags\\ where tool.exe"
-                 " writes what it builds")
-    lines.append("  %s\\xbox\\ the same bitmaps in the original Xbox channel"
-                 " order, and the same .jms" % HEK_DIR)
+    lines.append("  %s\\pc\\data\\%s\\  bitmaps\\ the .tif files"
+                 " tool.exe compiles, in" % (HEK_DIR, stem))
+    lines.append("            Halo CE's channel order; models\\ the .jms;"
+                 " animations\\ for animation data")
+    lines.append("  %s\\xbox\\data\\%s\\  the same tree in the original"
+                 " Xbox channel order" % (HEK_DIR, stem))
+    lines.append("            tool.exe writes what it builds into tags\\ at the"
+                 " HEK root, so none is shipped here")
     lines.append("")
     lines.append("multipurpose channels - the model shader packs four greyscale masks")
     lines.append("into one bitmap, and which channel holds which depends on the")
@@ -1921,7 +1947,7 @@ def main(argv=None):
     # One pass at the end: every file exists by now, so the item's folder can be
     # sorted for the program the person opening it uses, and the catalogue can
     # say where each file actually is.
-    organise(out)
+    organise(out, [record["id"] for record in records if record.get("id")])
     for record in records:
         for key in ("obj", "mtl"):
             if record.get(key):

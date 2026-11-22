@@ -190,13 +190,14 @@ def main():
     # into xbox\data as well: an xbox user should not have to reach into pc\
     # for the model when that target's bitmaps are already in its own folder.
     jms_work = tempfile.mkdtemp(prefix="jms-")
-    jms_pc = os.path.join(jms_work, "extracted for hek users", "pc", "data")
+    jms_pc = os.path.join(jms_work, "extracted for hek users", "pc", "data",
+                          "Item", "models")
     os.makedirs(jms_pc, exist_ok=True)
     for name in ("Item.jms", "Item - fp arms.jms", "Notes.txt"):
         open(os.path.join(jms_pc, name), "w").close()
     copied = module.mirror_jms(jms_work, ["Item", "Missing"])
     jms_xbox = sorted(os.listdir(os.path.join(jms_work, "extracted for hek users",
-                                              "xbox", "data")))
+                                              "xbox", "data", "Item", "models")))
     print("  mirror_jms          -> %d copied, xbox\\data holds %r" % (copied, jms_xbox))
     if copied != 2 or jms_xbox != ["Item - fp arms.jms", "Item.jms"]:
         fail("mirror_jms copied %d files (%r), expected 2 (%r)"

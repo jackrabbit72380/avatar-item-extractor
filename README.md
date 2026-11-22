@@ -59,13 +59,13 @@ Test Item\
         the same textures as the Max folder, so a rig opens with its maps
         master chief skeleton.blend, fp arms.blend  Halo's rig files themselves
     extracted for hek users\
-        pc\data\    Test Item base map.tif, Test Item multipurpose.tif,
-                    Test Item change colour.tif - Halo CE channel order
-                    Test Item.jms  the model, for tool.exe
-        pc\tags\    where tool.exe writes what it builds
-        xbox\data\  the same bitmaps in the original Xbox channel order,
-                    and the same .jms
-        xbox\tags\
+        pc\data\Test Item\
+            bitmaps\    Test Item base map.tif, Test Item multipurpose.tif,
+                        Test Item change colour.tif - Halo CE channel order
+            models\     Test Item.jms  the model, for tool.exe
+            animations\  empty until there are animation files to put here
+        xbox\data\Test Item\
+            the same three folders, the bitmaps in the original Xbox order
     Test Item.png  the item's icon, when the package has one
     colour_00.png  the item's own palette, when it carries one
     Test Item_colours.txt
@@ -82,10 +82,12 @@ The folders are named for who they are for, not for the program's own name, so
 it is clear at a glance which one to open: `extracted for max users` has the
 model, its `.fbx` when Blender ran, and its textures already beside it;
 `extracted for blender users` has the rigs with the same textures; and
-`extracted for hek users` has `pc\` and `xbox\`, each with `data\` holding the
-`.tif` bitmaps `tool.exe` compiles - and the `.jms`, in both, because the one
-text model compiles for either target - plus an empty `tags\` for what it
-builds.
+`extracted for hek users` has `pc\` and `xbox\`, each with `data\<item>\` -
+the source directory `tool.exe` is pointed at - holding `bitmaps\` with the
+`.tif` files it compiles, `models\` with the `.jms` (in both builds, because the
+one text model compiles for either target) and `animations\` for animation
+data. There is deliberately no `tags\` in there: `tool.exe` writes its output
+to `tags\` at the HEK root, never inside `data\`.
 Both channel orders ship because the port and the original Xbox read the masks
 differently; nothing is left for you to swap by hand. The `.png` and `.tga`
 copies are the same images as the `.tif`s, for the programs that do not read
