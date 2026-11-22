@@ -978,6 +978,9 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
                 angle - math.pi if angle > 0.5 * math.pi else angle
             options = []
             for value in (near, near + math.pi):
+                # Half a turn either way is the same turn, so the one that comes
+                # back inside a half turn reads as the angle a person would say.
+                value = value - 2.0 * math.pi if value > math.pi else value
                 candidate = placed(turn_product(turn_about(reach_axis, value),
                                                 turn))
                 candidate["twist"] = math.degrees(value)
