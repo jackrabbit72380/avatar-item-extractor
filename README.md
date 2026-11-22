@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract-AvatarItem-v25.bat` - one folder
+Put your Xbox 360 avatar items beside `Extract-AvatarItem-v26.bat` - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
 writes everything each one needs - models, textures, masks, colours, rigs -
@@ -123,7 +123,9 @@ from the body and the player sees the arms, not the body's:
   shoulder shells stay on the body: a missing pad is the smaller fault. The seam falls where the arm ends, and no plate is
   ever cut in half. Each side is then carried onto Halo's rig as one piece: the
   arm's own long axis is turned onto Halo's arm bones, its length is laid along
-  them, and its shoulder is shifted onto Halo's. One turn and one scale for the
+  them, and the middle of its own skin is shifted onto Halo's bone - so an arm
+  modelled slightly outboard of its own skeleton still sits centred on Halo's
+  instead of hanging that far out. One turn and one scale for the
   whole side - sleeve, glove and pad - so every edge keeps its length up to that
   single factor, and a side carried that way cannot tear whatever shape it is.
   (Turning upper arm, forearm and hand by different amounts tore the shell at
@@ -285,9 +287,9 @@ the rigging section is added underneath it when Blender is there.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack Extract-AvatarItem-v25.bat src/
+python3 tools/payload.py unpack Extract-AvatarItem-v26.bat src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack Extract-AvatarItem-v25.bat src/ --rigs src/rig
+python3 tools/payload.py pack Extract-AvatarItem-v26.bat src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it

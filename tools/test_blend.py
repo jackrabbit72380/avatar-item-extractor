@@ -513,6 +513,21 @@ def main():
             if cuff != 0.0 or tip < 0.99:
                 fail("the glove would not hand over to Halo's wrist: %r %r"
                      % (cuff, tip))
+            # An arm modelled outboard of its own bone has to sit centred on
+            # Halo's, not hang out by the same amount: pinning only the
+            # shoulder joint left it 3 units out and 6.3 units away from
+            # Halo's own arms.
+            leaning = [Vec(point[0], point[1] + 3.0, point[2]) for point in arm]
+            off_place = module.side_carry(biped_rig, fp_rig, "l", leaning, per_bone)
+            if off_place is None:
+                fail("an arm modelled off its own bone was not placed")
+            else:
+                moved_mid = [module.place_arm(off_place, point) for point in leaning]
+                middle = sum(point[1] for point in moved_mid) / len(moved_mid)
+                print("  side_carry offset  -> arm middle at y %.2f" % (middle,))
+                if abs(middle - 9.4) > 0.6:
+                    fail("an arm modelled 3 units out sat at y %.2f, off Halo's "
+                         "bone" % (middle,))
         if module.side_carry(None, fp_rig, "l", arm, per_bone) is not None:
             fail("an arm was placed with no biped to measure from")
         if module.side_carry(biped_rig, fp_rig, "r", arm, per_bone) is not None:

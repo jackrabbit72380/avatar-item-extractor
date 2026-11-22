@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v25"
-BUILD = "2026-11-22 fp-arms-one-similarity"
+VERSION = "v26"
+BUILD = "2026-11-22 fp-arms-centred-on-bone"
 
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
 DEFORM_BONES = (
@@ -716,14 +716,32 @@ def arm_joint(points, along, weights, first, second, fallback):
     return fallback
 
 
+def arm_centre(points, weights, side):
+    """The middle of the side's own skin, leaving shoulder armour out.
+
+    A pauldron rides the arm but stands well off it, so counting its vertices
+    here would pull the whole arm inward by half a pad.
+    """
+    proper = ("bip01 %s upperarm" % side, "bip01 %s forearm" % side,
+              "bip01 %s hand" % side)
+    held = []
+    for point, per in zip(points, weights):
+        total = sum(per.values())
+        if total <= 0.0:
+            continue
+        if sum(per.get(name, 0.0) for name in proper) / total >= 0.5:
+            held.append(point)
+    return held or list(points)
+
+
 def side_carry(armature, armature_fp, side, points, weights):
     """How one side's arm, as the mesh holds it, gets onto Halo's arm.
 
     One similarity for the whole side: the arm's own axis is turned onto Halo's
-    arm, its length is laid along Halo's arm bones, and its shoulder is shifted
-    onto Halo's shoulder. Rotating, scaling by one number and shifting is the
-    only carry that cannot tear anything: a similarity multiplies every edge of
-    the side by the same factor, so no vertex can be pulled away from the ones
+    arm, its length is laid along Halo's arm bones, and its own middle is shifted
+    onto Halo's bone. Rotating, scaling by one number and shifting is the only
+    carry that cannot tear anything: a similarity multiplies every edge of the
+    side by the same factor, so no vertex can be pulled away from the ones
     beside it.
 
     Turning parts of an arm by different amounts was tried twice - once per
@@ -778,9 +796,25 @@ def side_carry(armature, armature_fp, side, points, weights):
     bones = ("bip01 %s upperarm" % side, "bip01 %s forearm" % side,
              "bip01 %s hand" % side)
     wrist = arm_joint(points, along, weights, bones[0], bones[1], low + 0.72 * span)
+    # The arm's own middle belongs on Halo's bone. Pinning only the shoulder
+    # joint left an arm modelled off its own bone - bulky armour sits outboard
+    # of a slim skeleton - hanging that far out on Halo's, which is why the arms
+    # stood 6.3 units from Halo's own on a sleeve 3 units out. Shifting the
+    # whole side by the same amount changes no length, so it cannot tear what it
+    # moves; this is the one placement error a similarity is still free to fix.
+    middle = arm_centre(points, weights, side)
+    centre = [sum(point[i] for point in middle) / len(middle) for i in range(3)]
+    delta = [centre[i] - shoulder[i] for i in range(3)]
+    moved = [scale * (turn[row * 3] * delta[0] + turn[row * 3 + 1] * delta[1]
+                      + turn[row * 3 + 2] * delta[2]) for row in range(3)]
+    reach_axis = [tip[i] - head[i] for i in range(3)]
+    length = math.sqrt(sum(value * value for value in reach_axis))
+    reach_axis = [value / length for value in reach_axis]
+    across = sum(moved[i] * reach_axis[i] for i in range(3))
+    shift = [moved[i] - reach_axis[i] * across for i in range(3)]
     return {"axis": axis, "shoulder": tuple(shoulder), "turn": turn,
             "scale": scale, "from": tuple(shoulder),
-            "to": (head[0], head[1], head[2]),
+            "to": tuple(head[i] - shift[i] for i in range(3)),
             "low": low, "high": high, "span": span,
             "wrist": min(max(wrist, low), high)}
 
@@ -942,7 +976,8 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     The arms are carried onto Halo's own first-person rig, which holds them
     straight out in its rest pose. The carry is one similarity per side,
     measured from the arm's own mesh: its long axis onto Halo's arm bones, its
-    length laid along them, and its shoulder shifted onto Halo's. The whole side
+    length laid along them, and its own middle shifted onto Halo's bone. The
+    whole side
     moves as one - sleeve, glove and pad - so it keeps its shape exactly and
     cannot tear, and its groups are renamed to that rig's bones with its own
     weights travelling across. Nothing is re-modelled and nothing is re-skinned.
