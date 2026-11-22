@@ -1,9 +1,8 @@
 # Avatar Item Extractor
 
 Double-click `Extract-AvatarItem-v20.bat` with your Xbox 360 avatar items in the
-same folder. It extracts their models, textures and colours, labels each one MP
-or SP, and rigs them onto Halo CE's biped, first-person arms and the NXE avatar
-skeleton.
+same folder. It extracts their models, textures and colours, and rigs them onto
+Halo CE's biped, first-person arms and the NXE avatar skeleton.
 
 An item can be given however you have it: loose `asset.bin` / `asset_v2.bin`, or
 the marketplace package itself - the file named after the item's GUID, with no
@@ -37,6 +36,7 @@ Test Item\
     card_art.png
     Test Item.blend  the item on the biped with the FP arms, ready to export
     Test Item.fbx, Test Item.jms  the same rig, for tools that cannot read .blend
+    Test Item - fp arms.blend, .fbx, .jms  hand items only: the item on the arms
     Test Item - NXE.blend, .fbx, .glb  rigged to the 71-joint NXE skeleton
     Test Item - unrigged.blend, .fbx  the model with no skeleton
     report.txt, scene.json, skeleton.json, blender.log
@@ -63,6 +63,25 @@ the rig files are there, and left exactly as the package stores it when they are
 not. `NXE` is the same model bound to the NXE avatar skeleton in the package's
 own space, y-up metres, so it drops into the 2008 editor's rig as the game
 ships it.
+
+An item is modelled where it is worn, and that is where it stays: a beret sits
+at 1.40 m, a tee at 0.91 m, a ring 0.63 m out to one side, at a hand. The
+position is the item's own, so a ring finds the hand by itself instead of landing
+on whatever bone happens to be near the middle of the body. The `NXE` copy uses
+those coordinates unchanged, because they are the avatar's own - a tee comes to
+rest 16 mm from the spine joint and a ring 35 mm from a finger.
+
+The Halo copies are grown to the biped, which is a 1.91 m Spartan against the
+1.4 m body the items are authored on. One uniform factor, measured from the
+biped's own floor-to-head height, lifts a beret onto the head and a tee's top to
+`spine1`. Cloth grows from the floor. A solid prop grows where it stands: its
+position belongs to the hand wearing it, and growing it from the ground would
+push it sideways, off the hand and onto an arm.
+
+Halo's body and hands are separate models, and the fingers exist only on the
+arms. An item whose nearest bone is a hand - a ring, a wristband - therefore also
+gets its own copy on the arms, bound to the finger it belongs to. `report.txt`
+names all three bindings: the avatar joint, the biped bone, and the arms bone.
 
 Each `.blend` is a saved scene holding just that one model, so it opens straight
 onto the item rather than onto the whole rigging session.
