@@ -115,16 +115,18 @@ from the body and the player sees the arms, not the body's:
   rig. Whole shells are taken, not loose vertices: a piece joins the set when
   most of its weight is on an upper arm, forearm or hand bone - shoulder plates
   weighted to a clavicle are left out - so the seam falls where the arm ends and
-  no plate is ever cut in half. Each vertex is then carried onto the
-  first-person rig's rest pose (the biped's arms hang at its sides, Halo's
-  first-person arms run straight out) by the bones it actually rides, blended by
-  its own weights, so the arm bends at the elbow where its skin bends and no
-  plate is sheared off it, and its weights are renamed onto the matching bones
-  (upper arm, forearm, hand to the wrist). Nothing is modelled again and nothing is retextured: faces,
-  UVs, smoothing and materials come across as they are. A hand item - a ring, a
-  badge - rides its hand bone instead. An item with no arm geometry at all (a
-  hat) still gets the file, on the arms rig with an empty mesh, and `report.txt`
-  says why.
+    no plate is ever cut in half. The arms are not moved and not re-skinned: they
+  ride an armature built from the very bones they are already weighted to, in
+  place, with those bones renamed the way Halo's first-person set names them
+  (`frame l upperarm`, `frame l forearm`, `frame l wriste`). The skeleton is
+  therefore inside the arms wherever they hang, instead of the arms being
+  rotated onto a second rig's rest pose - Halo's first-person rig holds its arms
+  dead straight out, so there is no bend in it to line anything up with.
+  Nothing is modelled again and nothing is retextured: faces, UVs, smoothing and
+  materials come across as they are. A hand item - a ring, a badge - rides its
+  hand bone instead, whole, on the supplied arms rig. An item with no arm
+  geometry at all (a hat) still gets the file, on the arms rig with an empty
+  mesh, and `report.txt` says why.
 
 Both `.blend` files carry a `READ ME` text block inside them naming the game,
 the rig and the mesh, so the file still says what it is after it is copied out

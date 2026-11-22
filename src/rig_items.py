@@ -568,60 +568,68 @@ def arm_share(weights, names=ARM_BONES):
     return arm / total if total > 0.0 else 0.0
 
 
-def bone_frame(armature, armature_fp, source, target):
-    """The transform that carries one bone's rest frame onto the first-person
-    rig's bone of the same job.
+def arm_bones(armature, names=ARM_BONES):
+    """The item's own arm bones, as a plan for an armature of their own.
 
-    A bone's rest matrix carries its direction and its roll, so this is the
-    only mapping that is defined for every rig - building a frame out of the
-    elbow's bend is not, because Halo's first-person arms are dead straight and
-    a straight chain has no bend to give the roll.
+    Each entry is (own bone, first-person bone, head, tail, roll, parent's own
+    bone). The heads and tails are the bones the cut arms are already weighted
+    to, so a skeleton built from this plan sits inside those arms wherever they
+    hang. Halo's first-person rig holds its arms straight out in a rest pose of
+    its own, and carrying the arms onto it means inventing a rotation between
+    two bodies - which is what kept landing them at the wrong angle.
     """
-    was = armature.data.bones.get(source)
-    now = armature_fp.data.bones.get(target)
-    if was is None or now is None:
-        return None
-    return ((armature_fp.matrix_world @ now.matrix_local)
-            @ (armature.matrix_world @ was.matrix_local).inverted())
-
-
-def arm_frames(armature, armature_fp, names=ARM_BONES):
-    """Item bone name -> its frame on the first-person rig."""
-    frames = {}
+    plan = []
     for source in names:
+        was = armature.data.bones.get(source) if armature is not None else None
         target = FP_BONES.get(source)
-        if target is None:
+        if was is None or target is None:
             continue
-        frame = bone_frame(armature, armature_fp, source, target)
-        if frame is not None:
-            frames[source] = frame
-    return frames
+        parent = was.parent.name if was.parent is not None else None
+        plan.append((source, target,
+                     tuple(float(value) for value in was.head_local),
+                     tuple(float(value) for value in was.tail_local),
+                     float(was.roll), parent))
+    return plan
 
 
-def carry_point(frames, weights, point, home=None):
-    """Move one point onto the first-person arms, weighted the way it is bound.
+def build_arm_rig(armature, plan, label="halo fp arms rig"):
+    """An armature holding just the arms, named the way Halo's set names them.
 
-    Every bone the vertex rides pulls it into that bone's frame and the pulls
-    are averaged by the weights, so the arm bends at the elbow where its skin
-    does. Hinging the whole arm on one bone put it at the wrong angle; moving
-    each vertex on only its heaviest bone tore the shells apart. Blending the
-    bones the vertex actually rides does neither.
-
-    Returns None when the vertex rides none of the bones that have a frame.
+    Built in place from the item's own arm bones, so the mesh needs no moving:
+    the bones are exactly where the arms already are. The bones carry Halo's
+    first-person names (frame l upperarm, forearm, wriste), so the arms are
+    addressed the same way and can be posed, exported or merged by name.
     """
-    pulled = None
-    total = 0.0
-    for name, weight in weights.items():
-        frame = frames.get(name)
-        if frame is None or weight <= 0.0:
-            continue
-        moved = frame @ point
-        pulled = moved * weight if pulled is None else pulled + moved * weight
-        total += weight
-    if total <= 0.0:
-        fallback = frames.get(home) if home else None
-        return fallback @ point if fallback is not None else None
-    return pulled / total
+    data = bpy.data.armatures.new(label)
+    rig = bpy.data.objects.new(label, data)
+    bpy.context.scene.collection.objects.link(rig)
+    rig.matrix_world = armature.matrix_world
+    active = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = rig
+    rig.select_set(True)
+    try:
+        bpy.ops.object.mode_set(mode="EDIT")
+        made = {}
+        for source, target, head, tail, roll, _parent in plan:
+            bone = data.edit_bones.new(target)
+            bone.head = head
+            bone.tail = tail
+            bone.roll = roll
+            made[source] = bone
+        for source, _target, _head, _tail, _roll, parent in plan:
+            if parent in made:
+                made[source].parent = made[parent]
+                made[source].use_connect = False
+        bpy.ops.object.mode_set(mode="OBJECT")
+    except Exception:
+        try:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception:
+            pass
+        raise
+    finally:
+        bpy.context.view_layer.objects.active = active
+    return rig
 
 
 def shell_faces(mesh):
@@ -711,38 +719,41 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     the arms keep the item's colours and shading and can be exported or merged
     as they stand.
 
-    Each vertex is carried onto the first-person rig by the bones it actually
-    rides, blended by its own weights, so the arm lands on that rig's rest pose
-    - the arms run straight out - and bends at the elbow where its skin bends.
-    Its weights are renamed to that rig's bones (upper arm, forearm, hand to
-    the wrist). A hand item never gets here - it rides its hand bone whole.
+    Nothing is moved and nothing is re-skinned: the arms keep the positions and
+    weights they already have, and the armature they ride is a copy of those
+    very bones, renamed the way Halo's first-person set names them (upper arm,
+    forearm, hand to the wrist). The bones are therefore inside the arms by
+    construction, which is the one thing no cross-rig alignment could promise.
+    A hand item never gets here - it rides its hand bone whole.
 
-    Returns None when the item has no geometry on an arm bone - a hat is not an
-    arm, and inventing one would only be a second wrong file.
+    Returns (arms object, armature it rides), or (None, None) when the item has
+    no geometry on an arm bone - a hat is not an arm, and inventing one would
+    only be a second wrong file.
     """
     mesh = object_data.data
     if not mesh.polygons:
-        return None
+        return None, None
     weights = vertex_weights(object_data)
     pieces = arm_pieces(object_data, names)
     if not pieces:
         log("%s: no shell is mostly on the arms, so there is no arm to cut"
             % object_data.name)
-        return None
+        return None, None
 
-    # Which bones the first-person rig can hold. A weight with nowhere to go
-    # would leave its vertex behind at rest while the rest of the arm moved.
-    mapping = {}
-    if armature_fp is not None:
-        for source, target in FP_BONES.items():
-            if source in names and armature_fp.data.bones.get(target) is not None:
-                mapping[source] = target
-    frames = {}
-    if armature is not None and armature_fp is not None:
-        frames = arm_frames(armature, armature_fp, names)
-    if not frames:
-        log("no matching arm bones on the first-person rig: the cut keeps the "
-            "biped's placement")
+    # The armature the arms ride: their own copy of the bones they are already
+    # weighted to, named the way Halo's first-person set names them. If it
+    # cannot be built the arms stay on the biped, which is equally in place.
+    plan = arm_bones(armature, names)
+    rig = None
+    if plan:
+        try:
+            rig = build_arm_rig(armature, plan)
+        except Exception as problem:  # noqa: BLE001 - the biped already fits
+            log("could not build an armature for the arms (%s: %s); they stay "
+                "on the biped's arm bones"
+                % (type(problem).__name__, problem))
+    mapping = ({source: target for source, target, _h, _t, _r, _p in plan}
+               if rig is not None else {})
 
     home = {}
     for piece in pieces:
@@ -754,26 +765,18 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     carried = {}
     for index in order:
         point = object_data.matrix_world @ mesh.vertices[index].co
-        moved = carry_point(frames, weights[index], point, home[index])
-        if moved is None:
-            coords.append((float(point[0]), float(point[1]), float(point[2])))
-        else:
-            coords.append((float(moved[0]), float(moved[1]), float(moved[2])))
+        coords.append((float(point[0]), float(point[1]), float(point[2])))
         per = {}
         for name, weight in weights[index].items():
-            target = mapping.get(name)
-            if target:
-                per[target] = per.get(target, 0.0) + weight
-        if not per:
-            carried_bone = mapping.get(home[index])
-            if carried_bone:
-                # A shell is kept whole, so a vertex of it that was weighted to
-                # the body rides the piece's own arm bone instead of being left
-                # behind when the arm moves.
-                per = {carried_bone: 1.0}
-            else:  # no first-person rig to rename for: keep the arm bones
-                per = {name: weight for name, weight in weights[index].items()
-                       if name in names}
+            if name not in names:
+                continue
+            renamed = mapping.get(name, name)
+            per[renamed] = per.get(renamed, 0.0) + weight
+        if not per and home[index] is not None:
+            # A shell is kept whole, so a vertex of it that was weighted to the
+            # body rides the piece's own arm bone rather than being left with no
+            # group at all.
+            per = {mapping.get(home[index], home[index]): 1.0}
         total = sum(per.values())
         if total <= 0.0:
             continue
@@ -804,21 +807,21 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
         group = arms.vertex_groups.new(name=name)
         for position, weight in pairs:
             group.add([position], weight, "REPLACE")
-    # The coordinates are already in the first-person rig's space, so the object
-    # rides that rig rather than the biped's.
-    holder = armature_fp if mapping else armature
+    # The arms ride their own armature when it was built, and the biped's arm
+    # bones when it was not. Either way the bones are inside the mesh.
+    holder = rig if rig is not None else armature
     if holder is not None:
         arms.parent = holder
         arms.matrix_parent_inverse = holder.matrix_world.inverted()
         modifier = arms.modifiers.new(name="Armature", type="ARMATURE")
         modifier.object = holder
-    sides = sorted({piece["side"] for piece in pieces})
     log("cut %s: %d of %d vert(s), %d face(s) in %d shell(s), %s, on %s"
         % (arms.name, len(order), len(mesh.vertices), len(faces), len(pieces),
-           ("carried on %d bone frame(s)" % len(frames)) if frames
-           else "kept in place",
+           ("its own armature, %d bones" % len(plan)) if rig is not None
+           else ("the biped's arm bones" if armature is not None
+                 else "no armature"),
            ", ".join(sorted(carried)) or "no bone (the rig has none of them)"))
-    return arms
+    return arms, holder
 
 
 def arms_for(merged, armature, armature_fp, bone_name, record):
@@ -826,8 +829,10 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
 
     The arm cut is the one step with no fallback worth failing the run over: it
     is a second set, and an item whose arms cannot be separated still has its
-    body, its `.jms` and its textures. So this returns None instead of raising,
-    and the pass carries on with the rest of the item.
+    body, its `.jms` and its textures. So this returns (None, None) instead of
+    raising, and the pass carries on with the rest of the item.
+
+    Otherwise it returns (the arms object, the armature the object rides).
     """
     arms = None
     try:
@@ -840,14 +845,14 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
             bpy.context.scene.collection.objects.link(arms)
             place_on_arms(arms, armature, armature_fp, bone_name)
             record["arms_binding"] = skin(arms, armature_fp, rigid=True)
-            return arms
-        arms = arm_region(merged, armature, armature_fp)
+            return arms, armature_fp
+        arms, rig = arm_region(merged, armature, armature_fp)
         if arms is not None:
-            # Already placed on its own bones and weighted by arm_region: a
-            # second, distance-based bind here would re-guess weights that
-            # were carried over exactly.
+            # Already on its own bones and weighted by arm_region: a second,
+            # distance-based bind here would re-guess weights that came across
+            # exactly.
             record["arms_binding"] = weights_summary(arms)
-        return arms
+        return arms, rig
     except Exception as problem:  # noqa: BLE001 - a bad cut must not end the pass
         log("could not build the first-person arms for %s (%s: %s)"
             % (merged.name, type(problem).__name__, problem))
@@ -858,7 +863,7 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
                 pass
         record["arms_binding"] = ("failed - %s: %s"
                                   % (type(problem).__name__, problem))
-        return None
+        return None, None
 
 
 def is_prop(object_data, limit=3.0):
@@ -1480,6 +1485,7 @@ def main():
         record["nxe_binding"] = skin(
             nxe, nxe_rig, rigid=is_prop(nxe, 3.0 / HALO_UNITS_PER_METRE))
         arms_item = None
+        arms_rig = None
         if armature:
             prop = is_prop(merged, 3.0 / HALO_UNITS_PER_METRE)
             anchor = None if prop else garment_anchor(merged, armature)
@@ -1493,8 +1499,8 @@ def main():
             record["binding"] = skin(merged, armature, rigid=prop)
             bone_name = hand_bone(record.get("binding") or "")
             if armature_fp:
-                arms_item = arms_for(merged, armature, armature_fp, bone_name,
-                                     record)
+                arms_item, arms_rig = arms_for(merged, armature, armature_fp,
+                                               bone_name, record)
             if arms_item is None and armature_fp:
                 # Nothing on an arm bone (a hat, a badge). The second set still
                 # exists so every item has the pair tool.exe users expect, and
@@ -1503,6 +1509,7 @@ def main():
                 arms_item = bpy.data.objects.new("%s arms" % merged.name, empty)
                 bpy.context.scene.collection.objects.link(arms_item)
                 arms_item.parent = armature_fp
+                arms_rig = armature_fp
                 if not (record.get("arms_binding") or "").startswith("failed"):
                     record["arms_binding"] = "none - this item has no arm geometry"
                     log("%s has no arm geometry: the fp arms set holds the rig only"
@@ -1510,9 +1517,9 @@ def main():
                 else:
                     log("%s: the fp arms set holds the rig only, because the cut "
                         "failed" % merged.name)
-        rigged.append((record, merged, nxe, arms_item))
+        rigged.append((record, merged, nxe, arms_item, arms_rig))
 
-    for _, merged, _nxe, _arms in rigged:
+    for _, merged, _nxe, _arms, _rig in rigged:
         merged.select_set(False)
 
     out = options["out"]
@@ -1525,7 +1532,7 @@ def main():
     os.makedirs(blend_dir, exist_ok=True)
     os.makedirs(hek_data, exist_ok=True)
     stems = []
-    for record, merged, nxe, arms_item in rigged:
+    for record, merged, nxe, arms_item, arms_rig in rigged:
         stem = os.path.splitext(os.path.basename(record.get("obj") or record["id"]))[0]
         stems.append(stem)
         # data\<item>\ is what tool.exe takes as its source directory, and it
@@ -1557,17 +1564,19 @@ def main():
             # The second set is written separately, so a problem in it - a mesh
             # Blender will not export, a failed cut - cannot cost the item its
             # Halo body, its .jms or the rest of the run.
+            if arms_rig is None:
+                arms_rig = armature_fp
             try:
                 if options["jms"] and arms_item.data.vertices:
                     record["jms_arms_errors"] = export_jms(
-                        arms_item, armature_fp,
+                        arms_item, arms_rig,
                         os.path.join(models_dir, "%s - fp arms.jms" % stem))
                 record["arms_file"] = "%s - halo fp arms.blend" % stem
                 export_rigged(os.path.join(blend_dir, record["arms_file"]),
-                              arms_item, armature_fp, "blend",
-                              halo_note(stem, arms_item, armature_fp, True))
+                              arms_item, arms_rig, "blend",
+                              halo_note(stem, arms_item, arms_rig, True))
                 export_rigged(os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
-                              arms_item, armature_fp, "fbx")
+                              arms_item, arms_rig, "fbx")
                 log("wrote %s on the first-person arms" % stem)
             except Exception as problem:  # noqa: BLE001 - see above
                 record.pop("arms_file", None)

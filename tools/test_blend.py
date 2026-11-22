@@ -276,8 +276,8 @@ def main():
     # What belongs in the first-person set: whole shells picked by the bones
     # they are mostly weighted to, and carried across rigidly so no piece can be
     # stretched or torn off the arm.
-    for name in ("arm_share", "ARM_SHARE", "arm_pieces", "bone_frame",
-                 "arm_frames", "carry_point"):
+    for name in ("arm_share", "ARM_SHARE", "arm_pieces", "arm_bones",
+                 "build_arm_rig"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -345,50 +345,48 @@ def main():
                     or cut[0]["bone"] != "bip01 l forearm"):
             fail("the sleeve is not on the left forearm: %r" % (cut[0],))
 
-        # A frame per bone, blended by the weights the vertex already has: the
-        # arm lands on the first-person rig with nothing sheared or torn, and a
-        # point that rides one bone follows that bone exactly.
-        class Vec:
-            def __init__(self, *values):
-                self.values = list(values)
+        # The arms ride a rig built from the very bones they are weighted to,
+        # named the way Halo's first-person set names them: the bones are then
+        # inside the arms wherever they hang, and nothing has to be rotated
+        # between two different bodies.
+        class Parent:
+            def __init__(self, name):
+                self.name = name
 
-            def __mul__(self, factor):
-                return Vec(*(value * factor for value in self.values))
+        class Boneish:
+            def __init__(self, name, head, tail, roll=0.0, parent=None):
+                self.name = name
+                self.head_local = head
+                self.tail_local = tail
+                self.roll = roll
+                self.parent = parent
 
-            def __truediv__(self, factor):
-                return Vec(*(value / factor for value in self.values))
+        clavicle = Boneish("bip01 l clavicle", (0.0, 0.0, 2.3), (0.0, 0.0, 2.0))
+        upper = Boneish("bip01 l upperarm", (0.0, 0.0, 2.0), (0.0, 0.0, 1.0),
+                        parent=Parent("bip01 l clavicle"))
+        fore = Boneish("bip01 l forearm", (0.0, 0.0, 1.0), (0.0, 0.0, 0.2),
+                       parent=Parent("bip01 l upperarm"))
+        hand = Boneish("bip01 l hand", (0.0, 0.0, 0.2), (0.0, 0.1, -0.1),
+                       parent=Parent("bip01 l forearm"))
+        rig = types.SimpleNamespace(data=types.SimpleNamespace(bones={
+            bone.name: bone
+            for bone in (clavicle, upper, fore, hand)}))
+        plan = module.arm_bones(rig)
+        named = [entry[1] for entry in plan]
+        print("  arm_bones           -> %r" % (named,))
+        if named != ["frame l upperarm", "frame l forearm", "frame l wriste"]:
+            fail("the arms' own rig is not named for the first-person set: %r"
+                 % (named,))
+        if plan[0][5] != "bip01 l clavicle":
+            fail("the upper arm's parent was lost: %r" % (plan[0],))
+        if plan[1][5] != "bip01 l upperarm":
+            fail("the forearm is not hung off the upper arm: %r" % (plan[1],))
+        if plan[0][2] != (0.0, 0.0, 2.0) or plan[0][3] != (0.0, 0.0, 1.0):
+            fail("the arm bones were not copied where the arms are: %r"
+                 % (plan[0],))
+        if module.arm_bones(None) != []:
+            fail("a rig was planned without a skeleton to plan it from")
 
-            def __add__(self, other):
-                return Vec(*(a + b for a, b in zip(self.values, other.values)))
-
-        class Shift:
-            def __init__(self, offset):
-                self.offset = offset
-
-            def __matmul__(self, point):
-                return Vec(*(point.values[i] + self.offset[i] for i in range(3)))
-
-        frames = {"bip01 l upperarm": Shift((0.0, 0.0, 10.0)),
-                  "bip01 l forearm": Shift((10.0, 0.0, 0.0))}
-        one = module.carry_point(frames, {"bip01 l upperarm": 1.0},
-                                 Vec(1.0, 2.0, 3.0), "bip01 l upperarm")
-        half = module.carry_point(
-            frames,
-            {"bip01 l upperarm": 0.5, "bip01 l forearm": 0.5},
-            Vec(1.0, 2.0, 3.0), "bip01 l upperarm")
-        print("  carry_point         -> one bone %r, blended %r"
-              % (one.values, half.values))
-        if [round(value, 6) for value in one.values] != [1.0, 2.0, 13.0]:
-            fail("a vertex riding one bone did not follow that bone: %r"
-                 % (one.values,))
-        if [round(value, 6) for value in half.values] != [6.0, 2.0, 8.0]:
-            fail("a vertex riding two bones was not carried by both: %r"
-                 % (half.values,))
-        if module.carry_point({}, {"bip01 l upperarm": 1.0},
-                              Vec(0.0, 0.0, 0.0), None) is not None:
-            fail("a point was moved by a bone the first-person rig has not got")
-        if not hasattr(module, "arm_frames"):
-            fail("no arm_frames: the arm cannot be carried bone by bone")
         # Every bone the cut keeps has to exist on the first-person rig, or the
         # carried weights name a bone that rig does not have.
         for bone in getattr(module, "ARM_BONES", ()):
@@ -410,14 +408,15 @@ def main():
         module.arm_region = explode
         record = {}
         try:
-            failed = module.arms_for(
+            failed, failed_rig = module.arms_for(
                 types.SimpleNamespace(name="UNSC Marine Armor"),
                 types.SimpleNamespace(name="biped"),
                 types.SimpleNamespace(name="arms rig"), None, record)
         finally:
             module.arm_region = original
-        print("  arms_for (bad cut)  -> %r, %r" % (failed, record.get("arms_binding")))
-        if failed is not None:
+        print("  arms_for (bad cut)  -> %r, %r, %r"
+              % (failed, failed_rig, record.get("arms_binding")))
+        if failed is not None or failed_rig is not None:
             fail("arms_for returned an object after the cut raised")
         if not str(record.get("arms_binding", "")).startswith("failed"):
             fail("a failed cut leaves no trace in the report: %r" % (record,))
