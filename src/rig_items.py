@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v26"
-BUILD = "2026-11-22 fp-arms-centred-on-bone"
+VERSION = "v27"
+BUILD = "2026-11-22 fp-arms-pads-upright"
 
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
 DEFORM_BONES = (
@@ -720,7 +720,10 @@ def arm_centre(points, weights, side):
     """The middle of the side's own skin, leaving shoulder armour out.
 
     A pauldron rides the arm but stands well off it, so counting its vertices
-    here would pull the whole arm inward by half a pad.
+    here would pull the whole arm inward by half a pad. This is the fallback for
+    a caller that cannot say which shell is the arm itself; arm_region names the
+    arm's own shell instead, which also leaves out a pad weighted to the upper
+    arm - the weighting most avatar items give their shoulder plates.
     """
     proper = ("bip01 %s upperarm" % side, "bip01 %s forearm" % side,
               "bip01 %s hand" % side)
@@ -734,7 +737,7 @@ def arm_centre(points, weights, side):
     return held or list(points)
 
 
-def side_carry(armature, armature_fp, side, points, weights):
+def side_carry(armature, armature_fp, side, points, weights, middle=None):
     """How one side's arm, as the mesh holds it, gets onto Halo's arm.
 
     One similarity for the whole side: the arm's own axis is turned onto Halo's
@@ -761,7 +764,11 @@ def side_carry(armature, armature_fp, side, points, weights):
     hand_bone = armature_fp.data.bones.get("frame %s wriste" % side)
     if was is None or head_bone is None or hand_bone is None:
         return None
-    axis, _centre = arm_axis(points)
+    # The arm's own shell answers which way the arm runs. Shoulder armour is
+    # bolted across the shoulder, not along the arm, and a big pad would tilt the
+    # axis the whole side is turned by.
+    held = middle if middle else arm_centre(points, weights, side)
+    axis, _centre = arm_axis(held if held else points)
     if axis is None:
         return None
     shoulder = armature.matrix_world @ was.head_local
@@ -802,8 +809,9 @@ def side_carry(armature, armature_fp, side, points, weights):
     # stood 6.3 units from Halo's own on a sleeve 3 units out. Shifting the
     # whole side by the same amount changes no length, so it cannot tear what it
     # moves; this is the one placement error a similarity is still free to fix.
-    middle = arm_centre(points, weights, side)
-    centre = [sum(point[i] for point in middle) / len(middle) for i in range(3)]
+    # `middle` is the arm's own shell when the caller knows it, so a pauldron
+    # weighted to the upper arm cannot drag the whole side off the bone.
+    centre = [sum(point[i] for point in held) / len(held) for i in range(3)]
     delta = [centre[i] - shoulder[i] for i in range(3)]
     moved = [scale * (turn[row * 3] * delta[0] + turn[row * 3 + 1] * delta[1]
                       + turn[row * 3 + 2] * delta[2]) for row in range(3)]
@@ -828,6 +836,27 @@ def place_arm(place, point):
     return tuple(place["to"][row] + scale * (
         turn[row * 3] * delta[0] + turn[row * 3 + 1] * delta[1]
         + turn[row * 3 + 2] * delta[2]) for row in range(3))
+
+
+def place_pad(place, point):
+    """Where one shoulder-pad vertex goes: the side's shift and scale, no turn.
+
+    A pauldron is worn over the shoulder, not on the arm, so it sits above the
+    joint the arm hangs from. Turning it with the arm - which swings that "above"
+    through a quarter turn - carries it behind the shoulder and leaves the plate
+    standing across the arm, like a signboard. Keeping the item's own upright
+    placement and riding the side's shift instead puts it back on top of the
+    shoulder, where Halo's own first-person arms wear theirs.
+
+    The shift and one scale still multiply every edge of the pad by the same
+    number, so a pad cannot tear either.
+    """
+    if place is None:
+        return tuple(point)
+    scale = place["scale"]
+    return tuple(place["to"][axis]
+                 + scale * (point[axis] - place["from"][axis])
+                 for axis in range(3))
 
 
 def hand_share(place, point):
@@ -980,7 +1009,11 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     whole side
     moves as one - sleeve, glove and pad - so it keeps its shape exactly and
     cannot tear, and its groups are renamed to that rig's bones with its own
-    weights travelling across. Nothing is re-modelled and nothing is re-skinned.
+    weights travelling across. Shoulder armour is the one exception: it stands
+    above the joint the arm hangs from, so turning it with the arm carries it
+    behind the shoulder as a raised fin. Pads keep the item's own upright
+    placement and ride the side's shift instead, still without distortion.
+    Nothing is re-modelled and nothing is re-skinned.
     A hand item never gets here - it rides its hand bone whole.
 
     Returns (arms object, armature it rides), or (None, None) when the item has
@@ -1004,12 +1037,20 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     # disagree about which way an arm points.
     side_points = {"l": [], "r": []}
     side_weights = {"l": [], "r": []}
+    # The arm itself is the side's biggest shell - a sleeve, or the body's own
+    # arm. A pad is measured from that, not the other way round.
+    sleeve = {}
     for piece in pieces:
         for index in piece["indices"]:
             side_points[piece["side"]].append(world @ mesh.vertices[index].co)
             side_weights[piece["side"]].append(weights[index])
+        if (piece["side"] not in sleeve
+                or len(piece["indices"]) > len(sleeve[piece["side"]]["indices"])):
+            sleeve[piece["side"]] = piece
     carry = {side: side_carry(armature, armature_fp, side, points,
-                              side_weights[side])
+                              side_weights[side],
+                              middle=[world @ mesh.vertices[index].co
+                                      for index in sleeve[side]["indices"]])
              for side, points in side_points.items() if points}
     if not any(carry.values()):
         log("no arm axis could be measured: the arms keep the biped's placement")
@@ -1026,6 +1067,27 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         for index in piece["indices"]:
             home[index] = piece["bone"]
             side_of[index] = piece["side"]
+    # Which shells are shoulder armour rather than arm: anything but the side's
+    # own sleeve that sits at or behind the shoulder joint. A bracer, a gauntlet
+    # or a glove is further down the arm and still turns with it.
+    pads = set()
+    for piece in pieces:
+        place = carry.get(piece["side"])
+        if place is None or piece is sleeve.get(piece["side"]):
+            continue
+        middle = [world @ mesh.vertices[index].co for index in piece["indices"]]
+        centre = [sum(point[axis] for point in middle) / len(middle)
+                  for axis in range(3)]
+        along = sum((centre[axis] - place["shoulder"][axis]) * place["axis"][axis]
+                    for axis in range(3))
+        # A shell whose middle is up past the shoulder joint is a pad mounted
+        # over the shoulder: turned with the arm, the little height it has over
+        # the joint swings round into a plate standing across the arm. One
+        # mounted on the arm itself - a band, a bracer, a gauntlet - is below
+        # the joint and turns with the arm, which is right.
+        if along < 0.0:
+            for index in piece["indices"]:
+                pads.add(index)
     order = sorted(home)
     slot = {index: position for position, index in enumerate(order)}
     coords = []
@@ -1052,7 +1114,8 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         if place is None:
             coords.append((float(point[0]), float(point[1]), float(point[2])))
         else:
-            moved = place_arm(place, point)
+            moved = (place_pad(place, point) if index in pads
+                     else place_arm(place, point))
             coords.append(moved)
             step = math.sqrt(sum((moved[axis] - point[axis]) ** 2
                                  for axis in range(3)))
@@ -1095,6 +1158,9 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         log("hand weights: the item gave %s side(s) no hand bone, so the glove "
             "runs from the forearm to Halo's hand along the arm"
             % "".join(sorted(filled)))
+    if pads:
+        log("%d vert(s) of shoulder armour ride the shoulder upright: a pad "
+            "does not turn with the arm" % len(pads))
     for side in sorted(carry):
         place = carry[side]
         if place is not None:

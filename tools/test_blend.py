@@ -278,7 +278,8 @@ def main():
     # they are mostly weighted to, and carried across rigidly so no piece can be
     # stretched or torn off the arm.
     for name in ("arm_share", "ARM_SHARE", "arm_pieces", "arm_axis",
-                 "alignment", "place_point", "side_carry", "hand_share"):
+                 "alignment", "place_point", "side_carry", "hand_share",
+                 "place_pad"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -528,6 +529,48 @@ def main():
                 if abs(middle - 9.4) > 0.6:
                     fail("an arm modelled 3 units out sat at y %.2f, off Halo's "
                          "bone" % (middle,))
+            # Shoulder armour rides the shoulder, upright, instead of turning
+            # with the arm: a pad sits above the joint the arm hangs from, so
+            # the arm's quarter turn swings that height round into a plate
+            # standing across the arm - the fins the Marine set came out with.
+            if not hasattr(module, "place_pad"):
+                fail("no place_pad: shoulder armour would turn with the arm")
+            else:
+                # a pad worn above the shoulder joint: 1 and 3 units over it
+                pad = [Vec(-2.0, 9.0, 57.0), Vec(2.0, 9.0, 57.0),
+                       Vec(-2.0, 9.0, 59.0), Vec(2.0, 9.0, 59.0)]
+                pad_now = [module.place_pad(place, point) for point in pad]
+                turned = [module.place_arm(place, point) for point in pad]
+                height = sum(point[2] for point in pad_now) / len(pad_now)
+                turned_height = sum(point[2] for point in turned) / len(turned)
+                print("  place_pad          -> pad height %.2f (turned %.2f) "
+                      "from %r / %r"
+                      % (height, turned_height, tuple(pad_now[0]),
+                         tuple(turned[0])))
+                if height < 0.5 or height <= turned_height:
+                    fail("a pad above the shoulder came out at z %.2f, turned "
+                         "with the arm (%.2f)" % (height, turned_height))
+                ratios = []
+                for i in range(len(pad)):
+                    for j in range(i + 1, len(pad)):
+                        was = math.dist(tuple(pad[i]), tuple(pad[j]))
+                        now = math.dist(tuple(pad_now[i]), tuple(pad_now[j]))
+                        ratios.append(now / was)
+                if max(ratios) - min(ratios) > 1e-9:
+                    fail("the pad carry distorted the pad: %r" % (ratios,))
+                # A pad weighted to the upper arm is the item's shoulder plate,
+                # not part of its skin: it must not drag the side's centre off
+                # the bone.
+                padded = arm + pad
+                padded_weights = per_bone + [{"bip01 l upperarm": 1.0}] * len(pad)
+                with_pad = module.side_carry(biped_rig, fp_rig, "l", padded,
+                                             padded_weights, middle=arm)
+                if with_pad is None:
+                    fail("an arm with a pad was not placed")
+                elif max(abs(with_pad["to"][axis] - place["to"][axis])
+                         for axis in range(3)) > 1e-6:
+                    fail("a shoulder pad moved the arm's own centre to %r"
+                         % (with_pad["to"],))
         if module.side_carry(None, fp_rig, "l", arm, per_bone) is not None:
             fail("an arm was placed with no biped to measure from")
         if module.side_carry(biped_rig, fp_rig, "r", arm, per_bone) is not None:

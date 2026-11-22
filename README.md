@@ -123,13 +123,22 @@ from the body and the player sees the arms, not the body's:
   shoulder shells stay on the body: a missing pad is the smaller fault. The seam falls where the arm ends, and no plate is
   ever cut in half. Each side is then carried onto Halo's rig as one piece: the
   arm's own long axis is turned onto Halo's arm bones, its length is laid along
-  them, and the middle of its own skin is shifted onto Halo's bone - so an arm
+  them, and the middle of its own sleeve is shifted onto Halo's bone - so an arm
   modelled slightly outboard of its own skeleton still sits centred on Halo's
-  instead of hanging that far out. One turn and one scale for the
+  instead of hanging that far out. The middle is measured from the sleeve alone:
+  a pad weighted to the upper arm is armour, not skin, and counting it would pull
+  the whole arm off the bone by half a pad. One turn and one scale for the
   whole side - sleeve, glove and pad - so every edge keeps its length up to that
   single factor, and a side carried that way cannot tear whatever shape it is.
   (Turning upper arm, forearm and hand by different amounts tore the shell at
-  the joints whatever the blend; that is why it is one similarity now.) A bent
+  the joints whatever the blend; that is why it is one similarity now.) Shoulder
+  armour is the one exception: a pad is worn over the shoulder, not on the arm,
+  so a pad whose middle sits above the shoulder joint keeps the item's own
+  upright placement and rides the side's shift and scale without being turned.
+  Turned with the arm, the little height a pad has over the joint swings a
+  quarter turn and leaves the plate standing across the arm like a fin, which is
+  what a Marine's pauldrons did. A band mounted on the arm itself - a bracer, a
+  gauntlet - is below the joint and turns with the arm, as it should. A bent
   arm keeps its bend. Its vertex groups are renamed to Halo's (`frame l upperarm`,
   `frame l forearm`, `frame l wriste`), and a glove the item weighted to its
   forearm alone - an avatar rig has no finger bones - hands over to
