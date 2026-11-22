@@ -5,6 +5,12 @@ same folder. It extracts their models, textures and colours, labels each one MP
 or SP, and rigs them onto Halo CE's biped, first-person arms and the NXE avatar
 skeleton.
 
+An item can be given however you have it: loose `asset.bin` / `asset_v2.bin`, or
+the marketplace package itself - the file named after the item's GUID, with no
+extension. A package holds the same item more than once, and the newer copy is
+the one read: the one carrying the versioned metadata block, checked by actually
+parsing each copy rather than by position. The report says which copy was used.
+
 It reads only the folder the `.bat` sits in, and writes its results there too.
 
 Needs Python 3.8+. Blender 4.x makes the rigging files.
