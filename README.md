@@ -163,10 +163,13 @@ flat 64x64 image, `<stem> colour.*`. The `.mtl` names it with `map_Kd`, so the
 colour survives import in Max and Blender rather than being dropped along with
 `Kd`, and the `.tif` is a bitmap source for Halo CE's tool.
 
-If a base map or a colour card is missing, `catalogue.json` records every block
-the container held - its id, its size and its first eight bytes - and the run
-prints the same list. That is the evidence of what the item actually contains,
-so a missing texture can be looked at rather than guessed about.
+Every block the container held is named in `catalogue.json` and in `report.txt` -
+its id, its name and its size - and the two that say what an item *is* are read,
+not just listed: the metadata block gives its gender, asset type, component and
+subcategory, and the shape block gives the body triangles the item hides and the
+vertices it moves. No block is written out as a raw file: the bytes stay in the
+container, and a block this build has no reader for is named with its size, so a
+missing texture can be looked at rather than guessed about.
 
 The base map comes from the model block's own texture table first - the item
 names its slots there and each slot states its size, format and whether it holds
@@ -256,6 +259,16 @@ python3 tools/test_strb.py
 Checks the block walk: entries wider than one byte, and the zero fill a real
 container carries after its last block, which must not be read as a run of empty
 blocks.
+
+```sh
+python3 tools/test_blocks.py
+```
+
+Checks the two blocks that say what an item is: metadata (gender, asset type,
+component, subcategory, and the skeleton in the versioned form) and shape
+overrides (the target body, the triangle numbers read back as written, and the
+vertex overrides). A truncated metadata block and a shape block with a non-zero
+reserved word must both be refused, because that is what a misread looks like.
 
 ```sh
 python3 tools/test_rigging.py
