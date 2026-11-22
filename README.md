@@ -115,12 +115,12 @@ from the body and the player sees the arms, not the body's:
   rig. Whole shells are taken, not loose vertices: a piece joins the set when
   most of its weight is on an upper arm, forearm or hand bone - shoulder plates
   weighted to a clavicle are left out - so the seam falls where the arm ends and
-  no plate is ever cut in half. Each side is then carried across on one rigid
-  transform onto the first-person rig's rest pose (the biped's arms hang at its
-  sides, Halo's first-person arms run straight out), so the arm, its sleeve and
-  every plate on it keep their exact shape and their distance from each other,
-  and its weights are renamed onto the matching bones (upper arm, forearm, hand
-  to the wrist). Nothing is modelled again and nothing is retextured: faces,
+  no plate is ever cut in half. Each vertex is then carried onto the
+  first-person rig's rest pose (the biped's arms hang at its sides, Halo's
+  first-person arms run straight out) by the bones it actually rides, blended by
+  its own weights, so the arm bends at the elbow where its skin bends and no
+  plate is sheared off it, and its weights are renamed onto the matching bones
+  (upper arm, forearm, hand to the wrist). Nothing is modelled again and nothing is retextured: faces,
   UVs, smoothing and materials come across as they are. A hand item - a ring, a
   badge - rides its hand bone instead. An item with no arm geometry at all (a
   hat) still gets the file, on the arms rig with an empty mesh, and `report.txt`

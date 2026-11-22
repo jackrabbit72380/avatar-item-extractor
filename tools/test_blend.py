@@ -276,8 +276,8 @@ def main():
     # What belongs in the first-person set: whole shells picked by the bones
     # they are mostly weighted to, and carried across rigidly so no piece can be
     # stretched or torn off the arm.
-    for name in ("arm_share", "ARM_SHARE", "arm_pieces", "arm_frame",
-                 "carry_point"):
+    for name in ("arm_share", "ARM_SHARE", "arm_pieces", "bone_frame",
+                 "arm_frames", "carry_point"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -345,53 +345,50 @@ def main():
                     or cut[0]["bone"] != "bip01 l forearm"):
             fail("the sleeve is not on the left forearm: %r" % (cut[0],))
 
-        # One rigid transform per side: two points keep the distance between
-        # them when they cross to the first-person rig, so nothing is sheared,
-        # and the shoulder lands on the first-person shoulder.
-        class Bones(dict):
-            pass
+        # A frame per bone, blended by the weights the vertex already has: the
+        # arm lands on the first-person rig with nothing sheared or torn, and a
+        # point that rides one bone follows that bone exactly.
+        class Vec:
+            def __init__(self, *values):
+                self.values = list(values)
 
-        class Identity:
-            def __matmul__(self, other):
-                return other
+            def __mul__(self, factor):
+                return Vec(*(value * factor for value in self.values))
 
-        class Rig:
-            def __init__(self, points):
-                self.matrix_world = Identity()
-                self.data = types.SimpleNamespace(bones=Bones(
-                    {name: types.SimpleNamespace(head_local=point)
-                     for name, point in points.items()}))
+            def __truediv__(self, factor):
+                return Vec(*(value / factor for value in self.values))
 
-        def span(a, b):
-            return sum((a[axis] - b[axis]) ** 2 for axis in range(3)) ** 0.5
+            def __add__(self, other):
+                return Vec(*(a + b for a, b in zip(self.values, other.values)))
 
-        source = Rig({
-            "bip01 l upperarm": (0.0, 0.0, 0.0),
-            "bip01 l forearm": (0.0, 0.0, -1.0),
-            "bip01 l hand": (0.0, -1.0, -2.0),
-        })
-        target = Rig({
-            "frame l upperarm": (0.0, 0.0, 10.0),
-            "frame l forearm": (1.0, 0.0, 10.0),
-            "frame l wriste": (2.0, 0.0, 10.0),
-        })
-        frame = module.arm_frame(source, target, "l")
-        if frame is None:
-            fail("no frame was built for a complete pair of arms")
-        else:
-            first, second = (0.1, 0.2, 0.3), (0.4, -0.5, 0.6)
-            moved = [module.carry_point(frame, point)
-                     for point in (first, second)]
-            print("  arm_frame           -> %r -> %r, span %.6f -> %.6f"
-                  % (first, moved[0], span(first, second), span(*moved)))
-            if abs(span(*moved) - span(first, second)) > 1e-9:
-                fail("the arm transform is not rigid: it changed a distance")
-            shoulder = module.carry_point(frame, (0.0, 0.0, 0.0))
-            if span(shoulder, (0.0, 0.0, 10.0)) > 1e-6:
-                fail("the shoulder did not land on the first-person shoulder: "
-                     "%r" % (shoulder,))
-        if module.arm_frame(Rig({}), target, "l") is not None:
-            fail("a frame was built without a biped arm to match")
+        class Shift:
+            def __init__(self, offset):
+                self.offset = offset
+
+            def __matmul__(self, point):
+                return Vec(*(point.values[i] + self.offset[i] for i in range(3)))
+
+        frames = {"bip01 l upperarm": Shift((0.0, 0.0, 10.0)),
+                  "bip01 l forearm": Shift((10.0, 0.0, 0.0))}
+        one = module.carry_point(frames, {"bip01 l upperarm": 1.0},
+                                 Vec(1.0, 2.0, 3.0), "bip01 l upperarm")
+        half = module.carry_point(
+            frames,
+            {"bip01 l upperarm": 0.5, "bip01 l forearm": 0.5},
+            Vec(1.0, 2.0, 3.0), "bip01 l upperarm")
+        print("  carry_point         -> one bone %r, blended %r"
+              % (one.values, half.values))
+        if [round(value, 6) for value in one.values] != [1.0, 2.0, 13.0]:
+            fail("a vertex riding one bone did not follow that bone: %r"
+                 % (one.values,))
+        if [round(value, 6) for value in half.values] != [6.0, 2.0, 8.0]:
+            fail("a vertex riding two bones was not carried by both: %r"
+                 % (half.values,))
+        if module.carry_point({}, {"bip01 l upperarm": 1.0},
+                              Vec(0.0, 0.0, 0.0), None) is not None:
+            fail("a point was moved by a bone the first-person rig has not got")
+        if not hasattr(module, "arm_frames"):
+            fail("no arm_frames: the arm cannot be carried bone by bone")
         # Every bone the cut keeps has to exist on the first-person rig, or the
         # carried weights name a bone that rig does not have.
         for bone in getattr(module, "ARM_BONES", ()):
