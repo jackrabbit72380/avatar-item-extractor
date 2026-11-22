@@ -279,10 +279,10 @@ def main():
     # stretched or torn off the arm.
     for name in ("arm_share", "ARM_SHARE", "arm_pieces", "arm_axis",
                  "alignment", "place_point", "side_carry", "hand_share",
-                 "place_pad", "principal_axes", "hand_plane", "turn_about",
+                 "principal_axes", "hand_plane", "turn_about",
                  "turn_product", "turn_point", "hand_twist", "hand_fit",
                  "halo_hand", "HAND_FINGERS", "hand_span", "finger_bones",
-                 "finger_split"):
+                 "finger_split", "finger_room", "inside_out"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -506,7 +506,7 @@ def main():
             if max(ratios) - min(ratios) > 1e-9:
                 fail("the carry stretched the arm unevenly, so it can tear: %r"
                      % (ratios,))
-            if not 0.75 - 1e-9 <= ratios[0] <= 1.25 + 1e-9:
+            if not 0.5 - 1e-9 <= ratios[0] <= 1.6 + 1e-9:
                 fail("the arm was scaled x%.2f, outside the clamp" % (ratios[0],))
             # The hand weights an item does not have: none at the cuff, the
             # hand's own bone at the fingertips, so the glove follows Halo's
@@ -532,48 +532,21 @@ def main():
                 if abs(middle - 9.4) > 0.6:
                     fail("an arm modelled 3 units out sat at y %.2f, off Halo's "
                          "bone" % (middle,))
-            # Shoulder armour rides the shoulder, upright, instead of turning
-            # with the arm: a pad sits above the joint the arm hangs from, so
-            # the arm's quarter turn swings that height round into a plate
-            # standing across the arm - the fins the Marine set came out with.
-            if not hasattr(module, "place_pad"):
-                fail("no place_pad: shoulder armour would turn with the arm")
-            else:
-                # a pad worn above the shoulder joint: 1 and 3 units over it
-                pad = [Vec(-2.0, 9.0, 57.0), Vec(2.0, 9.0, 57.0),
-                       Vec(-2.0, 9.0, 59.0), Vec(2.0, 9.0, 59.0)]
-                pad_now = [module.place_pad(place, point) for point in pad]
-                turned = [module.place_arm(place, point) for point in pad]
-                height = sum(point[2] for point in pad_now) / len(pad_now)
-                turned_height = sum(point[2] for point in turned) / len(turned)
-                print("  place_pad          -> pad height %.2f (turned %.2f) "
-                      "from %r / %r"
-                      % (height, turned_height, tuple(pad_now[0]),
-                         tuple(turned[0])))
-                if height < 0.5 or height <= turned_height:
-                    fail("a pad above the shoulder came out at z %.2f, turned "
-                         "with the arm (%.2f)" % (height, turned_height))
-                ratios = []
-                for i in range(len(pad)):
-                    for j in range(i + 1, len(pad)):
-                        was = math.dist(tuple(pad[i]), tuple(pad[j]))
-                        now = math.dist(tuple(pad_now[i]), tuple(pad_now[j]))
-                        ratios.append(now / was)
-                if max(ratios) - min(ratios) > 1e-9:
-                    fail("the pad carry distorted the pad: %r" % (ratios,))
-                # A pad weighted to the upper arm is the item's shoulder plate,
-                # not part of its skin: it must not drag the side's centre off
-                # the bone.
-                padded = arm + pad
-                padded_weights = per_bone + [{"bip01 l upperarm": 1.0}] * len(pad)
-                with_pad = module.side_carry(biped_rig, fp_rig, "l", padded,
-                                             padded_weights, middle=arm)
-                if with_pad is None:
-                    fail("an arm with a pad was not placed")
-                elif max(abs(with_pad["to"][axis] - place["to"][axis])
-                         for axis in range(3)) > 1e-6:
-                    fail("a shoulder pad moved the arm's own centre to %r"
-                         % (with_pad["to"],))
+            # A plate weighted to the upper arm joins the shell it is worn on,
+            # but it is armour rather than skin: it must not drag the side's
+            # own centre off the bone, which is what the sleeve is for.
+            plate = [Vec(-2.0, 9.0, 57.0), Vec(2.0, 9.0, 57.0),
+                     Vec(-2.0, 9.0, 59.0), Vec(2.0, 9.0, 59.0)]
+            padded = arm + plate
+            padded_weights = per_bone + [{"bip01 l upperarm": 1.0}] * len(plate)
+            with_plate = module.side_carry(biped_rig, fp_rig, "l", padded,
+                                           padded_weights, middle=arm)
+            if with_plate is None:
+                fail("an arm with a plate on it was not placed")
+            elif max(abs(with_plate["to"][axis] - place["to"][axis])
+                     for axis in range(3)) > 1e-6:
+                fail("a plate on the arm moved the arm's own centre to %r"
+                     % (with_plate["to"],))
         if module.side_carry(None, fp_rig, "l", arm, per_bone) is not None:
             fail("an arm was placed with no biped to measure from")
         if module.side_carry(biped_rig, fp_rig, "r", arm, per_bone) is not None:
@@ -781,74 +754,88 @@ def main():
             if module.finger_split(Vec(23.0, 9.6, 0.2), fp_rig, "l") is not None:
                 fail("finger weights were invented for a rig with no fingers")
 
-        # The shoulder rule, exercised: a pad that hugs a clavicle is kept and
-        # rides the upper arm, and a chest plate carrying the same clavicle
-        # weight stays on the body because it never comes near the shoulder.
-        # Halo's own first-person arms wear their pads, so this is the rule that
-        # has to hold - it was assumed before, not tested.
-        if not hasattr(module, "near_shoulder"):
-            fail("no near_shoulder: a chest plate would ride in with the pads")
-        else:
-            class Bone:
-                def __init__(self, head, tail):
-                    self.head_local = head
-                    self.tail_local = tail
+        # Shoulder plates are not arms. A pauldron is worn over the shoulder
+        # rather than on the arm, and carried with an arm that turns about the
+        # joint it leaves its place on the body and stands across the arm as a
+        # plate that belongs to nothing - which is what the Marine's pauldrons
+        # did. It stays on the item's body, where it is worn; the sleeve beside
+        # it is still cut.
+        rule_groups = [Group(0, "bip01 l clavicle"), Group(1, "bip01 l upperarm"),
+                       Group(2, "bip01 spine1")]
 
-            shoulder_rig = types.SimpleNamespace(
-                matrix_world=Shift((0.0, 0.0, 0.0)),
-                data=types.SimpleNamespace(bones={
-                    "bip01 l clavicle": Bone(Vec(0.0, 0.0, 0.0), Vec(0.0, 10.0, 0.0)),
-                    "bip01 r clavicle": Bone(Vec(0.0, 0.0, 0.0), Vec(0.0, -10.0, 0.0)),
-                }))
-            rule_groups = [Group(0, "bip01 l clavicle"), Group(1, "bip01 l upperarm"),
-                           Group(2, "bip01 spine1")]
+        class Spotty:
+            def __init__(self, index, per, co):
+                self.index = index
+                self.co = co
+                self.groups = [Entry(group, weight) for group, weight in per]
 
-            class Spotty:
-                def __init__(self, index, per, co):
-                    self.index = index
-                    self.co = co
-                    self.groups = [Entry(group, weight) for group, weight in per]
+        body = [
+            # a pauldron on the clavicle, sitting over the shoulder
+            Spotty(0, ((0, 1.0),), Vec(0.0, 1.0, 0.0)),
+            Spotty(1, ((0, 1.0),), Vec(1.0, 1.0, 0.0)),
+            Spotty(2, ((0, 1.0),), Vec(0.0, 2.0, 0.0)),
+            # a chest plate whose corners carry clavicle weight too
+            Spotty(3, ((0, 0.6), (2, 0.4)), Vec(0.0, 20.0, 0.0)),
+            Spotty(4, ((0, 0.6), (2, 0.4)), Vec(10.0, 20.0, 0.0)),
+            Spotty(5, ((0, 0.6), (2, 0.4)), Vec(0.0, 25.0, 0.0)),
+            # a sleeve on the upper arm, out at the arm
+            Spotty(6, ((1, 1.0),), Vec(0.0, 40.0, 0.0)),
+            Spotty(7, ((1, 1.0),), Vec(5.0, 40.0, 0.0)),
+            Spotty(8, ((1, 1.0),), Vec(0.0, 41.0, 0.0)),
+        ]
+        rule_object = types.SimpleNamespace(
+            data=types.SimpleNamespace(
+                vertices=body,
+                polygons=[Poly(0, 1, 2), Poly(3, 4, 5), Poly(6, 7, 8)]),
+            vertex_groups=rule_groups,
+            matrix_world=Shift((0.0, 0.0, 0.0)))
+        kept = [sorted(piece["indices"]) for piece in module.arm_pieces(rule_object)]
+        print("  arm cut plates      -> %r" % (kept,))
+        if kept != [[6, 7, 8]]:
+            fail("the arm cut kept %r, expected the sleeve alone - a pauldron "
+                 "and a chest plate are the body's" % (kept,))
+        # The plates stay whole and on the body: the cut never splits a shell,
+        # so nothing is left half-carried.
 
-            body = [
-                # a pad sitting on the clavicle: within a few units of it
-                Spotty(0, ((0, 1.0),), Vec(0.0, 1.0, 0.0)),
-                Spotty(1, ((0, 1.0),), Vec(1.0, 1.0, 0.0)),
-                Spotty(2, ((0, 1.0),), Vec(0.0, 2.0, 0.0)),
-                # a chest plate whose corners carry clavicle weight too
-                Spotty(3, ((0, 0.6), (2, 0.4)), Vec(0.0, 20.0, 0.0)),
-                Spotty(4, ((0, 0.6), (2, 0.4)), Vec(10.0, 20.0, 0.0)),
-                Spotty(5, ((0, 0.6), (2, 0.4)), Vec(0.0, 25.0, 0.0)),
-                # a sleeve on the upper arm, out at the arm
-                Spotty(6, ((1, 1.0),), Vec(0.0, 40.0, 0.0)),
-                Spotty(7, ((1, 1.0),), Vec(5.0, 40.0, 0.0)),
-                Spotty(8, ((1, 1.0),), Vec(0.0, 41.0, 0.0)),
-            ]
-            rule_object = types.SimpleNamespace(
-                data=types.SimpleNamespace(
-                    vertices=body,
-                    polygons=[Poly(0, 1, 2), Poly(3, 4, 5), Poly(6, 7, 8)]),
-                vertex_groups=rule_groups,
-                matrix_world=Shift((0.0, 0.0, 0.0)))
-            rule = module.arm_pieces(rule_object, armature=shoulder_rig)
-            shoulder_kept = [sorted(piece["indices"]) for piece in rule]
-            print("  shoulder rule       -> %r" % (shoulder_kept,))
-            if shoulder_kept != [[0, 1, 2], [6, 7, 8]]:
-                fail("the shoulder rule kept %r, expected the pad and the sleeve"
-                     % (shoulder_kept,))
-            pad = [piece for piece in rule if sorted(piece["indices"]) == [0, 1, 2]]
-            if pad and pad[0]["bone"] != "bip01 l upperarm":
-                fail("the pad rides %r, not the upper arm" % (pad[0]["bone"],))
-            if module.near_shoulder(rule_object, {3, 4, 5}, shoulder_rig):
-                fail("a chest plate was judged to sit on the shoulder")
-            if not module.near_shoulder(rule_object, {0, 1, 2}, shoulder_rig):
-                fail("a pad on the clavicle was judged not to sit on it")
-            # Without the rig there is nothing to measure, so no shoulder shell
-            # is guessed at: the pad stays on the body rather than a chest plate
-            # coming into the arms uninvited.
-            loose = module.arm_pieces(rule_object)
-            if [sorted(piece["indices"]) for piece in loose] != [[6, 7, 8]]:
-                fail("with no armature the shoulder rule kept %r, expected only "
-                     "the sleeve" % ([sorted(p["indices"]) for p in loose],))
+        # The glove has to enclose Halo's finger bones, or their tips stand out
+        # of the ends of the fingers and the hand reads as not lined up.
+        glove_coords = [(30.0, 9.4, 0.0), (29.6, 9.9, 0.3), (30.2, 9.0, -0.3)]
+        short_coords = [(27.0, 9.4, 0.0), (26.6, 9.9, 0.3), (27.2, 9.0, -0.3)]
+        room = module.finger_room(
+            glove_coords, {0: 0, 1: 1, 2: 2}, [0, 1, 2],
+            {0: "l", 1: "l", 2: "l"}, hand_rig)
+        short = module.finger_room(
+            short_coords, {0: 0, 1: 1, 2: 2}, [0, 1, 2],
+            {0: "l", 1: "l", 2: "l"}, hand_rig)
+        print("  finger_room        -> glove %.2f units, short glove %d tip(s) "
+              "out" % (room[0] if room else -1.0, short[1] if short else -1))
+        if room is None or room[1] != 0 or room[0] <= 0.0:
+            fail("a glove past Halo's fingertips did not enclose them: %r"
+                 % (room,))
+        if short is None or short[1] == 0:
+            fail("a glove stopping short of the fingertips was not noticed: %r"
+                 % (short,))
+
+        # A closed shell the item itself had inside out is written the right way
+        # round - from outside it shows its own blank back - while an open plate
+        # is never flipped on a guess: that would hide the side a person sees.
+        cube = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0),
+                (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 1.0),
+                (1.0, 1.0, 1.0), (0.0, 1.0, 1.0)]
+        outward = [Poly(0, 3, 2, 1), Poly(4, 5, 6, 7), Poly(0, 1, 5, 4),
+                   Poly(1, 2, 6, 5), Poly(2, 3, 7, 6), Poly(3, 0, 4, 7)]
+        inward = [Poly(*reversed(face.vertices)) for face in outward]
+        slots = {index: index for index in range(8)}
+        print("  inside_out         -> outward %r, inward %r, open %r"
+              % (module.inside_out(outward, cube, slots),
+                 module.inside_out(inward, cube, slots),
+                 module.inside_out(outward[1:], cube, slots)))
+        if module.inside_out(outward, cube, slots):
+            fail("a closed shell the right way round was called inside out")
+        if not module.inside_out(inward, cube, slots):
+            fail("a closed shell wound inward was not noticed")
+        if module.inside_out(outward[1:], cube, slots):
+            fail("an open plate was flipped on a guess")
 
         # Every bone the cut keeps has to exist on the first-person rig, or the
         # carried weights name a bone that rig does not have.

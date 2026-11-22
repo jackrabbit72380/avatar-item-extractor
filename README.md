@@ -114,14 +114,12 @@ from the body and the player sees the arms, not the body's:
   gauntlets, or the base body's bare arms) on Halo's 37-bone first-person arms
   rig, in that rig's own rest pose. Whole shells are taken, not loose vertices:
   a piece joins the set when most of its weight is on an upper arm, forearm or
-  hand bone. Shoulder pads are included on purpose: Halo's own first-person arms
-  carry theirs, and a Marine's pauldron is part of the arm you see. A pad is
-  recognised by sitting on a clavicle - the shell has to hug the shoulder, not
-  merely carry clavicle weight at its corners, or a chest plate would come with
-  it. Halo's rig has no clavicle, so a pad rides the upper arm, which is the
-  bone that moves a shoulder. If no biped rig is there to measure against,
-  shoulder shells stay on the body: a missing pad is the smaller fault. The seam falls where the arm ends, and no plate is
-  ever cut in half. Each side is then carried onto Halo's rig as one piece: the
+  hand bone. Shoulder plates stay on the body: a pauldron is worn over the
+  shoulder rather than on the arm, and carried with an arm that turns about the
+  joint it leaves its place on the body and stands across the arm as a plate
+  that belongs to nothing - which is what the Marine's pauldrons did. It is in
+  the item's own `- halo.blend`, where it is worn. The seam falls where the arm
+  ends, and no plate is ever cut in half. Each side is then carried onto Halo's rig as one piece: the
   arm's own long axis is turned onto Halo's arm bones, its length is laid along
   them, and the middle of its own sleeve is shifted onto Halo's bone - so an arm
   modelled slightly outboard of its own skeleton still sits centred on Halo's
@@ -130,20 +128,18 @@ from the body and the player sees the arms, not the body's:
   while the hand the game draws goes on to the fingertips, and matching the
   knuckles alone left every glove sitting over the palm with its fingers
   stopping dead at Halo's wrist, so a weapon would have been held in front of
-  the hand instead of in it. The middle is measured from the sleeve alone:
-  a pad weighted to the upper arm is armour, not skin, and counting it would pull
-  the whole arm off the bone by half a pad. One turn and one scale for the
+  the hand instead of in it. The reach lands a little past those fingertips, so
+  the glove encloses the finger bones its fingers ride instead of ending flush
+  with them. The side is lined up by its glove on Halo's own hand - the hand is
+  what a player watches hold a weapon - and that shift only moves the arm across
+  Halo's, never along it, so the reach stays where the scale put it. A bare
+  sleeve with no glove is lined up by its middle on the bone instead. One turn and one scale for the
   whole side - sleeve, glove and pad - so every edge keeps its length up to that
   single factor, and a side carried that way cannot tear whatever shape it is.
   (Turning upper arm, forearm and hand by different amounts tore the shell at
-  the joints whatever the blend; that is why it is one similarity now.) Shoulder
-  armour is the one exception: a pad is worn over the shoulder, not on the arm,
-  so a pad whose middle sits above the shoulder joint keeps the item's own
-  upright placement and rides the side's shift and scale without being turned.
-  Turned with the arm, the little height a pad has over the joint swings a
-  quarter turn and leaves the plate standing across the arm like a fin, which is
-  what a Marine's pauldrons did. A band mounted on the arm itself - a bracer, a
-  gauntlet - is below the joint and turns with the arm, as it should. How far
+  the   joints whatever the blend; that is why it is one similarity now.) A plate
+  worn on the arm - a bracer, a gauntlet - is below the joint and turns with
+  it, as it should. How far
   round the arm the side sits is answered separately: the shortest turn onto
   Halo's arm leaves the glove rolled however the item was modelled, so a glove
   authored palm-down lands flat across Halo's hand instead of lying in it -
@@ -169,7 +165,11 @@ from the body and the player sees the arms, not the body's:
   the file *is* Halo's own 37-bone set, so the game's first-person animations
   drive it as they stand. Nothing is modelled again and nothing is retextured:
   faces, UVs, smoothing and
-  materials come across as they are. A hand item - a ring, a badge - rides its
+  materials come across as they are. A closed shell the item itself had inside
+  out - a sleeve or a glove whose faces wind inward, which shows its own blank
+  back to the world - is written the right way round; an open plate is left
+  exactly as it was, because there is no inside to measure. A hand item - a
+  ring, a badge - rides its
   hand bone instead, whole, on the supplied arms rig. An item with no arm
   geometry at all (a hat) still gets the file, on the arms rig with an empty
   mesh, and `report.txt` says why.

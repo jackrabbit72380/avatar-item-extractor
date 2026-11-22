@@ -65,8 +65,13 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v29"
-BUILD = "2026-11-22 fp-arms-fingers"
+VERSION = "v30"
+BUILD = "2026-11-22 fp-arms-aligned"
+
+# How far past Halo's own fingertips an arm's end is laid, in Halo units. A
+# glove that stops exactly at a finger bone's tip leaves that tip standing out
+# of the end of the finger, so the glove gets a little room to enclose it.
+FINGER_MARGIN = 0.6
 
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
 DEFORM_BONES = (
@@ -920,13 +925,14 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
     if turn is None:
         return None
     # The arm's own reach from its shoulder is laid along Halo's arm bones to
-    # the end of Halo's fingers, so a glove ends where Halo's own hand does.
+    # just past the end of Halo's fingers, so a glove encloses them.
     # Measured from the shoulder, not from the arm's far end: every vertex is
     # scaled by its distance from the shoulder, so dividing by the span instead
-    # of the reach put the glove on past Halo's fingertips. Clamped, because a
-    # sleeve that only covers part of an arm should sit a little short of the
-    # bones rather than be stretched out to fill them.
-    scale = max(0.75, min(1.25, reach / max(high, 1e-6)))
+    # of the reach put the glove on past Halo's fingertips. The margin is what
+    # keeps a finger bone from ending flush with the glove's own tip, where it
+    # would stand out of the finger; the clamp only stops a part-sleeve being
+    # stretched out to fill bones it was never made to reach.
+    scale = max(0.5, min(1.6, (reach + FINGER_MARGIN) / max(high, 1e-6)))
     bones = ("bip01 %s upperarm" % side, "bip01 %s forearm" % side,
              "bip01 %s hand" % side)
     wrist = arm_joint(points, along, weights, bones[0], bones[1], low + 0.72 * span)
@@ -935,6 +941,24 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
     if length <= 1e-6:
         return None
     reach_axis = [value / length for value in reach_axis]
+    # The glove is what is past the wrist, not past the elbow: the hand's own
+    # bone hands over there when the item has one, and an item that weights its
+    # glove to the forearm still stops being a sleeve down at the wrist.
+    cuff = arm_joint(points, along, weights, bones[1], bones[2],
+                     low + 0.82 * span)
+    glove = [point for point, t in zip(points, along) if t > cuff]
+    glove_thin = hand_plane(glove, axis) if len(glove) >= 8 else None
+    # What the side is shifted by. An arm with a glove is lined up by that glove
+    # on Halo's own hand - the hand is what a player watches hold a weapon, and
+    # the fingers are only on the finger bones when they are over them - while a
+    # bare sleeve is lined up by its own middle on the bone, which is all there
+    # is to measure. Either way the shift only moves the side across Halo's arm,
+    # never along it, so the reach stays where the scale put it.
+    anchor, target = held if held else points, head
+    if glove and hand_cloud:
+        anchor = glove
+        target = [sum(point[i] for point in hand_cloud) / len(hand_cloud)
+                  for i in range(3)]
 
     def placed(turn):
         """The side's carry for one turn, shifted onto Halo's bone.
@@ -950,17 +974,25 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
         the bone. The shift is worked out after the turn, so a rolled side still
         lands its middle on the bone rather than beside it.
         """
-        centre = [sum(point[i] for point in held) / len(held) for i in range(3)]
+        centre = [sum(point[i] for point in anchor) / len(anchor)
+                  for i in range(3)]
         delta = [centre[i] - shoulder[i] for i in range(3)]
         moved = [scale * sum(turn[row * 3 + col] * delta[col]
                              for col in range(3)) for row in range(3)]
         across = sum(moved[i] * reach_axis[i] for i in range(3))
         shift = [moved[i] - reach_axis[i] * across for i in range(3)]
+        # Where the target itself sits off the bone, across the arm only: the
+        # along-arm distance is already carried by the scale, and adding it
+        # again here put the glove on past Halo's fingers by its own length.
+        want = [target[i] - head[i] for i in range(3)]
+        along_target = sum(want[i] * reach_axis[i] for i in range(3))
+        want = [want[i] - reach_axis[i] * along_target for i in range(3)]
         return {"axis": axis, "shoulder": tuple(shoulder), "turn": turn,
                 "scale": scale, "from": tuple(shoulder),
-                "to": tuple(head[i] - shift[i] for i in range(3)),
+                "to": tuple(head[i] + want[i] - shift[i] for i in range(3)),
                 "low": low, "high": high, "span": span, "twist": 0.0,
-                "glove": "none", "wrist": min(max(wrist, low), high)}
+                "glove": "none", "wrist": min(max(wrist, low), high),
+                "anchor": "hand" if glove and hand_cloud else "bone"}
 
     place = placed(turn)
     # How far round the arm the item's own hand goes. The carry so far lines the
@@ -969,13 +1001,6 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
     # exactly what a twist looks like. The glove answers which way its flat
     # lies, Halo's own hand answers where that flat belongs, and one turn about
     # the same arm takes one to the other.
-    # The glove is what is past the wrist, not past the elbow: the hand's own
-    # bone hands over there when the item has one, and an item that weights its
-    # glove to the forearm still stops being a sleeve down at the wrist.
-    cuff = arm_joint(points, along, weights, bones[1], bones[2],
-                     low + 0.82 * span)
-    glove = [point for point, t in zip(points, along) if t > cuff]
-    glove_thin = hand_plane(glove, axis) if len(glove) >= 8 else None
     if glove_thin is not None and hand_flat is not None:
         angle = hand_twist(turn, reach_axis, glove_thin, hand_flat)
         if angle is not None:
@@ -1019,27 +1044,6 @@ def place_arm(place, point):
     return tuple(place["to"][row] + scale * (
         turn[row * 3] * delta[0] + turn[row * 3 + 1] * delta[1]
         + turn[row * 3 + 2] * delta[2]) for row in range(3))
-
-
-def place_pad(place, point):
-    """Where one shoulder-pad vertex goes: the side's shift and scale, no turn.
-
-    A pauldron is worn over the shoulder, not on the arm, so it sits above the
-    joint the arm hangs from. Turning it with the arm - which swings that "above"
-    through a quarter turn - carries it behind the shoulder and leaves the plate
-    standing across the arm, like a signboard. Keeping the item's own upright
-    placement and riding the side's shift instead puts it back on top of the
-    shoulder, where Halo's own first-person arms wear theirs.
-
-    The shift and one scale still multiply every edge of the pad by the same
-    number, so a pad cannot tear either.
-    """
-    if place is None:
-        return tuple(point)
-    scale = place["scale"]
-    return tuple(place["to"][axis]
-                 + scale * (point[axis] - place["from"][axis])
-                 for axis in range(3))
 
 
 def hand_fit(place, points, cloud, sample=80):
@@ -1206,44 +1210,95 @@ def vertex_weights(object_data):
     return weights
 
 
-def near_shoulder(object_data, indices, armature, limit=5.0, need=0.6):
-    """Whether a shell is worn on a shoulder rather than merely touching one.
+def inside_out(faces, coords, slot):
+    """Whether a shell's faces turn their backs on the shell's own middle.
 
-    Counting clavicle weight as arm weight is what lets a pauldron into the set,
-    but a body's chest plate is also weighted to a clavicle at its corners, and
-    that one belongs to the body. A pad hugs the shoulder; a chest does not.
+    A sleeve or a glove that is inside out shows its own backfaces to the world,
+    which read as blank, and lighting falls on it from the inside. Its faces
+    point at the middle of the piece instead of away from it, and that is what
+    this measures: a shell the item had the right way round is left exactly as
+    it was. A flat plate has no middle to point at or away from - every face
+    sits square to the middle, neither in nor out - so it is never flipped on a
+    guess, which would hide the side a person is meant to see.
     """
-    if armature is None:
-        # Nothing to measure against: leave shoulder shells on the body. A pad
-        # missing from the arms is a smaller fault than a chest plate pulled in.
+    total = [0.0, 0.0, 0.0]
+    seen = 0
+    for polygon in faces:
+        for index in polygon.vertices:
+            point = coords[slot[index]]
+            for axis in range(3):
+                total[axis] += point[axis]
+            seen += 1
+    if not seen:
         return False
-    segments = []
-    for name in SHOULDER_BONES:
-        bone = armature.data.bones.get(name)
-        if bone is not None:
-            segments.append((armature.matrix_world @ bone.head_local,
-                             armature.matrix_world @ bone.tail_local))
-    if not segments or not indices:
-        return False
-    world = object_data.matrix_world
-    close = 0
-    for index in indices:
-        point = world @ object_data.data.vertices[index].co
-        if min(point_segment_distance(point, head, tail)
-               for head, tail in segments) <= limit:
-            close += 1
-    return close / len(indices) >= need
+    middle = [value / seen for value in total]
+    inward = counted = 0
+    for polygon in faces:
+        loop = [coords[slot[index]] for index in polygon.vertices]
+        if len(loop) < 3:
+            continue
+        first = [loop[0][axis] - loop[1][axis] for axis in range(3)]
+        second = [loop[0][axis] - loop[2][axis] for axis in range(3)]
+        normal = [first[1] * second[2] - first[2] * second[1],
+                  first[2] * second[0] - first[0] * second[2],
+                  first[0] * second[1] - first[1] * second[0]]
+        centre = [sum(point[axis] for point in loop) / len(loop)
+                  for axis in range(3)]
+        out = [centre[axis] - middle[axis] for axis in range(3)]
+        scale = (math.sqrt(sum(value * value for value in normal))
+                 * math.sqrt(sum(value * value for value in out)))
+        if scale < 1e-9:
+            continue
+        counted += 1
+        if sum(normal[axis] * out[axis] for axis in range(3)) < -0.3 * scale:
+            inward += 1
+    return counted >= 4 and inward >= 0.8 * counted
 
 
-def arm_pieces(object_data, names=ARM_WEIGHTS, share=ARM_SHARE, armature=None):
+def finger_room(coords, slot, order, sides, armature_fp):
+    """How far Halo's finger bones end inside the carried gloves, in units.
+
+    A glove's fingers ride Halo's own finger bones, so those bones have to be
+    inside the glove: a glove whose end stops short of a bone tip leaves the
+    bone standing out of the end of a finger, which reads as a hand that does
+    not line up with the rig however well the arm was carried. Answers
+    (worst gap, how many tips stand past the glove, how many tips were seen),
+    where a negative gap is a tip outside the glove.
+    """
+    worst, outside, seen = None, 0, 0
+    for side in ("l", "r"):
+        span = hand_span(armature_fp, side)
+        points = [Vector(coords[slot[index]]) for index in order
+                  if sides.get(index) == side]
+        if span is None or not points:
+            continue
+        head, axis, _length, _knuckle = span
+        far = max(sum((point[i] - head[i]) * axis[i] for i in range(3))
+                  for point in points)
+        for _name, _first, tail in finger_bones(armature_fp, side):
+            tip = sum((tail[i] - head[i]) * axis[i] for i in range(3))
+            gap = far - tip
+            seen += 1
+            if gap < 0.0:
+                outside += 1
+            worst = gap if worst is None else min(worst, gap)
+    if not seen:
+        return None
+    return worst, outside, seen
+
+
+def arm_pieces(object_data, names=ARM_WEIGHTS, share=ARM_SHARE):
     """The item's shells that are arms, with the side and bone each rides.
 
     A piece joins the first-person set when most of its weight is on an upper
-    arm, forearm or hand bone, or when it is shoulder armour that sits on a
-    clavicle - Halo's own first-person arms wear their shoulder pads. It is
-    decided per shell rather than per vertex because a vertex on either side of
-    a seam would tear its piece in half; keeping shells whole also keeps torso
-    plates out, since by their own weighting those are mostly on the spine.
+    arm, forearm or hand bone. Shoulder plates do not: a pauldron is worn over
+    the shoulder rather than on the arm, so carried with an arm that turns about
+    the joint it leaves its place on the body and stands across the arm as a
+    plate that belongs to nothing. It stays on the item's body, where it is worn.
+    The rule is decided per shell rather than per vertex because a vertex on
+    either side of a seam would tear its piece in half; keeping shells whole also
+    keeps torso plates out, since by their own weighting those are mostly on the
+    spine.
     """
     weights = vertex_weights(object_data)
     pieces = []
@@ -1254,11 +1309,6 @@ def arm_pieces(object_data, names=ARM_WEIGHTS, share=ARM_SHARE, armature=None):
             continue
         arm = sum(arm_share(weights[index]) * sum(weights[index].values())
                   for index in indices)
-        shoulder = sum(weight for index in indices
-                       for name, weight in weights[index].items()
-                       if name in SHOULDER_BONES)
-        if shoulder and near_shoulder(object_data, indices, armature):
-            arm += shoulder
         if arm / total < share:
             continue
         tally = {"l": 0.0, "r": 0.0}
@@ -1290,15 +1340,11 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     The arms are carried onto Halo's own first-person rig, which holds them
     straight out in its rest pose. The carry is one similarity per side,
     measured from the arm's own mesh: its long axis onto Halo's arm bones, its
-    length laid along them, and its own middle shifted onto Halo's bone. The
-    whole side
-    moves as one - sleeve, glove and pad - so it keeps its shape exactly and
-    cannot tear, and its groups are renamed to that rig's bones with its own
-    weights travelling across. Shoulder armour is the one exception: it stands
-    above the joint the arm hangs from, so turning it with the arm carries it
-    behind the shoulder as a raised fin. Pads keep the item's own upright
-    placement and ride the side's shift instead, still without distortion.
-    Nothing is re-modelled and nothing is re-skinned.
+    length laid along them, and its own glove shifted onto Halo's own hand. The
+    whole side moves as one - sleeve, glove and every plate worn on them - so it
+    keeps its shape exactly and cannot tear, and its groups are renamed to that
+    rig's bones with its own weights travelling across. Nothing is re-modelled
+    and nothing is re-skinned.
     A hand item never gets here - it rides its hand bone whole.
 
     Returns (arms object, armature it rides), or (None, None) when the item has
@@ -1309,7 +1355,7 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     if not mesh.polygons:
         return None, None
     weights = vertex_weights(object_data)
-    pieces = arm_pieces(object_data, names, armature=armature)
+    pieces = arm_pieces(object_data, names)
     if not pieces:
         log("%s: no shell is mostly on the arms, so there is no arm to cut"
             % object_data.name)
@@ -1359,27 +1405,6 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         for index in piece["indices"]:
             home[index] = piece["bone"]
             side_of[index] = piece["side"]
-    # Which shells are shoulder armour rather than arm: anything but the side's
-    # own sleeve that sits at or behind the shoulder joint. A bracer, a gauntlet
-    # or a glove is further down the arm and still turns with it.
-    pads = set()
-    for piece in pieces:
-        place = carry.get(piece["side"])
-        if place is None or piece is sleeve.get(piece["side"]):
-            continue
-        middle = [world @ mesh.vertices[index].co for index in piece["indices"]]
-        centre = [sum(point[axis] for point in middle) / len(middle)
-                  for axis in range(3)]
-        along = sum((centre[axis] - place["shoulder"][axis]) * place["axis"][axis]
-                    for axis in range(3))
-        # A shell whose middle is up past the shoulder joint is a pad mounted
-        # over the shoulder: turned with the arm, the little height it has over
-        # the joint swings round into a plate standing across the arm. One
-        # mounted on the arm itself - a band, a bracer, a gauntlet - is below
-        # the joint and turns with the arm, which is right.
-        if along < 0.0:
-            for index in piece["indices"]:
-                pads.add(index)
     order = sorted(home)
     slot = {index: position for position, index in enumerate(order)}
     coords = []
@@ -1408,8 +1433,7 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         if place is None:
             coords.append((float(point[0]), float(point[1]), float(point[2])))
         else:
-            moved = (place_pad(place, point) if index in pads
-                     else place_arm(place, point))
+            moved = place_arm(place, point)
             coords.append(moved)
             step = math.sqrt(sum((moved[axis] - point[axis]) ** 2
                                  for axis in range(3)))
@@ -1476,14 +1500,14 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         log("finger weights: the glove's fingers ride Halo's own finger bones "
             "on %s side(s), so it closes round a weapon as the game's hands do"
             % "".join(sorted(fingered)))
-    if pads:
-        log("%d vert(s) of shoulder armour ride the shoulder upright: a pad "
-            "does not turn with the arm" % len(pads))
     for side in sorted(carry):
         place = carry[side]
         if place is not None:
-            log("%s arm: one turn, scaled x%.2f, so every edge of it keeps its "
-                "own length" % (side, place["scale"]))
+            log("%s arm: one turn, scaled x%.2f, %s"
+                % (side, place["scale"],
+                   "its glove centred on Halo's own hand"
+                   if place.get("anchor") == "hand"
+                   else "its sleeve centred on Halo's bone"))
             if place.get("glove") == "flat":
                 log("%s arm: its glove turned %.0f degrees about the arm, so its "
                     "own flat lies in Halo's hand" % (side, place["twist"]))
@@ -1491,11 +1515,23 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                 log("%s arm: its glove is too round to say which way round it "
                     "goes, so it keeps the roll the item gave it" % side)
 
-    faces = [polygon for piece in pieces for polygon in piece["faces"]]
+    faces, flips = [], []
+    turned_out = 0
+    for piece in pieces:
+        flip = inside_out(piece["faces"], coords, slot)
+        if flip:
+            turned_out += 1
+        faces.extend(piece["faces"])
+        flips.extend([flip] * len(piece["faces"]))
+    if turned_out:
+        log("%d shell(s) of %s were inside out and are written the right way "
+            "round, so their backs are not blank" % (turned_out, object_data.name))
     copy = bpy.data.meshes.new("%s arms" % mesh.name)
     copy.from_pydata(coords, [],
-                     [tuple(slot[index] for index in polygon.vertices)
-                      for polygon in faces])
+                     [tuple(slot[index] for index in
+                            (reversed(polygon.vertices) if flip
+                             else polygon.vertices))
+                      for polygon, flip in zip(faces, flips)])
     copy.update()
     for material in mesh.materials:
         copy.materials.append(material)
@@ -1504,7 +1540,9 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         copy.polygons[position].use_smooth = polygon.use_smooth
     # from_pydata builds its loops in face order and each face's vertex order,
     # which is the same order the source polygons' loop_indices are in.
-    old_loops = [index for polygon in faces for index in polygon.loop_indices]
+    old_loops = [index for polygon, flip in zip(faces, flips)
+                 for index in (reversed(polygon.loop_indices) if flip
+                               else polygon.loop_indices)]
     for layer in mesh.uv_layers:
         target = copy.uv_layers.new(name=layer.name)
         for position, loop_index in enumerate(old_loops):
@@ -1563,6 +1601,21 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         arms["fit_mean"] = fit[0]
         arms["fit_worst"] = fit[1]
         log("fit to Halo's own arms: mean %.2f, worst %.2f units" % fit)
+    # The glove's fingers ride Halo's finger bones, so those bones have to be
+    # inside the glove. This is the check a person makes in the viewport: bones
+    # standing out of the fingertips mean the arm stopped short of the hand.
+    room = finger_room(coords, slot, order, side_of, armature_fp) \
+        if armature_fp is not None else None
+    if room is not None:
+        arms["finger_room"] = room[0]
+        arms["finger_outside"] = room[1]
+        if room[1]:
+            log("fingers: %d of Halo's %d finger bone tip(s) stand past the "
+                "glove (%.2f units) - the glove is shorter than the hand"
+                % (room[1], room[2], -room[0]))
+        else:
+            log("fingers: all %d of Halo's finger bone tips sit %.2f units "
+                "inside the glove" % (room[2], room[0]))
     if any(carry.values()) and not moved_verts:
         log("%s: every arm weight sits on a bone with no first-person frame, so "
             "nothing was carried - report.txt and the file's own note say so"
@@ -1612,6 +1665,15 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
                                       "%.2f units (mean %.2f)"
                                       % (meta(arms, "fit_worst"),
                                          meta(arms, "fit_mean")))
+            if meta(arms, "finger_outside") is not None:
+                record["arms_fingers"] = (
+                    "every finger bone tip sits %.2f units inside the glove"
+                    % meta(arms, "finger_room")
+                    if not meta(arms, "finger_outside") else
+                    "%d of Halo's finger bone tips stand past the glove "
+                    "(%.2f units) - the glove is shorter than the hand"
+                    % (meta(arms, "finger_outside"),
+                       -meta(arms, "finger_room")))
             if worst is None:
                 record["arms_carried"] = "arms stayed where they were"
             elif not (meta(arms, "carried_verts") or 0):
@@ -2198,6 +2260,8 @@ def report_text(options, records, stems, armature, nxe=None):
                 lines.append("              %s" % record["arms_carried"])
             if record.get("arms_fit"):
                 lines.append("              %s" % record["arms_fit"])
+            if record.get("arms_fingers"):
+                lines.append("              %s" % record["arms_fingers"])
             if record.get("arms_torn"):
                 lines.append("              %s" % record["arms_torn"])
         lines.append("  vertices  : %d" % (record.get("model", {}).get("vertices") or 0))
