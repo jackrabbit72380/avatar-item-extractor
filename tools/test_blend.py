@@ -273,6 +273,61 @@ def main():
             fail("the fp arms note does not say it is the first-person set: %r"
                  % (arms_note,))
 
+    # A failed cut is a second set lost, not a failed run: arms_for must report
+    # it and return, so the Halo body, the .jms and the rest of the items are
+    # still written. Before this, one exception in the cut ended the pass.
+    if not hasattr(module, "arms_for"):
+        fail("no arms_for: the arm cut is called with no guard, so a bad cut "
+             "aborts the whole rigging pass")
+    else:
+        def explode(*_args, **_kwargs):
+            raise RuntimeError("simulated bad cut")
+        original = module.arm_region
+        module.arm_region = explode
+        record = {}
+        try:
+            failed = module.arms_for(
+                types.SimpleNamespace(name="UNSC Marine Armor"),
+                types.SimpleNamespace(name="biped"),
+                types.SimpleNamespace(name="arms rig"), None, record)
+        finally:
+            module.arm_region = original
+        print("  arms_for (bad cut)  -> %r, %r" % (failed, record.get("arms_binding")))
+        if failed is not None:
+            fail("arms_for returned an object after the cut raised")
+        if not str(record.get("arms_binding", "")).startswith("failed"):
+            fail("a failed cut leaves no trace in the report: %r" % (record,))
+
+    # The source rigs are kept for repair, in their own folder, so they cannot
+    # be mistaken for the item's own file.
+    if not hasattr(module, "ship_source_rigs"):
+        fail("no ship_source_rigs: the rigs a user repairs against are gone")
+    else:
+        rig_work = tempfile.mkdtemp(prefix="rigs-")
+        source_dir = os.path.join(rig_work, "in")
+        os.makedirs(source_dir, exist_ok=True)
+        biped_file = os.path.join(source_dir, "master chief skeleton.blend")
+        arms_file = os.path.join(source_dir, "fp arms.blend")
+        for source in (biped_file, arms_file):
+            open(source, "w").close()
+        exported = []
+        module.export_rig = lambda path, rig, kind: exported.append((path, kind))
+        shipped = module.ship_source_rigs(
+            os.path.join(rig_work, "out"),
+            {"rig": biped_file, "fp": arms_file},
+            types.SimpleNamespace(name="biped"))
+        kept = sorted(os.listdir(os.path.join(
+            rig_work, "out", "extracted for blender users", "source rigs")))
+        print("  ship_source_rigs    -> %r, source rigs %r, exported %r"
+              % (shipped, kept, [os.path.relpath(path, os.path.join(rig_work, "out"))
+                                 for path, _kind in exported]))
+        if kept != ["fp arms.blend", "master chief skeleton.blend"]:
+            fail("the source rigs are not in their own folder: %r" % (kept,))
+        wanted_fbx = os.path.join(rig_work, "out", "extracted for max users",
+                                  "master chief skeleton.fbx")
+        if exported != [(wanted_fbx, "fbx")]:
+            fail("the biped was not exported as .fbx for Max: %r" % (exported,))
+
     print("  save_blend          -> %d save, copy=%r, scene %r"
           % (1, calls[0]["copy"] if calls else None,
              sorted(calls[0]["at_save"]) if calls else None))

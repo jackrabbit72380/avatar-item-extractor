@@ -599,6 +599,44 @@ def arm_region(object_data, names=ARM_BONES):
     return arms
 
 
+def arms_for(merged, armature, armature_fp, bone_name, record):
+    """Build the first-person set, never letting its failure reach the Halo set.
+
+    The arm cut is the one step with no fallback worth failing the run over: it
+    is a second set, and an item whose arms cannot be separated still has its
+    body, its `.jms` and its textures. So this returns None instead of raising,
+    and the pass carries on with the rest of the item.
+    """
+    arms = None
+    try:
+        if bone_name:
+            # A hand item rides the one bone that carries it, whole.
+            arms = merged.copy()
+            arms.data = merged.data.copy()
+            arms.name = "%s FP arms" % merged.name
+            arms.data.name = arms.name
+            bpy.context.scene.collection.objects.link(arms)
+            place_on_arms(arms, armature, armature_fp, bone_name)
+            record["arms_binding"] = skin(arms, armature_fp, rigid=True)
+            return arms
+        arms = arm_region(merged)
+        if arms is not None:
+            place_on_arms(arms, armature, armature_fp, "bip01 l upperarm")
+            record["arms_binding"] = skin(arms, armature_fp)
+        return arms
+    except Exception as problem:  # noqa: BLE001 - a bad cut must not end the pass
+        log("could not build the first-person arms for %s (%s: %s)"
+            % (merged.name, type(problem).__name__, problem))
+        if arms is not None:
+            try:
+                bpy.data.objects.remove(arms, do_unlink=True)
+            except Exception:
+                pass
+        record["arms_binding"] = ("failed - %s: %s"
+                                  % (type(problem).__name__, problem))
+        return None
+
+
 def is_prop(object_data, limit=3.0):
     """A solid object rather than cloth, judged by its own size.
 
@@ -888,6 +926,18 @@ def export_objects(path, objects, kind):
     log("wrote %s" % os.path.basename(path))
 
 
+def export_rig(path, armature, kind):
+    """Write the rig on its own, for someone re-binding an item by hand."""
+    bpy.ops.object.select_all(action="DESELECT")
+    armature.select_set(True)
+    bpy.context.view_layer.objects.active = armature
+    if kind == "fbx":
+        bpy.ops.export_scene.fbx(filepath=path, use_selection=True,
+                                 apply_scale_options="FBX_SCALE_ALL",
+                                 object_types={"ARMATURE"})
+    log("wrote %s" % os.path.basename(path))
+
+
 def export_rigged(path, mesh, armature, kind, note=None):
     """Write a mesh together with the armature it is skinned to."""
     bpy.ops.object.select_all(action="DESELECT")
@@ -1087,6 +1137,32 @@ def mirror_jms(out, stems):
     return copied
 
 
+def ship_source_rigs(out, options, armature):
+    """Halo's own rig files, kept beside the items for repair.
+
+    They are the base every item is skinned to, so they are not the item's file
+    and they do not sit beside it: they go in their own "source rigs" folder,
+    named as they came. Someone re-binding an item by hand, or checking a shape
+    that came out wrong, then has the exact skeleton the pass used - and Max
+    gets the biped as .fbx, because it cannot open a .blend at all.
+    """
+    folder = os.path.join(out, BLENDER_DIR, "source rigs")
+    os.makedirs(folder, exist_ok=True)
+    shipped = []
+    for source in (options.get("rig"), options.get("fp")):
+        if not source or not os.path.exists(source):
+            continue
+        name = os.path.basename(source)
+        shutil.copyfile(source, os.path.join(folder, name))
+        shipped.append(name)
+    if armature and options.get("rig"):
+        fbx = os.path.splitext(os.path.basename(options["rig"]))[0] + ".fbx"
+        os.makedirs(os.path.join(out, MAX_DIR), exist_ok=True)
+        export_rig(os.path.join(out, MAX_DIR, fbx), armature, "fbx")
+        shipped.append(fbx)
+    return shipped
+
+
 def main():
     options = args()
     reset_scene()
@@ -1184,35 +1260,11 @@ def main():
             else:
                 record["placement"] = "body height, grown from the floor"
             to_halo_space(merged, fit, keep_position=prop, anchor=anchor)
-            # Copied before any binding: a copy taken afterwards would carry the
-            # biped's vertex groups and modifier into a second skin.
-            if armature_fp:
-                arms_item = merged.copy()
-                arms_item.data = merged.data.copy()
-                arms_item.name = "%s FP arms" % merged.name
-                arms_item.data.name = arms_item.name
-                bpy.context.scene.collection.objects.link(arms_item)
             record["binding"] = skin(merged, armature, rigid=prop)
             bone_name = hand_bone(record.get("binding") or "")
-            if arms_item is not None and armature_fp:
-                if bone_name:
-                    place_on_arms(arms_item, armature, armature_fp, bone_name)
-                    record["arms_binding"] = skin(arms_item, armature_fp, rigid=True)
-                else:
-                    # Not worn on a hand, so the second set is the item's own
-                    # arms: Halo's first-person hands are a separate model, and
-                    # the sleeves or bare arms are what a player should see on
-                    # them. The unused whole-item copy is dropped - the arms are
-                    # cut from the mesh as it is already bound to the biped.
-                    bpy.data.objects.remove(arms_item, do_unlink=True)
-                    arms_item = arm_region(merged)
-                    if arms_item is not None:
-                        place_on_arms(arms_item, armature, armature_fp,
-                                      "bip01 l upperarm")
-                        record["arms_binding"] = skin(arms_item, armature_fp)
-            elif arms_item is not None:
-                bpy.data.objects.remove(arms_item, do_unlink=True)
-                arms_item = None
+            if armature_fp:
+                arms_item = arms_for(merged, armature, armature_fp, bone_name,
+                                     record)
             if arms_item is None and armature_fp:
                 # Nothing on an arm bone (a hat, a badge). The second set still
                 # exists so every item has the pair tool.exe users expect, and
@@ -1221,9 +1273,13 @@ def main():
                 arms_item = bpy.data.objects.new("%s arms" % merged.name, empty)
                 bpy.context.scene.collection.objects.link(arms_item)
                 arms_item.parent = armature_fp
-                record["arms_binding"] = "none - this item has no arm geometry"
-                log("%s has no arm geometry: the fp arms set holds the rig only"
-                    % merged.name)
+                if not (record.get("arms_binding") or "").startswith("failed"):
+                    record["arms_binding"] = "none - this item has no arm geometry"
+                    log("%s has no arm geometry: the fp arms set holds the rig only"
+                        % merged.name)
+                else:
+                    log("%s: the fp arms set holds the rig only, because the cut "
+                        "failed" % merged.name)
         rigged.append((record, merged, nxe, arms_item))
 
     for _, merged, _nxe, _arms in rigged:
@@ -1268,17 +1324,28 @@ def main():
         # item gets its own second set on that rig - the fingers exist nowhere
         # else, and the player sees these arms and not the body's.
         if arms_item is not None:
-            if options["jms"] and arms_item.data.vertices:
-                record["jms_arms_errors"] = export_jms(
-                    arms_item, armature_fp,
-                    os.path.join(models_dir, "%s - fp arms.jms" % stem))
-            record["arms_file"] = "%s - halo fp arms.blend" % stem
-            export_rigged(os.path.join(blend_dir, record["arms_file"]),
-                          arms_item, armature_fp, "blend",
-                          halo_note(stem, arms_item, armature_fp, True))
-            export_rigged(os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
-                          arms_item, armature_fp, "fbx")
-            log("wrote %s on the first-person arms" % stem)
+            # The second set is written separately, so a problem in it - a mesh
+            # Blender will not export, a failed cut - cannot cost the item its
+            # Halo body, its .jms or the rest of the run.
+            try:
+                if options["jms"] and arms_item.data.vertices:
+                    record["jms_arms_errors"] = export_jms(
+                        arms_item, armature_fp,
+                        os.path.join(models_dir, "%s - fp arms.jms" % stem))
+                record["arms_file"] = "%s - halo fp arms.blend" % stem
+                export_rigged(os.path.join(blend_dir, record["arms_file"]),
+                              arms_item, armature_fp, "blend",
+                              halo_note(stem, arms_item, armature_fp, True))
+                export_rigged(os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
+                              arms_item, armature_fp, "fbx")
+                log("wrote %s on the first-person arms" % stem)
+            except Exception as problem:  # noqa: BLE001 - see above
+                record.pop("arms_file", None)
+                record["arms_binding"] = ("failed to write - %s: %s"
+                                          % (type(problem).__name__, problem))
+                log("the first-person arms files for %s failed (%s: %s); "
+                    "the halo set is written anyway"
+                    % (stem, type(problem).__name__, problem))
         # NXE rig: bound to the skeleton the package itself ships against.
         for kind in ("fbx", "glb", "blend"):
             export_rigged(os.path.join(blend_dir, "%s - NXE.%s" % (stem, kind)),
@@ -1308,6 +1375,10 @@ def main():
     copied = mirror_jms(out, stems)
     if copied:
         log("copied %d .jms into the xbox folder" % copied)
+
+    shipped = ship_source_rigs(out, options, armature)
+    if shipped:
+        log("kept the source rigs for repair: %s" % ", ".join(shipped))
 
     # card_art.png used to be a copy of the item's own picture under a second
     # name - the same bytes twice in the folder, and the icon already says which

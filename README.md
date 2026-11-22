@@ -45,6 +45,7 @@ Test Item\
         Test Item - halo.fbx  the rigged model, once Blender has run; also
                        - halo fp arms, - NXE and - unrigged, copied out of
                        the Blender folder
+        master chief skeleton.fbx  Halo's biped, for repairing a binding by hand
         Test Item base map.png  also .tga  - the texture the model binds
         Test Item multipurpose.png  also .tga  Halo CE channel order
         Test Item multipurpose xbox.png  also .tga  Xbox channel order
@@ -58,6 +59,8 @@ Test Item\
         Test Item - NXE.blend, .fbx, .glb  the 71-joint NXE skeleton
         Test Item - unrigged.blend, .fbx  the model with no skeleton
         the same textures as the Max folder, so a rig opens with its maps
+        source rigs\  master chief skeleton.blend, fp arms.blend  Halo's own
+                       rig files, kept for repair
     extracted for hek users\
         pc\data\Test Item\
             bitmaps\    Test Item base map.tif, Test Item multipurpose.tif,
@@ -93,10 +96,12 @@ differently; nothing is left for you to swap by hand. The `.png` and `.tga`
 copies are the same images as the `.tif`s, for the programs that do not read
 TIFF.
 
-Halo's own two rig files are the base every item is skinned to, not something
-to hand back: they travel inside the `.bat`, are used for the pass, and are not
-copied into the output. What lands beside an item is the item's own file on
-that rig, so there is never a second, unskinned skeleton to choose between.
+Halo's own two rig files are the base every item is skinned to, and they are
+kept for repair: the `.blend` files are copied, unchanged and under their own
+names, into `extracted for blender users\source rigs\`, and the biped also goes
+to `extracted for max users\` as `.fbx` for programs that cannot open a
+`.blend`. They are in their own folder so they are never mistaken for an item's
+file - what sits beside an item is that item's own `- halo.blend`.
 
 Each item gets two Halo sets, because Halo's in-game hands are a separate model
 from the body and the player sees the arms, not the body's:
