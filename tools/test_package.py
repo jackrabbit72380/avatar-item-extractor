@@ -116,7 +116,7 @@ def main():
             print("FAIL: the extractor returned %r" % (code,))
             return 1
 
-        models = os.path.join(out, "max")
+        models = os.path.join(out, "extracted for max users")
         objs = [name for name in os.listdir(models if os.path.isdir(models) else out)
                 if name.endswith(".obj")]
         print("  .obj files : %d %s" % (len(objs), objs))
@@ -170,7 +170,7 @@ def main():
             print("FAIL: the loose-file extractor returned %r" % (code,))
             return 1
 
-        models2 = os.path.join(out2, "max")
+        models2 = os.path.join(out2, "extracted for max users")
         objs2 = [name for name in os.listdir(models2 if os.path.isdir(models2) else out2)
                  if name.endswith(".obj")]
         print("  loose .obj : %d %s" % (len(objs2), objs2))

@@ -31,13 +31,13 @@ BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v20.bat")
 # the .tif bitmaps tool.exe compiles, and the item's own records stay beside
 # those folders.
 EXPECTED = (
-    "max/UNSC Marine Armor.obj",
-    "max/UNSC Marine Armor.mtl",
-    "max/UNSC Marine Armor base map.png",
-    "max/UNSC Marine Armor base map.tga",
-    "blender/UNSC Marine Armor base map.png",
-    "hek/pc/data/UNSC Marine Armor base map.tif",
-    "hek/xbox/data/UNSC Marine Armor base map.tif",
+    "extracted for max users/UNSC Marine Armor.obj",
+    "extracted for max users/UNSC Marine Armor.mtl",
+    "extracted for max users/UNSC Marine Armor base map.png",
+    "extracted for max users/UNSC Marine Armor base map.tga",
+    "extracted for blender users/UNSC Marine Armor base map.png",
+    "extracted for hek users/pc/data/UNSC Marine Armor base map.tif",
+    "extracted for hek users/xbox/data/UNSC Marine Armor base map.tif",
     "UNSC Marine Armor_colours.txt",
     "colour_00.png",
     "catalogue.json",
@@ -45,10 +45,10 @@ EXPECTED = (
 
 # Which folder each mask set belongs in, per the user it is for.
 MASK_HOMES = {
-    "multipurpose": ("max", "blender", "hek/pc/data"),
-    "multipurpose xbox": ("max", "blender", "hek/xbox/data"),
-    "multipurpose sp": ("max", "blender", "hek/pc/data", "hek/xbox/data"),
-    "change colour": ("max", "blender", "hek/pc/data", "hek/xbox/data"),
+    "multipurpose": ("extracted for max users", "extracted for blender users", "extracted for hek users/pc/data"),
+    "multipurpose xbox": ("extracted for max users", "extracted for blender users", "extracted for hek users/xbox/data"),
+    "multipurpose sp": ("extracted for max users", "extracted for blender users", "extracted for hek users/pc/data", "extracted for hek users/xbox/data"),
+    "change colour": ("extracted for max users", "extracted for blender users", "extracted for hek users/pc/data", "extracted for hek users/xbox/data"),
 }
 
 
@@ -56,7 +56,7 @@ def homes_for(family):
     """(folder, extension) for every copy of one bitmap family."""
     wanted = []
     for folder in MASK_HOMES[family]:
-        if folder.startswith("hek"):
+        if folder.startswith("extracted for hek users"):
             wanted.append((folder, "tif"))
         else:
             wanted.extend([(folder, "png"), (folder, "tga")])
@@ -236,10 +236,10 @@ def main():
             print("FAIL: the retail-shape extractor returned %r" % (code,))
             return 1
 
-        maps = ["max/Model Table Item base map.png",
-                "max/Model Table Item base map.tga",
-                "hek/pc/data/Model Table Item base map.tif",
-                "hek/xbox/data/Model Table Item base map.tif"]
+        maps = ["extracted for max users/Model Table Item base map.png",
+                "extracted for max users/Model Table Item base map.tga",
+                "extracted for hek users/pc/data/Model Table Item base map.tif",
+                "extracted for hek users/xbox/data/Model Table Item base map.tif"]
         for name in maps:
             path = os.path.join(out2, name)
             mark = "ok  " if os.path.exists(path) else "MISS"
@@ -273,10 +273,10 @@ def main():
             print("FAIL: the no-texture extractor returned %r" % (code,))
             return 1
 
-        flat = ["max/Plain Tee colour.png", "max/Plain Tee colour.tga",
-                "blender/Plain Tee colour.png",
-                "hek/pc/data/Plain Tee colour.tif",
-                "hek/xbox/data/Plain Tee colour.tif"]
+        flat = ["extracted for max users/Plain Tee colour.png", "extracted for max users/Plain Tee colour.tga",
+                "extracted for blender users/Plain Tee colour.png",
+                "extracted for hek users/pc/data/Plain Tee colour.tif",
+                "extracted for hek users/xbox/data/Plain Tee colour.tif"]
         for name in flat:
             mark = "ok  " if os.path.exists(os.path.join(out3, name)) else "MISS"
             print("  %s %s" % (mark, name))
@@ -285,14 +285,14 @@ def main():
             print("\nFAIL: an item with no texture wrote no colour image")
             return 1
 
-        with open(os.path.join(out3, "max", "Plain Tee.mtl"), encoding="utf-8") as handle:
+        with open(os.path.join(out3, "extracted for max users", "Plain Tee.mtl"), encoding="utf-8") as handle:
             mtl = handle.read()
         if "map_Kd Plain Tee colour.png" not in mtl:
             print("\nFAIL: the .mtl does not bind the colour image")
             print(mtl)
             return 1
 
-        with open(os.path.join(out3, "hek", "pc", "data",
+        with open(os.path.join(out3, "extracted for hek users", "pc", "data",
                               "Plain Tee colour.tif"), "rb") as handle:
             head = handle.read(4)
         if head not in (b"II*\0", b"MM\0*"):
@@ -334,7 +334,7 @@ def main():
                 if not found:
                     print("\nFAIL: %s is missing from %s" % (name, folder))
                     return 1
-            got = first_pixel(os.path.join(out3, "max", stem_set + ".png"))
+            got = first_pixel(os.path.join(out3, "extracted for max users", stem_set + ".png"))
             print("    %s first pixel %s - %s" % (suffix, got, meaning))
             if got != expected:
                 print("\nFAIL: %s carries %s, expected %s (%s)"
@@ -384,7 +384,7 @@ def main():
             print("FAIL: the multi-part extractor returned %r" % (code,))
             return 1
 
-        with open(os.path.join(out4, "max", "Suit.mtl"), encoding="utf-8") as handle:
+        with open(os.path.join(out4, "extracted for max users", "Suit.mtl"), encoding="utf-8") as handle:
             mtl4 = handle.read()
         names = [line for line in mtl4.splitlines() if line.startswith("newmtl ")]
         kd = [line for line in mtl4.splitlines() if line.startswith("Kd ")]
@@ -405,7 +405,7 @@ def main():
             return 1
         for line in maps:
             image = line.split(" ", 1)[1].strip()
-            if not os.path.exists(os.path.join(out4, "max", image)):
+            if not os.path.exists(os.path.join(out4, "extracted for max users", image)):
                 print("FAIL: %s is named by the .mtl but was not written" % image)
                 return 1
 
@@ -434,13 +434,13 @@ def main():
             print("FAIL: the one-click shape returned %r" % (code,))
             return 1
 
-        wanted = ("max/%s.obj", "max/%s.mtl", "%s_colours.txt",
-                  "max/%s multipurpose.png", "max/%s multipurpose xbox.png",
-                  "max/%s multipurpose sp.tga", "max/%s change colour.png",
-                  "blender/%s multipurpose.tga",
-                  "hek/pc/data/%s multipurpose.tif",
-                  "hek/xbox/data/%s multipurpose xbox.tif",
-                  "hek/xbox/data/%s change colour.tif")
+        wanted = ("extracted for max users/%s.obj", "extracted for max users/%s.mtl", "%s_colours.txt",
+                  "extracted for max users/%s multipurpose.png", "extracted for max users/%s multipurpose xbox.png",
+                  "extracted for max users/%s multipurpose sp.tga", "extracted for max users/%s change colour.png",
+                  "extracted for blender users/%s multipurpose.tga",
+                  "extracted for hek users/pc/data/%s multipurpose.tif",
+                  "extracted for hek users/xbox/data/%s multipurpose xbox.tif",
+                  "extracted for hek users/xbox/data/%s change colour.tif")
         for name in containers:
             for pattern in wanted:
                 want = pattern % name
@@ -487,11 +487,11 @@ def main():
 
         fallback = ("extracted1", "extracted2")
         for name in fallback:
-            for pattern in ("max/%s.obj", "max/%s.mtl", "max/%s multipurpose.png",
-                            "max/%s multipurpose xbox.png",
-                            "max/%s change colour.tga",
-                            "hek/pc/data/%s multipurpose sp.tif",
-                            "hek/pc/data/%s multipurpose.tif"):
+            for pattern in ("extracted for max users/%s.obj", "extracted for max users/%s.mtl", "extracted for max users/%s multipurpose.png",
+                            "extracted for max users/%s multipurpose xbox.png",
+                            "extracted for max users/%s change colour.tga",
+                            "extracted for hek users/pc/data/%s multipurpose sp.tif",
+                            "extracted for hek users/pc/data/%s multipurpose.tif"):
                 want = pattern % name
                 found = os.path.exists(os.path.join(out6, want))
                 print("  %s %s" % ("ok  " if found else "MISS", want))
@@ -507,11 +507,11 @@ def main():
             print("\nFAIL: the run got %r, expected %r"
                   % (sorted(ids6), expected6))
             return 1
-        if os.path.exists(os.path.join(out6, "max", "extracted3.obj")):
+        if os.path.exists(os.path.join(out6, "extracted for max users", "extracted3.obj")):
             print("\nFAIL: the fallback numbering counted the GUID item")
             return 1
         for name in fallback:
-            if os.path.exists(os.path.join(out6, "max", name + " asset_v2.obj")):
+            if os.path.exists(os.path.join(out6, "extracted for max users", name + " asset_v2.obj")):
                 print("\nFAIL: an item is still named after its bin file")
                 return 1
 

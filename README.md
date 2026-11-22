@@ -40,23 +40,23 @@ to download or place beside it. Files you put in a `rig\` folder beside the
 
 ```
 Test Item\
-    max\
+    extracted for max users\
         Test Item.obj  plus .mtl
         Test Item.fbx  the rigged model, once Blender has run; also - fp arms,
-                       - NXE and - unrigged, copied out of blender\
+                       - NXE and - unrigged, copied out of the Blender folder
         Test Item base map.png  also .tga  - the texture the model binds
         Test Item multipurpose.png  also .tga  Halo CE channel order
         Test Item multipurpose xbox.png  also .tga  Xbox channel order
         Test Item multipurpose sp.png  also .tga  nothing masked
         Test Item change colour.png  also .tga  the team-colour mask
-    blender\
+    extracted for blender users\
         Test Item.blend  on the biped with the FP arms, ready to export
         Test Item.fbx  the same rig for tools that cannot read .blend
         Test Item - fp arms.blend, .fbx  hand items: the item on the arms
         Test Item - NXE.blend, .fbx, .glb  the 71-joint NXE skeleton
         Test Item - unrigged.blend, .fbx  the model with no skeleton
-        the same textures as max\, so a rig opens with its maps
-    hek\
+        the same textures as the Max folder, so a rig opens with its maps
+    extracted for hek users\
         pc\data\    Test Item base map.tif, Test Item multipurpose.tif,
                     Test Item change colour.tif - Halo CE channel order
                     Test Item.jms  the model, for tool.exe
@@ -76,15 +76,16 @@ Title, or the container folder it arrived in. One item gets a folder named after
 it, next to `extracted\`; several items share `extracted\`, each file carrying
 its item's name. Either way it is one double-click for the whole folder.
 
-Each folder holds what one program needs and nothing else, so nobody sorts
-through another program's files: `max\` has the model, its `.fbx` when Blender
-ran, and its textures already beside it; `blender\` has the rigs with the same
-textures; and `hek\pc\` and
-`hek\xbox\` have `data\` with the `.tif` bitmaps `tool.exe` compiles plus an
-empty `tags\` for what it builds. Both channel orders ship because the port and
-the original Xbox read the masks differently; nothing is left for you to swap by
-hand. The `.png` and `.tga` copies are the same images as the `.tif`s, for the
-programs that do not read TIFF.
+The folders are named for who they are for, not for the program's own name, so
+it is clear at a glance which one to open: `extracted for max users` has the
+model, its `.fbx` when Blender ran, and its textures already beside it;
+`extracted for blender users` has the rigs with the same textures; and
+`extracted for hek users` has `pc\` and `xbox\`, each with `data\` holding the
+`.tif` bitmaps `tool.exe` compiles plus an empty `tags\` for what it builds.
+Both channel orders ship because the port and the original Xbox read the masks
+differently; nothing is left for you to swap by hand. The `.png` and `.tga`
+copies are the same images as the `.tif`s, for the programs that do not read
+TIFF.
 
 The `NXE` files need only Blender, because that skeleton travels inside the
 `.bat`. The biped, the arms, the `.jms` and `Test Item.blend` use Halo's two

@@ -172,13 +172,13 @@ def main():
     # .obj and cannot open a .blend at all, so a Max user must not have to reach
     # into blender\ for the rigged model. Only .fbx travels; nothing else does.
     fbx_work = tempfile.mkdtemp(prefix="fbx-")
-    fbx_dir = os.path.join(fbx_work, "blender")
+    fbx_dir = os.path.join(fbx_work, "extracted for blender users")
     os.makedirs(fbx_dir, exist_ok=True)
     for name in ("Item.fbx", "Item - fp arms.fbx", "Item - NXE.fbx",
                  "Item - unrigged.fbx", "Item.blend", "Item.glb"):
         open(os.path.join(fbx_dir, name), "w").close()
     copied = module.mirror_fbx(fbx_work, fbx_dir, ["Item", "Missing"])
-    in_max = sorted(os.listdir(os.path.join(fbx_work, "max")))
+    in_max = sorted(os.listdir(os.path.join(fbx_work, "extracted for max users")))
     expected = ["Item - fp arms.fbx", "Item - NXE.fbx", "Item - unrigged.fbx",
                 "Item.fbx"]
     print("  mirror_fbx          -> %d copied, max\\ holds %r" % (copied, in_max))
