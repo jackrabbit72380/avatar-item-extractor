@@ -571,12 +571,14 @@ def arm_share(weights, names=ARM_BONES):
 def arm_bones(armature, names=ARM_BONES):
     """The item's own arm bones, as a plan for an armature of their own.
 
-    Each entry is (own bone, first-person bone, head, tail, roll, parent's own
-    bone). The heads and tails are the bones the cut arms are already weighted
-    to, so a skeleton built from this plan sits inside those arms wherever they
-    hang. Halo's first-person rig holds its arms straight out in a rest pose of
-    its own, and carrying the arms onto it means inventing a rotation between
-    two bodies - which is what kept landing them at the wrong angle.
+    Each entry is (own bone, first-person bone, head, tail, matrix, parent's own
+    bone). The head, tail and matrix are the bones the cut arms are already
+    weighted to, so a skeleton built from this plan sits inside those arms
+    wherever they hang. The matrix is what carries the roll: a bone in Blender
+    5 has no roll of its own to read. Halo's first-person rig holds its arms
+    straight out in a rest pose of its own, so carrying the arms onto it means
+    inventing a rotation between two bodies - which is what kept landing them
+    at the wrong angle.
     """
     plan = []
     for source in names:
@@ -588,7 +590,7 @@ def arm_bones(armature, names=ARM_BONES):
         plan.append((source, target,
                      tuple(float(value) for value in was.head_local),
                      tuple(float(value) for value in was.tail_local),
-                     float(was.roll), parent))
+                     was.matrix_local.copy(), parent))
     return plan
 
 
@@ -610,16 +612,36 @@ def build_arm_rig(armature, plan, label="halo fp arms rig"):
     try:
         bpy.ops.object.mode_set(mode="EDIT")
         made = {}
-        for source, target, head, tail, roll, _parent in plan:
+        # One root for the whole set. Halo's own first-person rig hangs both
+        # arms off a single bone, and a .jms with two roots (one per arm) is
+        # rejected by tool.exe before it reads a single vertex.
+        loose = [entry for entry in plan
+                 if entry[5] not in {other[0] for other in plan}]
+        if loose:
+            mid = Vector((0.0, 0.0, 0.0))
+            span = 0.0
+            for entry in loose:
+                mid += Vector(entry[2])
+                span += (Vector(entry[3]) - Vector(entry[2])).length
+            mid /= len(loose)
+            span /= len(loose)
+            toward = (Vector(loose[0][3]) - Vector(loose[0][2])).normalized()
+            root = data.edit_bones.new("frame bone24")
+            root.head = mid
+            root.tail = mid + toward * span
+        for source, target, head, tail, matrix, _parent in plan:
             bone = data.edit_bones.new(target)
             bone.head = head
             bone.tail = tail
-            bone.roll = roll
+            # The matrix sets the bone's direction and its roll together.
+            bone.matrix = matrix
             made[source] = bone
         for source, _target, _head, _tail, _roll, parent in plan:
             if parent in made:
                 made[source].parent = made[parent]
-                made[source].use_connect = False
+            elif loose:
+                made[source].parent = root
+            made[source].use_connect = False
         bpy.ops.object.mode_set(mode="OBJECT")
     except Exception:
         try:
@@ -1167,8 +1189,13 @@ def export_rig(path, armature, kind):
     log("wrote %s" % os.path.basename(path))
 
 
-def export_rigged(path, mesh, armature, kind, note=None):
-    """Write a mesh together with the armature it is skinned to."""
+def export_rigged(path, mesh, armature, kind, note=None, extra=()):
+    """Write a mesh together with the armature it is skinned to.
+
+    ``extra`` objects go into the .blend as well, so the file can hold a
+    reference rig (Halo's own first-person arms) beside the one the mesh rides.
+    They are not skinned to it, so the .fbx and .glb carry the rig that does.
+    """
     bpy.ops.object.select_all(action="DESELECT")
     mesh.select_set(True)
     armature.select_set(True)
@@ -1181,7 +1208,7 @@ def export_rigged(path, mesh, armature, kind, note=None):
         bpy.ops.export_scene.gltf(filepath=path, export_format="GLB",
                                   use_selection=True)
     else:
-        save_blend(path, [mesh, armature], note)
+        save_blend(path, [mesh, armature] + list(extra), note)
         return
     log("wrote %s" % os.path.basename(path))
 
@@ -1425,7 +1452,7 @@ def main():
                 if object_data.type == "ARMATURE":
                     armature_fp = object_data
             if armature_fp:
-                armature_fp.name = "halo fp arms rig"
+                armature_fp.name = "fp arms (Halo's own)"
                 log("first-person arms rig: %r with %d bones"
                     % (armature_fp.name, len(armature_fp.data.bones)))
 
@@ -1572,9 +1599,15 @@ def main():
                         arms_item, arms_rig,
                         os.path.join(models_dir, "%s - fp arms.jms" % stem))
                 record["arms_file"] = "%s - halo fp arms.blend" % stem
+                # The item's arms ride their own armature, which sits inside
+                # them. Halo's rig goes in the file as well, so the reference
+                # the arms were meant for travels with them instead of being
+                # dropped - append it to retarget.
+                beside = () if arms_rig is armature_fp else (armature_fp,)
                 export_rigged(os.path.join(blend_dir, record["arms_file"]),
                               arms_item, arms_rig, "blend",
-                              halo_note(stem, arms_item, arms_rig, True))
+                              halo_note(stem, arms_item, arms_rig, True),
+                              beside)
                 export_rigged(os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
                               arms_item, arms_rig, "fbx")
                 log("wrote %s on the first-person arms" % stem)
@@ -1603,7 +1636,7 @@ def main():
             earlier = handle.read().rstrip("\n") + "\n\n"
     with open(report_path, "w", encoding="utf-8") as handle:
         handle.write(earlier + report_text(options,
-                                           [record for record, _, _, _ in rigged],
+                                           [row[0] for row in rigged],
                                            stems, armature, nxe_rig))
     log("wrote report.txt")
 

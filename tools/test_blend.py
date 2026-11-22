@@ -353,12 +353,16 @@ def main():
             def __init__(self, name):
                 self.name = name
 
+        class Matrixish:
+            def copy(self):
+                return self
+
         class Boneish:
-            def __init__(self, name, head, tail, roll=0.0, parent=None):
+            def __init__(self, name, head, tail, matrix=None, parent=None):
                 self.name = name
                 self.head_local = head
                 self.tail_local = tail
-                self.roll = roll
+                self.matrix_local = matrix or Matrixish()
                 self.parent = parent
 
         clavicle = Boneish("bip01 l clavicle", (0.0, 0.0, 2.3), (0.0, 0.0, 2.0))

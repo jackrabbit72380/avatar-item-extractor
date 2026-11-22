@@ -118,10 +118,12 @@ from the body and the player sees the arms, not the body's:
     no plate is ever cut in half. The arms are not moved and not re-skinned: they
   ride an armature built from the very bones they are already weighted to, in
   place, with those bones renamed the way Halo's first-person set names them
-  (`frame l upperarm`, `frame l forearm`, `frame l wriste`). The skeleton is
-  therefore inside the arms wherever they hang, instead of the arms being
-  rotated onto a second rig's rest pose - Halo's first-person rig holds its arms
-  dead straight out, so there is no bend in it to line anything up with.
+  (`frame l upperarm`, `frame l forearm`, `frame l wriste`) over one
+  `frame bone24` root, the way Halo's own set is built. The skeleton is therefore
+  inside the arms wherever they hang, instead of the arms being rotated onto a
+  second rig's rest pose - Halo's first-person rig holds its arms dead straight
+  out, so there is no bend in it to line anything up with. Halo's own 37-bone
+  rig is saved in the same file beside it, so it is there to retarget onto.
   Nothing is modelled again and nothing is retextured: faces, UVs, smoothing and
   materials come across as they are. A hand item - a ring, a badge - rides its
   hand bone instead, whole, on the supplied arms rig. An item with no arm
