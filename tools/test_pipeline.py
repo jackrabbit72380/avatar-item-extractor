@@ -266,7 +266,7 @@ def main():
 
         with open(os.path.join(out2, "report.txt"), encoding="utf-8") as handle:
             report = handle.read()
-        if "the model's own texture table" not in report:
+        if "its own base colour texture" not in report:
             print("\nFAIL: report.txt does not say where the base map came from")
             print(report)
             return 1
@@ -379,6 +379,17 @@ def main():
         if ([p[3] for p in change] != coverage
                 or any(p[0] or p[1] or p[2] for p in change)):
             print("\nFAIL: change colour is not black with the same mask in alpha")
+            return 1
+
+        # An item that ships its own tint mask uses that instead of derived
+        # coverage - the mask is the item's data, resampled to the export size.
+        import extract_items as masks
+        tint = {"width": 2, "height": 1,
+                "rgba": bytes([255, 0, 0, 255, 0, 0, 0, 255])}
+        got = masks.mask_from_texture(tint, 2)
+        print("  tint mask      -> %r" % (got,))
+        if got != bytes([255, 0, 255, 0]):
+            print("\nFAIL: a tint mask is not read from its red channel")
             return 1
 
         for folder, ext in homes_for("change colour"):

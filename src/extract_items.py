@@ -776,6 +776,34 @@ def wrapped(path):
         return False
 
 
+def texture_facts(entry):
+    """One decoded slot, in the shape the rest of the extractor expects."""
+    return {"width": entry["width"], "height": entry["height"],
+            "format": entry["format"], "endian": entry.get("endian"),
+            "frames": entry.get("frames"), "pixels": len(entry["data"]),
+            "slot": entry.get("slot"), "rgba": entry["rgba"]}
+
+
+def mask_from_texture(texture, size):
+    """A mask byte a texel out of a texture's red channel, nearest neighbour.
+
+    The tint mask is painted red where the item takes a colour (with shading
+    through it on cloth), so its red channel is the mask as the item states it.
+    """
+    width = texture.get("width") or 0
+    height = texture.get("height") or 0
+    rgba = texture.get("rgba") or b""
+    if width <= 0 or height <= 0 or len(rgba) < width * height * 4:
+        return None
+    out = bytearray(size * size)
+    for y in range(size):
+        source_row = min(height - 1, y * height // size) * width * 4
+        target = y * size
+        for x in range(size):
+            out[target + x] = rgba[source_row + min(width - 1, x * width // size) * 4]
+    return bytes(out)
+
+
 def texture_from_model(mesh, batches):
     """The base map out of the model block's own texture table.
 
@@ -807,6 +835,41 @@ def texture_from_model(mesh, batches):
                                               swap=entry.get("endian") == 1),
             }
     return None
+
+
+def slot_textures(mesh, batches):
+    """Textures from the model's own table, keyed by the role a material binds.
+
+    A material names the slot each of its textures comes from, and the role is
+    the material's id: 1 the base colour, 2 the tint mask, 3 a decal, 4 a
+    reflection map. Reading the table by role is what lets an item's own tint
+    mask become the colour-change mask instead of one being invented.
+    """
+    by_role = {}
+    for batch in batches or []:
+        table = batch.get("textures") or []
+        for record in batch.get("materials") or []:
+            if record.get("kind") != "texture":
+                continue
+            slot = record.get("texture")
+            role = record.get("id")
+            if role in by_role or slot is None or not 0 <= slot < len(table):
+                continue
+            entry = table[slot]
+            if not entry or entry.get("empty") or not entry.get("data"):
+                continue
+            width = entry.get("width") or 0
+            height = entry.get("height") or 0
+            if width <= 0 or height <= 0 or entry.get("format") not in (0x12, 0x14):
+                continue
+            decoded = dict(entry)
+            decoded["slot"] = slot
+            decoded["role"] = role
+            decoded["rgba"] = mesh.decode_dxt_bytes(
+                entry["data"], width, height, entry["format"] == 0x14,
+                swap=entry.get("endian") == 1)
+            by_role[role] = decoded
+    return by_role
 
 
 def summarise(mesh, data):
@@ -919,15 +982,31 @@ def summarise(mesh, data):
                                "height": entry.get("height"),
                                "format": entry.get("format")}
                               for entry in table]
-    from_table = texture_from_model(mesh, batches)
-    if from_table:
-        facts["texture"] = from_table
+    # Reading the table by role, not by "first slot with pixels": an item's tint
+    # mask (role 2) is exactly the data Halo's colour-change channel holds, and
+    # treating it as the base map loses it.
+    roles = slot_textures(mesh, batches)
+    facts["texture_roles"] = [{"role": role, "slot": entry["slot"],
+                               "width": entry["width"], "height": entry["height"],
+                               "format": entry["format"]}
+                              for role, entry in sorted(roles.items())]
+    base = roles.get(1)
+    if base:
+        facts["texture"] = texture_facts(base)
         facts["texture_block"] = 3
-        facts["texture_source"] = "the model's own texture table"
-    elif not table and block_texture:
-        facts["texture"] = block_texture
-        facts["texture_block"] = block_texture_id
-        facts["texture_source"] = "block %s" % block_texture_id
+        facts["texture_source"] = "its own base colour texture, slot %d" % base["slot"]
+        if 2 in roles:
+            facts["tint_texture"] = texture_facts(roles[2])
+    else:
+        from_table = texture_from_model(mesh, batches)
+        if from_table:
+            facts["texture"] = from_table
+            facts["texture_block"] = 3
+            facts["texture_source"] = "the model's own texture table"
+        elif not table and block_texture:
+            facts["texture"] = block_texture
+            facts["texture_block"] = block_texture_id
+            facts["texture_source"] = "block %s" % block_texture_id
     return facts, batches
 
 
@@ -1154,6 +1233,8 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
     lines.append("              %s multipurpose sp.png/.tga/.tif - nothing masked, so the"
                  " item keeps its own colour; every channel is zero, which"
                  " makes it valid in either order" % stem)
+    if facts.get("mask_source"):
+        lines.append("mask source: %s" % facts["mask_source"])
     lines.append("")
     lines.append("The folder is laid out for the program you open it in:")
     lines.append("  %s\\  %s.obj and .mtl, with every texture as .png and .tga"
@@ -1625,14 +1706,29 @@ def main(argv=None):
             # written at 256 instead.
             png_size = 1024
             small_size = 256
-            big, painted = mesh.uv_coverage(batches, png_size)
-            small = mesh.uv_coverage(batches, small_size)[0]
-            if not painted:
-                # No usable UVs. A blanket fill means the same thing in play -
-                # the shader can only sample texels with geometry over them.
-                big = b"\xff" * (png_size * png_size)
-                small = b"\xff" * (small_size * small_size)
-                painted = png_size * png_size
+            tint = facts.get("tint_texture")
+            if tint:
+                # The item ships its own tint mask: this is the real colour-change
+                # data, painted by whoever made the item, not derived from geometry.
+                big = mask_from_texture(tint, png_size)
+                small = mask_from_texture(tint, small_size)
+                source = ("the item's own tint mask, slot %s, %dx%d, red channel"
+                          % (tint.get("slot"), tint["width"], tint["height"]))
+            else:
+                big = small = None
+                source = "the item's own UV layout"
+            if big is None:
+                big, painted = mesh.uv_coverage(batches, png_size)
+                small = mesh.uv_coverage(batches, small_size)[0]
+                if not painted:
+                    # No usable UVs. A blanket fill means the same thing in play
+                    # - the shader only samples texels with geometry over them.
+                    big = b"\xff" * (png_size * png_size)
+                    small = b"\xff" * (small_size * small_size)
+                    painted = png_size * png_size
+            else:
+                painted = sum(1 for value in big if value)
+            facts["mask_source"] = source
 
             def mask_with(channel, size, data):
                 """One mask byte a texel in `channel`, the other channels zero."""
@@ -1661,6 +1757,7 @@ def main(argv=None):
                 "meaning": "white = takes the team colour",
                 "png_size": png_size,
                 "tga_tif_size": small_size,
+                "source": source,
                 "coverage": round(painted / float(png_size * png_size), 3),
             }
             multipurpose = os.path.join(out, "%s multipurpose" % stem)
