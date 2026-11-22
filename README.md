@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract-AvatarItem-v24.bat` - one folder
+Put your Xbox 360 avatar items beside `Extract-AvatarItem-v25.bat` - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
 writes everything each one needs - models, textures, masks, colours, rigs -
@@ -121,22 +121,21 @@ from the body and the player sees the arms, not the body's:
   it. Halo's rig has no clavicle, so a pad rides the upper arm, which is the
   bone that moves a shoulder. If no biped rig is there to measure against,
   shoulder shells stay on the body: a missing pad is the smaller fault. The seam falls where the arm ends, and no plate is
-  ever cut in half. The shells are then
-  carried onto Halo's rig a part at a time: each side is measured from its own
-  mesh and split at its own elbow and wrist (where its weights change bone, not
-  at an assumed ratio), and upper arm, forearm and hand are each turned onto the
-  bone that drives them, blended across the joints so a sleeve that runs through
-  the elbow stays joined. A bent arm therefore fits the bone chain instead of
-  being swung out straight on the shoulder. The glove is trimmed along the arm to
-  Halo's own fingertips, blended by weight so the cuff does not tear from the
-  sleeve. Its vertex groups are renamed to Halo's (`frame l upperarm`,
-  `frame l forearm`, `frame l wriste`). The rig in
+  ever cut in half. Each side is then carried onto Halo's rig as one piece: the
+  arm's own long axis is turned onto Halo's arm bones, its length is laid along
+  them, and its shoulder is shifted onto Halo's. One turn and one scale for the
+  whole side - sleeve, glove and pad - so every edge keeps its length up to that
+  single factor, and a side carried that way cannot tear whatever shape it is.
+  (Turning upper arm, forearm and hand by different amounts tore the shell at
+  the joints whatever the blend; that is why it is one similarity now.) A bent
+  arm keeps its bend. Its vertex groups are renamed to Halo's (`frame l upperarm`,
+  `frame l forearm`, `frame l wriste`), and a glove the item weighted to its
+  forearm alone - an avatar rig has no finger bones - hands over to
+  `frame l wriste` along its length, so the glove follows Halo's hand instead of
+  swinging from the elbow, and its fingers end where Halo's own do. The rig in
   the file *is* Halo's own 37-bone set, so the game's first-person animations
-  drive it as they stand, and the hand lands at the wrist where Halo's own
-  fingers are. The hand is then trimmed along the arm to end where Halo's own
-  hand and fingers end, keeping its thickness, so a glove does not reach inside
-  a weapon Halo's animations were made for. Nothing is modelled again and nothing is retextured: faces, UVs,
-  smoothing and
+  drive it as they stand. Nothing is modelled again and nothing is retextured:
+  faces, UVs, smoothing and
   materials come across as they are. A hand item - a ring, a badge - rides its
   hand bone instead, whole, on the supplied arms rig. An item with no arm
   geometry at all (a hat) still gets the file, on the arms rig with an empty
@@ -286,9 +285,9 @@ the rigging section is added underneath it when Blender is there.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack Extract-AvatarItem-v24.bat src/
+python3 tools/payload.py unpack Extract-AvatarItem-v25.bat src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack Extract-AvatarItem-v24.bat src/ --rigs src/rig
+python3 tools/payload.py pack Extract-AvatarItem-v25.bat src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it

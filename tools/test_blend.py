@@ -278,7 +278,7 @@ def main():
     # they are mostly weighted to, and carried across rigidly so no piece can be
     # stretched or torn off the arm.
     for name in ("arm_share", "ARM_SHARE", "arm_pieces", "arm_axis",
-                 "alignment", "place_point", "side_carry"):
+                 "alignment", "place_point", "side_carry", "hand_share"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -488,28 +488,41 @@ def main():
                 fail("the hand left Halo's arm line: %r" % (hand,))
             if not 20.0 < hand[0] < 28.0:
                 fail("the hand landed at %r, not out along Halo's arm" % (hand,))
-            # Piecewise rigid: each part keeps its shape, and the blends are
-            # between nearly parallel turns, so nothing may stretch far.
-            worst = 1.0
+            # One similarity per side: every edge of the arm is multiplied by
+            # the same number. That is what makes a tear impossible, so it is
+            # checked edge by edge rather than by "not too far off".
+            ratios = []
             for i in range(len(arm)):
                 for j in range(i + 1, len(arm)):
                     was = math.dist(tuple(arm[i]), tuple(arm[j]))
                     now = math.dist(tuple(module.place_arm(place, arm[i])),
                                     tuple(module.place_arm(place, arm[j])))
-                    worst = max(worst, now / was, was / max(now, 1e-9))
-            if worst > 1.6:
-                fail("the arm was stretched on its way to Halo's rig: %.2fx"
-                     % worst)
+                    ratios.append(now / was)
+            print("  side_carry edges   -> every edge x%.4f" % (ratios[0],))
+            if max(ratios) - min(ratios) > 1e-9:
+                fail("the carry stretched the arm unevenly, so it can tear: %r"
+                     % (ratios,))
+            if not 0.75 - 1e-9 <= ratios[0] <= 1.25 + 1e-9:
+                fail("the arm was scaled x%.2f, outside the clamp" % (ratios[0],))
+            # The hand weights an item does not have: none at the cuff, the
+            # hand's own bone at the fingertips, so the glove follows Halo's
+            # hand instead of swinging from the elbow.
+            cuff = module.hand_share(place, Vec(0.0, 9.0, 40.0))
+            tip = module.hand_share(place, Vec(0.0, 9.0, 30.0))
+            print("  hand_share         -> cuff %.2f, fingertip %.2f" % (cuff, tip))
+            if cuff != 0.0 or tip < 0.99:
+                fail("the glove would not hand over to Halo's wrist: %r %r"
+                     % (cuff, tip))
         if module.side_carry(None, fp_rig, "l", arm, per_bone) is not None:
             fail("an arm was placed with no biped to measure from")
         if module.side_carry(biped_rig, fp_rig, "r", arm, per_bone) is not None:
             fail("a side with no first-person bone was placed anyway")
 
-        # A bent arm: the elbow and wrist are found from where the weights change
-        # bone, and each part turns onto its own bone. Straightening a bent arm in
-        # one turn left the forearm and glove off their bones.
+        # A bent arm keeps its bend - that is the price of not distorting it -
+        # and still goes out along Halo's arm without a single edge changing
+        # length against the others.
         if not hasattr(module, "arm_joint"):
-            fail("no arm_joint: a bent arm cannot be split at its own elbow")
+            fail("no arm_joint: the glove's hand-over cannot find the wrist")
         bent = [Vec(0.0, 9.0, 56.0), Vec(0.0, 9.0, 46.0), Vec(2.9, 9.0, 39.0),
                 Vec(4.9, 9.0, 36.0), Vec(4.9, 9.0, 33.0), Vec(5.6, 9.0, 31.0)]
         bent_weights = [{"bip01 l upperarm": 1.0}, {"bip01 l upperarm": 1.0},
@@ -524,8 +537,20 @@ def main():
                   % ([round(v, 2) for v in end],))
             if end[0] <= 15.0:
                 fail("a bent arm was not carried out along Halo's arm: %r" % (end,))
-            if abs(end[1] - 9.4) > 2.0 or abs(end[2]) > 2.0:
+            # Its bend stands it off the straight bone by as much as the elbow
+            # was bent - 5.6 units here - which is the arm's own shape.
+            if abs(end[1] - 9.4) > 8.0 or abs(end[2]) > 8.0:
                 fail("a bent arm was carried off Halo's arm line: %r" % (end,))
+            worst = 1.0
+            for i in range(len(bent)):
+                for j in range(i + 1, len(bent)):
+                    was = math.dist(tuple(bent[i]), tuple(bent[j]))
+                    now = math.dist(tuple(module.place_arm(place, bent[i])),
+                                    tuple(module.place_arm(place, bent[j])))
+                    worst = max(worst, now / was, was / max(now, 1e-9))
+            if worst > 1.25 + 1e-9:
+                fail("a bent arm was stretched on its way to Halo's rig: x%.2f"
+                     % worst)
 
         # The shoulder rule, exercised: a pad that hugs a clavicle is kept and
         # rides the upper arm, and a chest plate carrying the same clavicle
