@@ -281,7 +281,8 @@ def main():
                  "alignment", "place_point", "side_carry", "hand_share",
                  "place_pad", "principal_axes", "hand_plane", "turn_about",
                  "turn_product", "turn_point", "hand_twist", "hand_fit",
-                 "halo_hand"):
+                 "halo_hand", "HAND_FINGERS", "hand_span", "finger_bones",
+                 "finger_split"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -733,6 +734,52 @@ def main():
                  fist.get("twist") if fist else None))
         if fist is None or fist.get("glove") != "round" or fist["twist"] != 0.0:
             fail("a fist was rolled onto a guess: %r" % (fist,))
+
+        # The glove's fingers ride Halo's own finger bones. Riding the hand bone
+        # alone, the fingers went wherever a wrist went and never closed round a
+        # weapon, which is not what a Marine's hand does holding a rifle.
+        if module.HAND_FINGERS != ("index", "middle", "ring", "pinky", "thumb"):
+            fail("HAND_FINGERS is %r" % (module.HAND_FINGERS,))
+        hand_bones = {
+            "frame l wriste": Bone((21.14, 9.40, 0.0), (24.52, 9.40, 0.0)),
+            "frame l index low": Bone((24.61, 9.83, 1.52), (26.30, 9.89, 1.75)),
+            "frame l index mid": Bone((26.30, 9.89, 1.75), (27.39, 9.86, 1.91)),
+            "frame l index tip": Bone((27.39, 9.86, 1.91), (28.47, 9.71, 2.06)),
+            "frame l middle low": Bone((24.78, 10.12, 0.33), (26.71, 10.12, 0.33)),
+            "frame l middle mid": Bone((26.71, 10.12, 0.33), (27.92, 10.07, 0.33)),
+            "frame l middle tip": Bone((27.92, 10.07, 0.33), (29.12, 9.89, 0.33)),
+            "frame l thumb low": Bone((22.00, 8.99, 1.47), (23.19, 8.59, 2.38)),
+            "frame bone24": Bone((0.0, 0.0, 0.0), (9.40, 0.0, 0.0)),
+        }
+        hand_rig = types.SimpleNamespace(
+            matrix_world=Shift((0.0, 0.0, 0.0)),
+            data=types.SimpleNamespace(bones=hand_bones))
+        fingers = [name for name, _head, _tail in module.finger_bones(hand_rig, "l")]
+        print("  finger_bones       -> %r" % (fingers,))
+        if len(fingers) != 7 or "frame bone24" in fingers:
+            fail("the finger bones came out %r" % (fingers,))
+        span = module.hand_span(hand_rig, "l")
+        if span is None:
+            fail("Halo's hand could not be measured from its own bones")
+        else:
+            palm = module.finger_split(Vec(23.0, 9.6, 0.2), hand_rig, "l")
+            tip = module.finger_split(Vec(28.9, 9.9, 0.33), hand_rig, "l")
+            index = module.finger_split(Vec(28.4, 9.75, 2.0), hand_rig, "l")
+            print("  finger_split       -> palm grip %.2f, middle tip grip %.2f on "
+                  "%r, index tip on %r"
+                  % (palm[0] if palm else -1.0, tip[0] if tip else -1.0,
+                     max(tip[1], key=tip[1].get) if tip else None,
+                     max(index[1], key=index[1].get) if index else None))
+            if palm is None or palm[0] > 1e-9:
+                fail("the palm was given finger weights: %r" % (palm,))
+            if tip is None or tip[0] < 0.99:
+                fail("a fingertip was not given to the finger bones: %r" % (tip,))
+            if max(tip[1], key=tip[1].get).split()[2] != "middle":
+                fail("the middle fingertip rides %r" % (tip[1],))
+            if index is None or max(index[1], key=index[1].get).split()[2] != "index":
+                fail("the index fingertip rides %r" % (index[1] if index else None,))
+            if module.finger_split(Vec(23.0, 9.6, 0.2), fp_rig, "l") is not None:
+                fail("finger weights were invented for a rig with no fingers")
 
         # The shoulder rule, exercised: a pad that hugs a clavicle is kept and
         # rides the upper arm, and a chest plate carrying the same clavicle

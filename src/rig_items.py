@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v28"
-BUILD = "2026-11-22 fp-arms-glove-roll"
+VERSION = "v29"
+BUILD = "2026-11-22 fp-arms-fingers"
 
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
 DEFORM_BONES = (
@@ -880,6 +880,17 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
     hand_bone = armature_fp.data.bones.get("frame %s wriste" % side)
     if was is None or head_bone is None or hand_bone is None:
         return None
+    # Where Halo's arm actually ends. Its bones go one step past the wrist - the
+    # wriste bone finishes at the knuckles - while the hand the game draws goes
+    # on to the fingertips, and the item's arm does too. Laying the item's arm
+    # end on the knuckles alone left every glove sitting over the palm with its
+    # fingers stopping dead at Halo's wrist, which is most of why an arm could
+    # be lined up with the bones and still not look like it was wearing the
+    # hand.
+    tip_bone = (armature_fp.data.bones.get("frame %s middle tip" % side)
+                or armature_fp.data.bones.get("frame %s index tip" % side))
+    if tip_bone is None:
+        tip_bone = hand_bone
     # The arm's own shell answers which way the arm runs. Shoulder armour is
     # bolted across the shoulder, not along the arm, and a big pad would tilt the
     # axis the whole side is turned by.
@@ -901,7 +912,7 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
     if span <= 1e-6:
         return None
     head = armature_fp.matrix_world @ head_bone.head_local
-    tip = armature_fp.matrix_world @ hand_bone.tail_local
+    tip = armature_fp.matrix_world @ tip_bone.tail_local
     reach = (tip - head).length
     if reach <= 1e-6:
         return None
@@ -909,7 +920,7 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
     if turn is None:
         return None
     # The arm's own reach from its shoulder is laid along Halo's arm bones to
-    # the end of Halo's hand, so a glove ends where Halo's own hand does.
+    # the end of Halo's fingers, so a glove ends where Halo's own hand does.
     # Measured from the shoulder, not from the arm's far end: every vertex is
     # scaled by its distance from the shoulder, so dividing by the span instead
     # of the reach put the glove on past Halo's fingertips. Clamped, because a
@@ -1069,6 +1080,88 @@ def hand_share(place, point):
         return 0.0
     share = min(1.0, (t - start) / (end - start))
     return share * share * (3.0 - 2.0 * share)
+
+
+# The fingers Halo's own first-person hands close with. Its palm is not one.
+HAND_FINGERS = ("index", "middle", "ring", "pinky", "thumb")
+
+
+def hand_span(armature_fp, side):
+    """Halo's own hand: where it starts, which way it runs, how long it is and
+    where its knuckles are."""
+    bones = getattr(getattr(armature_fp, "data", None), "bones", None)
+    if bones is None:
+        return None
+    wrist = bones.get("frame %s wriste" % side)
+    tip = bones.get("frame %s middle tip" % side)
+    if tip is None:
+        tip = bones.get("frame %s index tip" % side)
+    if wrist is None or tip is None:
+        return None
+    head = armature_fp.matrix_world @ wrist.head_local
+    knuckles = armature_fp.matrix_world @ wrist.tail_local
+    end = armature_fp.matrix_world @ tip.tail_local
+    reach = [end[i] - head[i] for i in range(3)]
+    length = math.sqrt(sum(value * value for value in reach))
+    if length <= 1e-6:
+        return None
+    knuckle = math.sqrt(sum((knuckles[i] - head[i]) ** 2 for i in range(3)))
+    return head, [value / length for value in reach], length, knuckle
+
+
+def finger_bones(armature_fp, side):
+    """Halo's own finger bones on one side, as (name, head, tail) in world space."""
+    bones = getattr(getattr(armature_fp, "data", None), "bones", None)
+    if bones is None:
+        return []
+    prefix = "frame %s " % side
+    found = []
+    for entry in bones:
+        name = entry if isinstance(entry, str) else getattr(entry, "name", "")
+        if not name.startswith(prefix):
+            continue
+        if not name[len(prefix):].startswith(HAND_FINGERS):
+            continue
+        bone = bones.get(name)
+        if bone is None:
+            continue
+        found.append((name, armature_fp.matrix_world @ bone.head_local,
+                      armature_fp.matrix_world @ bone.tail_local))
+    return found
+
+
+def finger_split(point, armature_fp, side, influences=2, power=4.0):
+    """How much of a glove vertex rides Halo's fingers, and on which of them.
+
+    Halo's own first-person hands close with their finger bones, so a glove that
+    rides the hand bone alone cannot hold anything the way the game does: its
+    fingers go wherever a wrist goes and never close round a weapon. Everything
+    past the knuckles is given to the two nearest finger bones, so the weight
+    changes smoothly across a knuckle rather than jumping between them, and it
+    is eased out at the knuckles again so the palm - and a knuckle plate - stay
+    on Halo's hand bone.
+
+    Returns (grip, shares): `grip` is how much of the vertex belongs to the
+    fingers at all and `shares` divides that between finger bones. None when the
+    rig has no hand to measure.
+    """
+    span = hand_span(armature_fp, side)
+    bones = finger_bones(armature_fp, side)
+    if span is None or not bones:
+        return None
+    head, axis, length, knuckle = span
+    t = sum((point[i] - head[i]) * axis[i] for i in range(3)) / length
+    start = min(max(knuckle / length, 0.15), 0.85)
+    grip = min(1.0, max(0.0, (t - start) / (1.0 - start)))
+    grip = grip * grip * (3.0 - 2.0 * grip)
+    near = sorted((point_segment_distance(point, first, second), name)
+                  for name, first, second in bones)
+    weights = [(1.0 / ((gap + 0.3) ** power), name)
+               for gap, name in near[:influences]]
+    total = sum(weight for weight, _name in weights)
+    if total <= 0.0:
+        return None
+    return grip, {name: weight / total for weight, name in weights}
 
 
 def shell_faces(mesh):
@@ -1305,10 +1398,12 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                   hand_side[side] < 0.05 * held_side[side]
                   for side in ("l", "r")}
     filled = set()
+    fingered = set()
     moved_verts = 0
     moved_worst = 0.0
     for index in order:
         point = world @ mesh.vertices[index].co
+        moved = point
         place = carry.get(side_of[index])
         if place is None:
             coords.append((float(point[0]), float(point[1]), float(point[2])))
@@ -1347,6 +1442,26 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                            for name, weight in per.items()}
                     per[wriste] = per.get(wriste, 0.0) + share * held
                     filled.add(side_of[index])
+        # The fingers go onto Halo's own finger bones, where the carried glove
+        # now lies, so it closes round a weapon the way the game's hands do
+        # instead of moving as one lump with the wrist. Only the hand bone's own
+        # share is divided: the cuff and the forearm still blend as they did,
+        # and the knuckles keep the hand bone, which is where a knuckle plate
+        # belongs. A weight can be split without tearing anything - it is the
+        # geometry that would tear, and that is already carried whole.
+        side = side_of[index]
+        if per and side in ("l", "r"):
+            wriste = "frame %s wriste" % side
+            hand_weight = per.get(wriste, 0.0)
+            if hand_weight > 0.0:
+                split = finger_split(Vector(moved), armature_fp, side)
+                if split is not None and split[0] > 0.0:
+                    grip, shares = split
+                    per[wriste] = hand_weight * (1.0 - grip)
+                    for name, share in shares.items():
+                        per[name] = (per.get(name, 0.0)
+                                     + hand_weight * grip * share)
+                    fingered.add(side)
         total = sum(per.values())
         if total <= 0.0:
             continue
@@ -1357,6 +1472,10 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         log("hand weights: the item gave %s side(s) no hand bone, so the glove "
             "runs from the forearm to Halo's hand along the arm"
             % "".join(sorted(filled)))
+    if fingered:
+        log("finger weights: the glove's fingers ride Halo's own finger bones "
+            "on %s side(s), so it closes round a weapon as the game's hands do"
+            % "".join(sorted(fingered)))
     if pads:
         log("%d vert(s) of shoulder armour ride the shoulder upright: a pad "
             "does not turn with the arm" % len(pads))

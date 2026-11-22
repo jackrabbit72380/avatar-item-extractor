@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract-AvatarItem-v28.bat` - one folder
+Put your Xbox 360 avatar items beside `Extract-AvatarItem-v29.bat` - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
 writes everything each one needs - models, textures, masks, colours, rigs -
@@ -125,7 +125,12 @@ from the body and the player sees the arms, not the body's:
   arm's own long axis is turned onto Halo's arm bones, its length is laid along
   them, and the middle of its own sleeve is shifted onto Halo's bone - so an arm
   modelled slightly outboard of its own skeleton still sits centred on Halo's
-  instead of hanging that far out. The middle is measured from the sleeve alone:
+  instead of hanging that far out. The reach is laid to the end of Halo's
+  *fingers*, not to the end of its wriste bone: that bone stops at the knuckles
+  while the hand the game draws goes on to the fingertips, and matching the
+  knuckles alone left every glove sitting over the palm with its fingers
+  stopping dead at Halo's wrist, so a weapon would have been held in front of
+  the hand instead of in it. The middle is measured from the sleeve alone:
   a pad weighted to the upper arm is armour, not skin, and counting it would pull
   the whole arm off the bone by half a pad. One turn and one scale for the
   whole side - sleeve, glove and pad - so every edge keeps its length up to that
@@ -153,7 +158,14 @@ from the body and the player sees the arms, not the body's:
   `frame l forearm`, `frame l wriste`), and a glove the item weighted to its
   forearm alone - an avatar rig has no finger bones - hands over to
   `frame l wriste` along its length, so the glove follows Halo's hand instead of
-  swinging from the elbow, and its fingers end where Halo's own do. The rig in
+  swinging from the elbow, and its fingers end where Halo's own do. Past the
+  knuckles those fingers are then weighted onto Halo's own finger bones - the
+  two nearest of `frame l index`, `middle`, `ring`, `pinky` and `thumb`, each in
+  its low/mid/tip bones - so the glove closes round a rifle the way the game's
+  hand does rather than moving as one lump with the wrist. The hand-over is
+  smooth, so no finger is torn from its neighbour, and it is eased out again at
+  the knuckles, which leaves the palm and any knuckle plate on `frame l wriste`.
+  Weights cannot tear anything: the geometry is already carried whole. The rig in
   the file *is* Halo's own 37-bone set, so the game's first-person animations
   drive it as they stand. Nothing is modelled again and nothing is retextured:
   faces, UVs, smoothing and
@@ -306,9 +318,9 @@ the rigging section is added underneath it when Blender is there.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack Extract-AvatarItem-v28.bat src/
+python3 tools/payload.py unpack Extract-AvatarItem-v29.bat src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack Extract-AvatarItem-v28.bat src/ --rigs src/rig
+python3 tools/payload.py pack Extract-AvatarItem-v29.bat src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
