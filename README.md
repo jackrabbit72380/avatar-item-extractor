@@ -63,6 +63,12 @@ no colour table still gets the text file, saying so - there is no palette to dra
 In `catalogue.json`, `mp` means the item takes your team colour and `sp` means its
 colours are baked in.
 
+Every item also gets an image to bind, in `.png`, `.tga` and `.tif`: the decoded
+base map when the container carries a texture, and otherwise its own colour as a
+flat 64x64 image, `<stem> colour.*`. The `.mtl` names it with `map_Kd`, so the
+colour survives import in Max and Blender rather than being dropped along with
+`Kd`, and the `.tif` is a bitmap source for Halo CE's tool.
+
 If a base map or a colour card is missing, `catalogue.json` records every block
 the container held - its id, its size and its first eight bytes - and the run
 prints the same list. That is the evidence of what the item actually contains,

@@ -187,6 +187,52 @@ def main():
             return 1
 
         print("\nPASS: a texture-table-only item writes its base map in three formats")
+
+        # Third case: no texture and no colour table - the shape of every garment.
+        # The item's own colour must still arrive as a real image in all three
+        # formats, because that image is what Max, Blender and Halo CE bind: a
+        # colour that lives only in Kd is dropped on import.
+        avatar_mesh.read_model = lambda data: batches()
+        inbox3 = os.path.join(work, "plain")
+        os.makedirs(inbox3, exist_ok=True)
+        with open(os.path.join(inbox3, "Plain Tee.bin"), "wb") as handle:
+            handle.write(b"STRB" + b"\0" * 60)
+        out3 = os.path.join(work, "plain-out")
+        code = extract_items.main(["--root", inbox3, "--obj", "--out", out3])
+        if code not in (0, None):
+            print("FAIL: the no-texture extractor returned %r" % (code,))
+            return 1
+
+        flat = ["Plain Tee colour.png", "Plain Tee colour.tga", "Plain Tee colour.tif"]
+        for name in flat:
+            mark = "ok  " if os.path.exists(os.path.join(out3, name)) else "MISS"
+            print("  %s %s" % (mark, name))
+        missing = [name for name in flat if not os.path.exists(os.path.join(out3, name))]
+        if missing:
+            print("\nFAIL: an item with no texture wrote no colour image")
+            return 1
+
+        with open(os.path.join(out3, "Plain Tee.mtl"), encoding="utf-8") as handle:
+            mtl = handle.read()
+        if "map_Kd Plain Tee colour.png" not in mtl:
+            print("\nFAIL: the .mtl does not bind the colour image")
+            print(mtl)
+            return 1
+
+        with open(os.path.join(out3, "Plain Tee colour.tif"), "rb") as handle:
+            head = handle.read(4)
+        if head not in (b"II*\0", b"MM\0*"):
+            print("\nFAIL: the colour .tif is not a TIFF")
+            return 1
+
+        with open(os.path.join(out3, "report.txt"), encoding="utf-8") as handle:
+            report3 = handle.read()
+        if "its colour is written as Plain Tee colour.png/.tga/.tif" not in report3:
+            print("\nFAIL: report.txt does not say where the colour image is")
+            print(report3)
+            return 1
+
+        print("\nPASS: an item with no texture still writes its colour as .png/.tga/.tif")
         print("Not covered: the rigging half (.fbx, .glb, .blend, .jms, scene.json,")
         print("skeleton.json) needs Blender and cannot run here.")
         return 0
