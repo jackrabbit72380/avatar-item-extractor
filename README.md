@@ -22,10 +22,8 @@ Test Item\
     Test Item_colours.txt
     card_art.png
     Test Item.fbx, Test Item.jms  rigged to the biped and arms
-    avatar_rigged.blend
     Test Item - unrigged.blend, .fbx, .glb
     Test Item - NXE.blend, .fbx, .glb  rigged to the 71-joint NXE skeleton
-    preview.png, thumbnail.png
     report.txt, scene.json, skeleton.json, blender.log
     catalogue.json
 ```
@@ -33,11 +31,10 @@ Test Item\
 "Test Item" is whatever your item is titled. Folder and file names are the
 item's title; several items at once go to `extracted\`.
 
-The `NXE` files and the two previews need only Blender, because that skeleton
-travels inside the `.bat`. The biped, the arms, `avatar_rigged.blend` and the
-`.jms` also need Halo's two `.blend` files in `rig\`. If rigging cannot run at
-all, the reason is written to `blender.log` in the output folder and the window
-stays open to say so.
+The `NXE` files need only Blender, because that skeleton travels inside the
+`.bat`. The biped, the arms and the `.jms` also need Halo's two `.blend` files
+in `rig\`. If rigging cannot run at all, the reason is written to `blender.log`
+in the output folder and the window stays open to say so.
 
 A pass that finishes without writing the models it should is treated the same
 way. Blender exits 0 when a pass quietly does nothing, so the extractor checks
@@ -47,6 +44,9 @@ that are missing, and keeps the window open rather than reporting a clean run.
 `unrigged` is the item fitted to the biped with no skeleton. `NXE` is the same
 model bound to the NXE avatar skeleton in the package's own space, y-up metres,
 so it drops into the 2008 editor's rig as the game ships it.
+
+Each `.blend` is a saved scene holding just that one model, so it opens straight
+onto the item rather than onto the whole rigging session.
 
 `colour_00.png` draws the item's colour table the way the editor pages it, three
 chips across, and `_colours.txt` lists the same colours as hex. A container with
@@ -85,3 +85,13 @@ exits 0 but writes no files is 7, missing biped copies are 7, a clean pass is 0,
 a clean pass with the biped is 0, and no Blender at all is 6. It needs no
 Blender installed, which is the point - the failure paths are what used to be
 invisible.
+
+```sh
+python3 tools/test_blend.py
+```
+
+Drives the `.blend` export through a stand-in `bpy` and checks the save is a
+scene holding only that item, made with `copy=True`, with the rest of the scene
+put back afterwards - and that the datablock library writer is never used, since
+that is what produced files that opened empty. `RIG_MODULES` points it at any
+unpacked build to check a shipped version.

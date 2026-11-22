@@ -127,8 +127,8 @@ def main():
             return 1
 
         print("\nPASS: %d files, colour card %dx%d" % (len(EXPECTED), width, height))
-        print("Not covered: the rigging half (.fbx, .glb, .blend, .jms, previews,")
-        print("report.txt, scene.json, skeleton.json) needs Blender and cannot run here.")
+        print("Not covered: the rigging half (.fbx, .glb, .blend, .jms, report.txt,")
+        print("scene.json, skeleton.json) needs Blender and cannot run here.")
         return 0
     finally:
         shutil.rmtree(work, ignore_errors=True)
