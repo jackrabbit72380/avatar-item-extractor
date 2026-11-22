@@ -41,13 +41,21 @@ HALO_UNITS_PER_METRE = 100.0 / 3.048
 
 # The biped's arms. They are the seam the first-person set is cut on: Halo's
 # in-game hands are their own model, and the fingers exist nowhere else.
-# The arms proper: shoulder to hand. The clavicles are deliberately not here -
-# a pauldron weighted to one is shoulder armour, and carrying it onto the arm
-# would swing a plate off the shoulder the moment the arm moves.
+# The arms proper: shoulder to hand, the bones Halo's first-person rig has.
 ARM_BONES = (
     "bip01 l upperarm", "bip01 l forearm", "bip01 l hand",
     "bip01 r upperarm", "bip01 r forearm", "bip01 r hand",
 )
+
+# Shoulder armour hangs off the clavicles, and Halo's own first-person arms
+# carry their shoulder pads, so a shell that is mostly on a clavicle is arm
+# armour too. Halo's rig has no clavicle to give it, so it rides the upper arm -
+# the bone that moves the shoulder - and stays on the shoulder where it belongs.
+SHOULDER_BONES = {
+    "bip01 l clavicle": "bip01 l upperarm",
+    "bip01 r clavicle": "bip01 r upperarm",
+}
+ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 
 # How much of a vertex has to belong to the arms before it is part of them. The
 # body is skinned by distance, so every plate near a shoulder carries some arm
@@ -566,7 +574,7 @@ def weights_summary(object_data, limit=4):
                      for name, weight in top)
 
 
-def arm_share(weights, names=ARM_BONES):
+def arm_share(weights, names=ARM_WEIGHTS):
     """How much of one vertex belongs to the arms, 0 to 1."""
     arm = sum(weight for name, weight in weights.items() if name in names)
     total = sum(weights.values())
@@ -685,7 +693,34 @@ def vertex_weights(object_data):
     return weights
 
 
-def arm_pieces(object_data, names=ARM_BONES, share=ARM_SHARE):
+def near_shoulder(object_data, indices, armature, limit=5.0, need=0.6):
+    """Whether a shell is worn on a shoulder rather than merely touching one.
+
+    Counting clavicle weight as arm weight is what lets a pauldron into the set,
+    but a body's chest plate is also weighted to a clavicle at its corners, and
+    that one belongs to the body. A pad hugs the shoulder; a chest does not.
+    """
+    if armature is None:
+        return True
+    segments = []
+    for name in SHOULDER_BONES:
+        bone = armature.data.bones.get(name)
+        if bone is not None:
+            segments.append((armature.matrix_world @ bone.head_local,
+                             armature.matrix_world @ bone.tail_local))
+    if not segments or not indices:
+        return False
+    world = object_data.matrix_world
+    close = 0
+    for index in indices:
+        point = world @ object_data.data.vertices[index].co
+        if min(point_segment_distance(point, head, tail)
+               for head, tail in segments) <= limit:
+            close += 1
+    return close / len(indices) >= need
+
+
+def arm_pieces(object_data, names=ARM_WEIGHTS, share=ARM_SHARE, armature=None):
     """The item's shells that are arms, with the side and bone each rides.
 
     A piece joins the first-person set when most of its weight is on an upper
@@ -701,8 +736,13 @@ def arm_pieces(object_data, names=ARM_BONES, share=ARM_SHARE):
         total = sum(sum(weights[index].values()) for index in indices)
         if total <= 0.0:
             continue
-        arm = sum(arm_share(weights[index], names) * sum(weights[index].values())
+        arm = sum(arm_share(weights[index], ARM_BONES) * sum(weights[index].values())
                   for index in indices)
+        shoulder = sum(weight for index in indices
+                       for name, weight in weights[index].items()
+                       if name in SHOULDER_BONES)
+        if shoulder and near_shoulder(object_data, indices, armature):
+            arm += shoulder
         if arm / total < share:
             continue
         tally = {"l": 0.0, "r": 0.0}
@@ -711,14 +751,15 @@ def arm_pieces(object_data, names=ARM_BONES, share=ARM_SHARE):
             for name, weight in weights[index].items():
                 if name in names:
                     tally["l" if " l " in name else "r"] += weight
-                    bones[name] = bones.get(name, 0.0) + weight
+                    ridden = SHOULDER_BONES.get(name, name)
+                    bones[ridden] = bones.get(ridden, 0.0) + weight
         pieces.append({"faces": faces, "indices": indices,
                        "side": "l" if tally["l"] >= tally["r"] else "r",
                        "bone": max(bones, key=bones.get) if bones else None})
     return pieces
 
 
-def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
+def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     """The item's own arms, as a separate object, for Halo's first-person set.
 
     Halo's first-person view is a different model from the body: the biped ends
@@ -745,7 +786,7 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     if not mesh.polygons:
         return None, None
     weights = vertex_weights(object_data)
-    pieces = arm_pieces(object_data, names)
+    pieces = arm_pieces(object_data, names, armature=armature)
     if not pieces:
         log("%s: no shell is mostly on the arms, so there is no arm to cut"
             % object_data.name)
@@ -756,7 +797,7 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     # first-person animations drive.
     frames = {}
     if armature is not None and armature_fp is not None:
-        frames = arm_frames(armature, armature_fp, names)
+        frames = arm_frames(armature, armature_fp, ARM_BONES)
     mapping = {source: FP_BONES[source] for source in frames
                if armature_fp.data.bones.get(FP_BONES[source]) is not None}
     if not frames:
@@ -771,6 +812,7 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     slot = {index: position for position, index in enumerate(order)}
     coords = []
     carried = {}
+    hand_slots = {"l": [], "r": []}
     moved_verts = 0
     moved_worst = 0.0
     for index in order:
@@ -780,8 +822,13 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
         # with 5% hand and 95% spine fly all the way to the hand while its
         # neighbour stayed on the upper arm: a step, and a torn shell. That body
         # weight belongs to the arm nearest the vertex, so it moves with it.
-        carried_weights = {name: weight for name, weight in weights[index].items()
-                           if name in frames and weight > 0.0}
+        carried_weights = {}
+        for name, weight in weights[index].items():
+            if weight <= 0.0:
+                continue
+            source = name if name in frames else SHOULDER_BONES.get(name)
+            if source in frames:
+                carried_weights[source] = carried_weights.get(source, 0.0) + weight
         held = sum(carried_weights.values())
         total = sum(weights[index].values())
         if armature is not None and total - held > 1e-9:
@@ -807,11 +854,21 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
             # body rides the piece's own arm bone rather than being left with no
             # group at all.
             per = {mapping.get(home[index], home[index]): 1.0}
+        if per.get("frame l wriste", 0.0) > 0.5:
+            hand_slots["l"].append(slot[index])
+        elif per.get("frame r wriste", 0.0) > 0.5:
+            hand_slots["r"].append(slot[index])
         total = sum(per.values())
         if total <= 0.0:
             continue
         for name, weight in per.items():
             carried.setdefault(name, []).append((slot[index], weight / total))
+
+    fitted = hand_fit(coords, hand_slots, armature_fp, None)
+    if fitted:
+        log("hand fit: %s, so the gloves end where Halo's own hands do"
+            % ", ".join("%s by x%.2f" % (side, scale)
+                        for side, scale in sorted(fitted.items())))
 
     faces = [polygon for piece in pieces for polygon in piece["faces"]]
     copy = bpy.data.meshes.new("%s arms" % mesh.name)
@@ -853,25 +910,33 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     arms["build"] = BUILD
     arms["version"] = VERSION
     arms["on_rig"] = bool(moved_verts)
-    # A vertex carried by the wrong bone ends up off the arms entirely. Count
-    # them, so a run says "12 vertices are 40 units away" instead of leaving it
-    # to be spotted in Blender later.
-    stray, stray_worst = 0, 0.0
-    if armature_fp is not None and coords:
-        bones = [(armature_fp.matrix_world @ bone.head_local,
-                  armature_fp.matrix_world @ bone.tail_local)
-                 for bone in armature_fp.data.bones]
-        for point in coords:
-            spot = Vector(point)
-            gap = min(point_segment_distance(spot, head, tail) for head, tail in bones)
-            if gap > 5.0:
-                stray += 1
-            stray_worst = max(stray_worst, gap)
-        arms["stray_verts"] = stray
-        arms["stray_worst"] = stray_worst
-        if stray:
-            log("%d vert(s) of %d sit more than 5 units off the rig (worst %.1f)"
-                % (stray, len(coords), stray_worst))
+    # A vertex carried by the wrong bone tears the shell it belongs to. Distance
+    # from the bones is no use for that - a pauldron is legitimately far from
+    # them - so this compares every edge with the length it had before, which
+    # only a torn or flung shell changes.
+    torn, torn_worst, seen = 0, 1.0, 0
+    for piece in pieces:
+        for polygon in piece["faces"]:
+            loop = list(polygon.vertices)
+            for first, second in zip(loop, loop[1:] + loop[:1]):
+                if first not in slot or second not in slot:
+                    continue
+                was = (object_data.matrix_world @ mesh.vertices[first].co
+                       - object_data.matrix_world @ mesh.vertices[second].co).length
+                if was <= 1e-6:
+                    continue
+                now = (Vector(coords[slot[first]])
+                       - Vector(coords[slot[second]])).length
+                seen += 1
+                ratio = max(now / was, was / max(now, 1e-6))
+                torn_worst = max(torn_worst, ratio)
+                if ratio > 3.0:
+                    torn += 1
+    arms["torn_edges"] = torn
+    arms["torn_worst"] = torn_worst
+    if torn:
+        log("%d of %d edge(s) stretched more than 3x (worst x%.1f) - the shell "
+            "was torn by the carry" % (torn, seen, torn_worst))
     fit = arm_fit([Vector(point) for point in coords], armature_fp, arms)
     if fit is not None:
         arms["fit_mean"] = fit[0]
@@ -915,11 +980,11 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
         arms, rig = arm_region(merged, armature, armature_fp)
         if arms is not None:
             worst = meta(arms, "carried_units")
-            if meta(arms, "stray_verts"):
-                record["arms_stray"] = (
-                    "%d of its vert(s) sit more than 5 units off the rig "
-                    "(worst %.1f) - those are the misplaced ones"
-                    % (meta(arms, "stray_verts"), meta(arms, "stray_worst")))
+            if meta(arms, "torn_edges"):
+                record["arms_torn"] = (
+                    "%d edge(s) stretched more than 3x (worst x%.1f) - the shell "
+                    "was torn by the carry"
+                    % (meta(arms, "torn_edges"), meta(arms, "torn_worst")))
             if meta(arms, "fit_worst") is not None:
                 record["arms_fit"] = ("stands in Halo's own arms to within "
                                       "%.2f units (mean %.2f)"
@@ -1305,6 +1370,50 @@ def arm_fit(points, armature_fp, skip, sample=400):
     return sum(gaps) / len(gaps), max(gaps)
 
 
+def hand_fit(coords, sides, armature_fp, skip):
+    """End the hands where Halo's own hands end, keeping their thickness.
+
+    Halo's first-person animations put a weapon against the wrist and the
+    fingers the model was built for; a glove reaching past those fingers grips
+    from inside the weapon. Only the length along the arm is scaled - the sleeve
+    keeps its girth - and the elbow and wrist stay on their bones, because the
+    wrist joint is where the scaling starts.
+    """
+    if armature_fp is None or not coords:
+        return {}
+    reference = reference_arms(armature_fp, skip)
+    if not reference:
+        return {}
+    cloud = []
+    for item in reference:
+        cloud.extend(item.matrix_world @ vertex.co for vertex in item.data.vertices)
+    done = {}
+    for side, slots in sides.items():
+        wrist = armature_fp.data.bones.get("frame %s wriste" % side)
+        upper = armature_fp.data.bones.get("frame %s upperarm" % side)
+        if wrist is None or upper is None or not slots:
+            continue
+        wrist_head = armature_fp.matrix_world @ wrist.head_local
+        shoulder = armature_fp.matrix_world @ upper.head_local
+        axis = (wrist_head - shoulder)
+        if axis.length < 1e-6:
+            continue
+        axis.normalize()
+        ours = max((Vector(coords[slot]) - wrist_head).dot(axis) for slot in slots)
+        theirs = [((point - wrist_head).dot(axis), point) for point in cloud
+                  if (point.y > 0.0) == (side == "l")]
+        theirs = max((value for value, _point in theirs if value > 0.0), default=0.0)
+        if ours <= 1e-6 or theirs <= 1e-6 or theirs >= ours:
+            continue
+        scale = theirs / ours
+        for slot in slots:
+            point = Vector(coords[slot])
+            along = (point - wrist_head).dot(axis)
+            coords[slot] = tuple(point + axis * (along * scale - along))
+        done[side] = scale
+    return done
+
+
 def meta(object_data, key, default=None):
     """A custom property off an object, tolerating anything that has none."""
     try:
@@ -1456,8 +1565,8 @@ def report_text(options, records, stems, armature, nxe=None):
                 lines.append("              %s" % record["arms_carried"])
             if record.get("arms_fit"):
                 lines.append("              %s" % record["arms_fit"])
-            if record.get("arms_stray"):
-                lines.append("              %s" % record["arms_stray"])
+            if record.get("arms_torn"):
+                lines.append("              %s" % record["arms_torn"])
         lines.append("  vertices  : %d" % (record.get("model", {}).get("vertices") or 0))
         lines.append("")
     lines.extend(rig_scene_lines(armature, nxe))

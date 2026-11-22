@@ -286,7 +286,8 @@ def main():
             ({"bip01 l forearm": 0.9, "bip01 spine1": 0.1}, 0.9),
             ({"bip01 spine1": 1.0}, 0.0),
             ({"bip01 l upperarm": 0.2, "bip01 spine1": 0.8}, 0.2),
-            ({"bip01 l clavicle": 1.0}, 0.0),
+            # shoulder armour is arm armour: Halo's own fp arms carry their pads
+            ({"bip01 l clavicle": 1.0}, 1.0),
             ({}, 0.0),
         ]
         for weights, wanted in cases:
@@ -325,7 +326,7 @@ def main():
              (2, ((2, 0.7), (1, 0.3)))],
             # a torso plate, on the spine: left out
             [(3, ((0, 1.0),)), (4, ((0, 1.0),)), (5, ((0, 1.0),))],
-            # a pauldron, on the clavicle: left out
+            # a pauldron, on the clavicle: kept, riding the upper arm
             [(6, ((1, 1.0),)), (7, ((1, 1.0),)), (8, ((1, 1.0),))],
             # half an arm by weight: under the floor, left out
             [(9, ((2, 0.45), (0, 0.55))), (10, ((2, 0.45), (0, 0.55))),
@@ -339,8 +340,11 @@ def main():
             vertex_groups=groups))
         kept = [sorted(piece["indices"]) for piece in cut]
         print("  arm_pieces          -> %r" % (kept,))
-        if kept != [[0, 1, 2]]:
-            fail("the cut kept %r, not just the sleeve" % (kept,))
+        if kept != [[0, 1, 2], [6, 7, 8]]:
+            fail("the cut kept %r, not the sleeve and the pauldron" % (kept,))
+        pad = [piece for piece in cut if sorted(piece["indices"]) == [6, 7, 8]]
+        if pad and pad[0]["bone"] != "bip01 l upperarm":
+            fail("the pauldron rides %r, not the upper arm" % (pad[0]["bone"],))
         if cut and (cut[0]["side"] != "l"
                     or cut[0]["bone"] != "bip01 l forearm"):
             fail("the sleeve is not on the left forearm: %r" % (cut[0],))
