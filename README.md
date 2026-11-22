@@ -77,8 +77,12 @@ The `.jms` is written in Halo CE's own layout, taken from the game's exporter
 (BlueStreak 1.0.4): positional fields, no section markers, one vertex per
 triangle corner, and the texture coordinate on the vertex line as `u v w`.
 That is the slot Halo's shader tags read - one per vertex, which is all a
-`gbxmodel` vertex stores. The `.obj` carries the UV set the item binds its
-first texture slot to; the item's other UV sets are not exported.
+`gbxmodel` vertex stores.
+
+The `.obj` carries the UV set the item binds its first texture slot to, because
+that is all an OBJ can hold. The item's other sets travel in `catalogue.json` and
+become real layers in the `.blend` - `uv0`, `uv1`, `uv2` - so a map that belongs
+on a later set has somewhere to go.
 
 Every item also gets an image to bind, in `.png`, `.tga` and `.tif`: the decoded
 base map when the container carries a texture, and otherwise its own colour as a
