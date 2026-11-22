@@ -273,10 +273,53 @@ def main():
 
         print("\nPASS: a texture-table-only item writes its base map in three formats")
 
+        # An item whose table declares slots and leaves every one of them empty,
+        # while the container carries the texture in a block of its own. Reading
+        # that as "no base map" was wrong: an empty slot says the table is empty,
+        # not that the item has no texture.
+        avatar_mesh.strb_blocks = lambda data: [
+            (2, 1, 0, texture_block()),
+            (3, 1, 0, b"model-payload"),
+        ]
+
+        def with_empty_slots():
+            out = batches()
+            out[0]["textures"] = [{
+                "format": 0x14, "width": 16, "height": 16, "frames": 1,
+                "per_frame": 0, "empty": True, "endian": 0, "data": b"",
+            }]
+            return out
+
+        avatar_mesh.read_model = lambda data: with_empty_slots()
+        inbox_empty = os.path.join(work, "empty-slots")
+        os.makedirs(inbox_empty, exist_ok=True)
+        with open(os.path.join(inbox_empty, "Armor Slots.bin"), "wb") as handle:
+            handle.write(b"STRB" + b"\0" * 60)
+        out_empty = os.path.join(work, "empty-slots-out")
+        code = extract_items.main(["--root", inbox_empty, "--obj", "--out", out_empty])
+        if code not in (0, None):
+            print("FAIL: the empty-slot extractor returned %r" % (code,))
+            return 1
+        fallback = os.path.join(out_empty, "extracted for max users",
+                                "Armor Slots base map.png")
+        print("  %s Armor Slots base map.png, from the item's texture block"
+              % ("ok  " if os.path.exists(fallback) else "MISS"))
+        if not os.path.exists(fallback):
+            print("\nFAIL: an item with empty slots and a texture block got no base map")
+            return 1
+        with open(os.path.join(out_empty, "report.txt"), encoding="utf-8") as handle:
+            report_empty = handle.read()
+        if "from block 2" not in report_empty:
+            print("\nFAIL: the report does not say the base map came from block 2")
+            return 1
+
+        print("\nPASS: an all-empty texture table still finds the block's base map")
+
         # Third case: no texture and no colour table - the shape of every garment.
         # The item's own colour must still arrive as a real image in all three
         # formats, because that image is what Max, Blender and Halo CE bind: a
         # colour that lives only in Kd is dropped on import.
+        avatar_mesh.strb_blocks = lambda data: [(3, 1, 0, b"model-payload")]
         avatar_mesh.read_model = lambda data: batches()
         inbox3 = os.path.join(work, "plain")
         os.makedirs(inbox3, exist_ok=True)
@@ -390,6 +433,16 @@ def main():
         print("  tint mask      -> %r" % (got,))
         if got != bytes([255, 0, 255, 0]):
             print("\nFAIL: a tint mask is not read from its red channel")
+            return 1
+
+        # With no tint mask, the painted texture's own islands are the coverage:
+        # transparent or black is not part of the item, anything else is.
+        picture = {"width": 2, "height": 1,
+                   "rgba": bytes([0, 0, 0, 0, 10, 10, 10, 255])}
+        covered = masks.mask_from_coverage(picture, 2)
+        print("  texture islands-> %r" % (covered,))
+        if covered != bytes([0, 255, 0, 255]):
+            print("\nFAIL: a painted texture is not read as islands")
             return 1
 
         for folder, ext in homes_for("change colour"):

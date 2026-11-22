@@ -198,10 +198,11 @@ is different, so both are written rather than leaving you to swap channels:
 | Halo CE | detail mask | self-illumination | specular | colour change |
 | Xbox | specular | self-illumination | colour change | detail |
 
-  * `<stem> multipurpose.*` - Halo CE order. The colour change mask is painted
-    from the item's own UV layout, so it sits on the item's islands the way the
-    base map does: white where the item has geometry, so all of it takes the
-    player's colour, and black elsewhere. A part that must keep its own colour
+  * `<stem> multipurpose.*` - Halo CE order. The colour change mask comes from
+    the item itself, in this order: its own tint mask texture when the model
+    binds one; otherwise the painted base texture's own islands (anything not
+    transparent and not black); and only failing both, the UV coverage. The
+    report's `mask source:` line says which was used. A part that must keep its own colour
     needs painting black there. The `.png` is 1024x1024 and a few kilobytes; the
     `.tga` and `.tif` are the same mask at 256, because uncompressed at 1024 they
     are 4 MB each and 256 is what a bitmap compiled by `tool.exe` uses anyway.

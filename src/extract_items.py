@@ -804,6 +804,30 @@ def mask_from_texture(texture, size):
     return bytes(out)
 
 
+def mask_from_coverage(texture, size):
+    """A mask byte a texel: 255 where the item's own picture is not empty.
+
+    When an item carries a painted texture and no tint mask, the picture's own
+    coverage - anywhere it is not transparent and not black - is the only mask
+    its bytes support. That is the painted islands, not a guess about them.
+    """
+    width = texture.get("width") or 0
+    height = texture.get("height") or 0
+    rgba = texture.get("rgba") or b""
+    if width <= 0 or height <= 0 or len(rgba) < width * height * 4:
+        return None
+    out = bytearray(size * size)
+    for y in range(size):
+        source_row = min(height - 1, y * height // size) * width * 4
+        target = y * size
+        for x in range(size):
+            at = source_row + min(width - 1, x * width // size) * 4
+            if (rgba[at + 3] >= 8 or rgba[at] >= 8 or rgba[at + 1] >= 8
+                    or rgba[at + 2] >= 8):
+                out[target + x] = 255
+    return bytes(out)
+
+
 def texture_from_model(mesh, batches):
     """The base map out of the model block's own texture table.
 
@@ -1003,7 +1027,10 @@ def summarise(mesh, data):
             facts["texture"] = from_table
             facts["texture_block"] = 3
             facts["texture_source"] = "the model's own texture table"
-        elif not table and block_texture:
+        elif block_texture:
+            # The table can be all empty slots on an item that still carries its
+            # texture in a block of its own - the armour does. A table of empty
+            # slots says "nothing in the table", not "nothing in the item".
             facts["texture"] = block_texture
             facts["texture_block"] = block_texture_id
             facts["texture_source"] = "block %s" % block_texture_id
@@ -1707,6 +1734,7 @@ def main(argv=None):
             png_size = 1024
             small_size = 256
             tint = facts.get("tint_texture")
+            picture = facts.get("texture")
             if tint:
                 # The item ships its own tint mask: this is the real colour-change
                 # data, painted by whoever made the item, not derived from geometry.
@@ -1714,6 +1742,16 @@ def main(argv=None):
                 small = mask_from_texture(tint, small_size)
                 source = ("the item's own tint mask, slot %s, %dx%d, red channel"
                           % (tint.get("slot"), tint["width"], tint["height"]))
+            elif picture:
+                # No tint mask, but a painted texture: its own islands are the
+                # coverage the item actually has, so the mask follows the picture
+                # instead of the geometry.
+                big = mask_from_coverage(picture, png_size)
+                small = mask_from_coverage(picture, small_size)
+                source = ("the item's own texture, %dx%d, where it is not empty"
+                          % (picture["width"], picture["height"]))
+                if big is None:
+                    source = "the item's own UV layout"
             else:
                 big = small = None
                 source = "the item's own UV layout"
