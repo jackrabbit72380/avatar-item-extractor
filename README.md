@@ -67,11 +67,16 @@ ships it.
 Each `.blend` is a saved scene holding just that one model, so it opens straight
 onto the item rather than onto the whole rigging session.
 
-`colour_00.png` draws the item's colour table the way the editor pages it, three
-chips across, and `_colours.txt` lists the same colours as hex. A container with
-no colour table still gets the text file, saying so - there is no palette to draw.
-In `catalogue.json`, `mp` means the item takes your team colour and `sp` means its
-colours are baked in.
+`colour_00.png` draws the item's colour table the way the editor pages it, the
+base colour first and then the swatches, three chips across, and `_colours.txt`
+lists the same colours as `base` / `swatch1..9` with hex and 0..1 triples. A
+container with no colour table still gets the text file, saying so.
+
+Whether an item was a team-colour item is **not recorded in the file**, so
+nothing here decides it: `catalogue.json` records what the item holds
+(`colour_table.present`, `colour_table.swatches`) and every item gets the files
+for both builds. Use the base map alone for a fixed colour, or the base map with
+the multipurpose map for a team colour.
 
 The `.jms` is written in Halo CE's own layout, taken from the game's exporter
 (BlueStreak 1.0.4): positional fields, no section markers, one vertex per
