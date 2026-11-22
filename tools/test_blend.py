@@ -186,6 +186,22 @@ def main():
         fail("mirror_fbx copied %d files (%r), expected %d (%r)"
              % (copied, in_max, len(expected), sorted(expected)))
 
+    # The .jms is the same text model for either Halo target, so it is mirrored
+    # into xbox\data as well: an xbox user should not have to reach into pc\
+    # for the model when that target's bitmaps are already in its own folder.
+    jms_work = tempfile.mkdtemp(prefix="jms-")
+    jms_pc = os.path.join(jms_work, "extracted for hek users", "pc", "data")
+    os.makedirs(jms_pc, exist_ok=True)
+    for name in ("Item.jms", "Item - fp arms.jms", "Notes.txt"):
+        open(os.path.join(jms_pc, name), "w").close()
+    copied = module.mirror_jms(jms_work, ["Item", "Missing"])
+    jms_xbox = sorted(os.listdir(os.path.join(jms_work, "extracted for hek users",
+                                              "xbox", "data")))
+    print("  mirror_jms          -> %d copied, xbox\\data holds %r" % (copied, jms_xbox))
+    if copied != 2 or jms_xbox != ["Item - fp arms.jms", "Item.jms"]:
+        fail("mirror_jms copied %d files (%r), expected 2 (%r)"
+             % (copied, jms_xbox, ["Item - fp arms.jms", "Item.jms"]))
+
     print("  save_blend          -> %d save, copy=%r, scene %r"
           % (1, calls[0]["copy"] if calls else None,
              sorted(calls[0]["at_save"]) if calls else None))

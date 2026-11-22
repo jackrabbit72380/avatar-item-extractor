@@ -936,6 +936,29 @@ def mirror_fbx(out, blend_dir, stems):
     return copied
 
 
+def mirror_jms(out, stems):
+    """Copy each Halo text model into the xbox folder as well.
+
+    tool.exe compiles the same .jms for either target - which one it builds is a
+    flag to the compiler, not a difference in the file - so an xbox user should
+    not have to reach into pc\ for the model when that target's bitmaps are
+    already sitting in its own data\ beside an empty tags\.
+    """
+    hek = os.path.join(out, HEK_DIR)
+    source_dir = os.path.join(hek, "pc", "data")
+    target_dir = os.path.join(hek, "xbox", "data")
+    os.makedirs(target_dir, exist_ok=True)
+    copied = 0
+    for stem in sorted(set(stems)):
+        for suffix in ("", " - fp arms"):
+            name = "%s%s.jms" % (stem, suffix)
+            source = os.path.join(source_dir, name)
+            if os.path.exists(source):
+                shutil.copyfile(source, os.path.join(target_dir, name))
+                copied += 1
+    return copied
+
+
 def main():
     options = args()
     reset_scene()
@@ -1119,6 +1142,10 @@ def main():
     copied = mirror_fbx(out, blend_dir, stems)
     if copied:
         log("copied %d .fbx into max" % copied)
+
+    copied = mirror_jms(out, stems)
+    if copied:
+        log("copied %d .jms into the xbox folder" % copied)
 
     # The item's own picture doubles as the card art: the icon when the
     # container carried one, otherwise the first base map.

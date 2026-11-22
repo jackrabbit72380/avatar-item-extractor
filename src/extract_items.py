@@ -1160,9 +1160,10 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                  " textures" % BLENDER_DIR)
     lines.append("  %s\\pc\\   data\\ the bitmaps tool.exe compiles, as .tif"
                  " in Halo CE's" % HEK_DIR)
-    lines.append("            channel order; tags\\ where tool.exe writes what it builds")
+    lines.append("            channel order, and the .jms; tags\\ where tool.exe"
+                 " writes what it builds")
     lines.append("  %s\\xbox\\ the same bitmaps in the original Xbox channel"
-                 " order" % HEK_DIR)
+                 " order, and the same .jms" % HEK_DIR)
     lines.append("")
     lines.append("multipurpose channels - the model shader packs four greyscale masks")
     lines.append("into one bitmap, and which channel holds which depends on the")

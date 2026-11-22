@@ -61,7 +61,8 @@ Test Item\
                     Test Item change colour.tif - Halo CE channel order
                     Test Item.jms  the model, for tool.exe
         pc\tags\    where tool.exe writes what it builds
-        xbox\data\  the same bitmaps in the original Xbox channel order
+        xbox\data\  the same bitmaps in the original Xbox channel order,
+                    and the same .jms
         xbox\tags\
     Test Item.png  the item's icon, when the package has one
     colour_00.png  the item's own palette, when it carries one
@@ -81,7 +82,9 @@ it is clear at a glance which one to open: `extracted for max users` has the
 model, its `.fbx` when Blender ran, and its textures already beside it;
 `extracted for blender users` has the rigs with the same textures; and
 `extracted for hek users` has `pc\` and `xbox\`, each with `data\` holding the
-`.tif` bitmaps `tool.exe` compiles plus an empty `tags\` for what it builds.
+`.tif` bitmaps `tool.exe` compiles - and the `.jms`, in both, because the one
+text model compiles for either target - plus an empty `tags\` for what it
+builds.
 Both channel orders ship because the port and the original Xbox read the masks
 differently; nothing is left for you to swap by hand. The `.png` and `.tga`
 copies are the same images as the `.tif`s, for the programs that do not read
