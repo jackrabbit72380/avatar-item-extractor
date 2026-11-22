@@ -825,6 +825,11 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     arms["carried_units"] = moved_worst
     arms["build"] = BUILD
     arms["version"] = VERSION
+    arms["on_rig"] = bool(moved_verts)
+    if frames and not moved_verts:
+        log("%s: every arm weight sits on a bone with no first-person frame, so "
+            "nothing was carried - report.txt and the file's own note say so"
+            % arms.name)
     log("cut %s: %d of %d vert(s), %d face(s) in %d shell(s), %s, on %s"
         % (arms.name, len(order), len(mesh.vertices), len(faces), len(pieces),
            ("carried on %d bone frame(s) onto Halo's fp rig, moved %d vert(s) up "
@@ -858,16 +863,16 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
             return arms, armature_fp
         arms, rig = arm_region(merged, armature, armature_fp)
         if arms is not None:
-            try:
-                worst = arms.get("carried_units")
-            except AttributeError:
-                worst = None
+            worst = meta(arms, "carried_units")
             if worst is None:
                 record["arms_carried"] = "arms stayed where they were"
+            elif not (meta(arms, "carried_verts") or 0):
+                record["arms_carried"] = ("NOTHING CARRIED - these arms are not "
+                                          "on Halo's rig, see the line above")
             else:
                 record["arms_carried"] = (
                     "%d vert(s) carried onto Halo's fp bones, up to %.2f units"
-                    % (arms.get("carried_verts") or 0, worst))
+                    % (meta(arms, "carried_verts") or 0, worst))
             # Already on its own bones and weighted by arm_region: a second,
             # distance-based bind here would re-guess weights that came across
             # exactly.
@@ -1206,6 +1211,14 @@ def export_rigged(path, mesh, armature, kind, note=None):
     log("wrote %s" % os.path.basename(path))
 
 
+def meta(object_data, key, default=None):
+    """A custom property off an object, tolerating anything that has none."""
+    try:
+        return object_data.get(key, default)
+    except AttributeError:
+        return default
+
+
 def halo_note(stem, mesh, armature, arms=False):
     """The text block saved inside a Halo .blend, so the file says what it is.
 
@@ -1239,14 +1252,15 @@ def halo_note(stem, mesh, armature, arms=False):
         "build     : %s" % BUILD,
     ]
     if arms:
-        try:
-            worst = mesh.get("carried_units")
-        except AttributeError:
-            worst = None
-        if worst is not None:
+        worst = meta(mesh, "carried_units")
+        moved = meta(mesh, "carried_verts") or 0
+        if worst is not None and moved:
             lines.insert(4, "carried   : %d vert(s) moved onto Halo's frame "
-                            "bones, up to %.2f units"
-                         % (mesh.get("carried_verts") or 0, worst))
+                            "bones, up to %.2f units" % (moved, worst))
+        elif worst is not None:
+            lines.insert(4, "carried   : NOTHING MOVED - this mesh is not on "
+                            "Halo's rig, so the arms are still in the pose the "
+                            "item was modelled in")
     return ("READ ME - %s.txt" % ("fp arms" if arms else "halo"),
             "\n".join(lines) + "\n")
 
