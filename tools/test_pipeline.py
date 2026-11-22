@@ -136,8 +136,59 @@ def main():
             return 1
 
         print("\nPASS: %d files, colour card %dx%d" % (len(EXPECTED), width, height))
-        print("Not covered: the rigging half (.fbx, .glb, .blend, .jms, report.txt,")
-        print("scene.json, skeleton.json) needs Blender and cannot run here.")
+
+        # Second case: the shape a retail item actually has - blocks 8, 3, 4, 4,
+        # with no texture block and no colour block. The base map is in the
+        # model block's own texture table, which is where the item declares it.
+        avatar_mesh.strb_blocks = lambda data: [
+            (8, 1, 0, b"\x0f" * 15),
+            (3, 1, 0, b"model-payload"),
+            (4, 1, 0, b"\x00" * 906),
+            (4, 1, 0, b"\x00" * 3460),
+        ]
+
+        def with_table():
+            out = batches()
+            out[0]["textures"] = [{
+                "format": 0x14, "width": 16, "height": 16, "frames": 1,
+                "per_frame": 256, "empty": False, "endian": 0,
+                "data": bytes([0xFF, 0xFF, 0xE0, 0x07, 0, 0, 0, 0]) * 16 + b"\0" * 128,
+            }]
+            return out
+
+        avatar_mesh.read_model = lambda data: with_table()
+        inbox = os.path.join(work, "retail")
+        os.makedirs(inbox, exist_ok=True)
+        with open(os.path.join(inbox, "Model Table Item.bin"), "wb") as handle:
+            handle.write(b"STRB" + b"\0" * 60)
+        out2 = os.path.join(work, "retail-out")
+        code = extract_items.main(["--root", inbox, "--obj", "--out", out2])
+        if code not in (0, None):
+            print("FAIL: the retail-shape extractor returned %r" % (code,))
+            return 1
+
+        maps = ["Model Table Item base map.png",
+                "Model Table Item base map.tga",
+                "Model Table Item base map.tif"]
+        for name in maps:
+            path = os.path.join(out2, name)
+            mark = "ok  " if os.path.exists(path) else "MISS"
+            print("  %s %s" % (mark, name))
+        missing = [name for name in maps if not os.path.exists(os.path.join(out2, name))]
+        if missing:
+            print("\nFAIL: the model's texture table produced no base map")
+            return 1
+
+        with open(os.path.join(out2, "report.txt"), encoding="utf-8") as handle:
+            report = handle.read()
+        if "the model's own texture table" not in report:
+            print("\nFAIL: report.txt does not say where the base map came from")
+            print(report)
+            return 1
+
+        print("\nPASS: a texture-table-only item writes its base map in three formats")
+        print("Not covered: the rigging half (.fbx, .glb, .blend, .jms, scene.json,")
+        print("skeleton.json) needs Blender and cannot run here.")
         return 0
     finally:
         shutil.rmtree(work, ignore_errors=True)

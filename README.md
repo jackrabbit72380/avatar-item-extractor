@@ -68,6 +68,12 @@ the container held - its id, its size and its first eight bytes - and the run
 prints the same list. That is the evidence of what the item actually contains,
 so a missing texture can be looked at rather than guessed about.
 
+The base map comes from the model block's own texture table first - the item
+names its slots there and each slot states its size, format and whether it holds
+anything - and only falls back to a texture kept in its own block when the model
+has no table at all. A table of empty slots means there is no base map to write,
+and the report says so.
+
 `report.txt` says the same in plain text: the blocks, the mesh counts, the
 texture slots the model declares, whether a base map and a colour table were
 found, and each part's shader and texture bindings. The extractor writes it
