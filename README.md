@@ -7,9 +7,13 @@ skeleton.
 
 It reads only the folder the `.bat` sits in, and writes its results there too.
 
-Needs Python 3.8+. Blender 4.x makes the rigging files; `master chief skeleton.blend`
-and `fp arms.blend` in a `rig\` folder beside the `.bat` add the biped, the arms
-and the JMS.
+Needs Python 3.8+. Blender 4.x makes the rigging files.
+
+Halo CE's two rig files - `master chief skeleton.blend` and `fp arms.blend` -
+travel inside the `.bat` and are unpacked to
+`%LOCALAPPDATA%\AvatarItemExtractor\rig` on the first run, so there is nothing
+to download or place beside it. Files you put in a `rig\` folder beside the
+`.bat`, or beside the `.bat` itself, are used instead when they are there.
 
 ## Output
 
@@ -33,11 +37,11 @@ Test Item\
 item's title; several items at once go to `extracted\`.
 
 The `NXE` files need only Blender, because that skeleton travels inside the
-`.bat`. The biped, the arms, the `.jms` and `Test Item.blend` also need Halo's
-two `.blend` files in `rig\`; without them the NXE and unrigged copies are still
-written and the run says which files were missing. If rigging cannot run at all,
-the reason is written to `blender.log` in the output folder and the window stays
-open to say so.
+`.bat`. The biped, the arms, the `.jms` and `Test Item.blend` use Halo's two
+`.blend` files, which travel inside the `.bat` as well. If they are somehow
+missing, the NXE and unrigged copies are still written and the run says which
+files it could not find. If rigging cannot run at all, the reason is written to
+`blender.log` in the output folder and the window stays open to say so.
 
 A pass that finishes without writing the models it should is treated the same
 way. Blender exits 0 when a pass quietly does nothing, so the extractor checks

@@ -95,7 +95,7 @@ def make_fake_blender(bin_dir):
     return path
 
 
-def run_case(boot, tmp, mode="crash", rigs=True, item=True, beside=False):
+def run_case(boot, tmp, mode="crash", rigs=True, item=True, rigs_in="rig"):
     """One rig() pass against the stand-in. Returns (code, argv)."""
     bin_dir = os.path.join(tmp, "bin")
     os.makedirs(bin_dir, exist_ok=True)
@@ -110,8 +110,14 @@ def run_case(boot, tmp, mode="crash", rigs=True, item=True, beside=False):
     bat_dir = os.path.join(tmp, "bat")
     os.makedirs(bat_dir, exist_ok=True)
     if rigs:
-        # Either in rig\ or dropped straight beside the .bat: both must work.
-        rig_dir = bat_dir if beside else os.path.join(bat_dir, "rig")
+        # rig\ beside the .bat, beside the .bat itself, or the cache folder the
+        # .bat unpacks its own copy into: all three must work.
+        if rigs_in == "cache":
+            rig_dir = os.path.join(cache, "rig")
+        elif rigs_in == "beside":
+            rig_dir = bat_dir
+        else:
+            rig_dir = os.path.join(bat_dir, "rig")
         os.makedirs(rig_dir, exist_ok=True)
         for name in RIGS:
             open(os.path.join(rig_dir, name), "w").close()
@@ -188,9 +194,15 @@ def main():
 
     # The same files dropped beside the .bat, instead of in rig\, must be found.
     argv = check("rig files beside the .bat", 0,
-                 tempfile.mkdtemp(prefix="rig-beside-"), mode="ok", beside=True)
+                 tempfile.mkdtemp(prefix="rig-beside-"), mode="ok", rigs_in="beside")
     if "--rig" not in argv:
         failures.append("rig files beside the .bat were not found")
+
+    # And the copy the .bat unpacks for itself must be found too.
+    argv = check("rig files in the cache", 0,
+                 tempfile.mkdtemp(prefix="rig-cache-"), mode="ok", rigs_in="cache")
+    if "--rig" not in argv:
+        failures.append("the rig files the .bat unpacks into its cache were not found")
 
     # Without the rig files the biped cannot be made; the other two sets still
     # are, and that is a success, not a failure.

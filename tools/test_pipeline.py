@@ -14,6 +14,7 @@ write path: block scan, texture decode, colour-table decode, naming, catalogue.
     python3 tools/test_pipeline.py
 """
 
+import base64
 import os
 import shutil
 import struct
@@ -81,10 +82,18 @@ def main():
         import payload
 
         with open(BAT, encoding="utf-8", newline="") as handle:
-            modules = payload.read_modules(handle.read())
-        for name, source in modules.items():
-            with open(os.path.join(work, name), "w", encoding="utf-8", newline="") as handle:
-                handle.write(source)
+            entries = payload.read_entries(handle.read())
+        for name, value in entries.items():
+            path = os.path.join(work, name.replace("/", os.sep))
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            if isinstance(value, dict):
+                with open(path, "wb") as handle:
+                    handle.write(base64.b64decode(value["b64"].encode("ascii")))
+            else:
+                with open(path, "w", encoding="utf-8", newline="") as handle:
+                    handle.write(value)
 
         sys.path.insert(0, work)
         import avatar_mesh

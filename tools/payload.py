@@ -3,18 +3,22 @@
 
 The .bat is deliberately one file: the player double-clicks it and nothing else
 is needed. The tool itself travels inside it as base85 of zlib of a JSON map of
-module name to source, between the last ``###BOOTSTRAP###`` and the last
+name to content, between the last ``###BOOTSTRAP###`` and the last
 ``###PAYLOAD###`` marker. cmd.exe never executes those lines because the batch
 half ends with ``exit /b 0``.
+
+Python modules are stored as text. Halo's two rig ``.blend`` files are binary,
+so they are carried as base64 under ``rig/`` and written back byte for byte -
+that way the tool needs nothing beside it, not even a ``rig`` folder.
 
 Unpack before editing, repack after:
 
     python3 tools/payload.py unpack Extract-AvatarItem-v20.bat src/
     # edit src/extract_items.py ...
-    python3 tools/payload.py pack Extract-AvatarItem-v20.bat src/
+    python3 tools/payload.py pack Extract-AvatarItem-v20.bat src/ --rigs rigs/
 
-``pack`` decodes its own output and refuses to write unless it matches the
-files it was given, so a half-written rebuild cannot be shipped.
+``pack`` decodes its own output and refuses to write unless it matches the files
+it was given, so a half-written rebuild cannot be shipped.
 """
 
 import argparse
@@ -26,6 +30,7 @@ import zlib
 BOOTSTRAP = "###BOOTSTRAP###"
 PAYLOAD = "###PAYLOAD###"
 WRAP = 76
+RIG_PREFIX = "rig/"
 
 
 def _split(text):
@@ -35,22 +40,25 @@ def _split(text):
     return text[:at + len(PAYLOAD)], text[at + len(PAYLOAD):]
 
 
-def read_modules(text):
-    """The module map carried in a .bat."""
+def read_entries(text):
+    """The name -> content map carried in a .bat.
+
+    Text entries are strings; binary entries are {"b64": ...}.
+    """
     _head, payload = _split(text)
     blob = "".join(payload.split())
     if not blob:
         raise SystemExit("the payload is empty")
     raw = zlib.decompress(base64.b85decode(blob.encode("ascii")))
-    modules = json.loads(raw.decode("utf-8"))
-    if not isinstance(modules, dict) or not modules:
-        raise SystemExit("the payload is not a module map")
-    return modules
+    entries = json.loads(raw.decode("utf-8"))
+    if not isinstance(entries, dict) or not entries:
+        raise SystemExit("the payload is not a name -> content map")
+    return entries
 
 
-def encode_modules(modules):
-    """The payload text for a module map, wrapped the way the .bat carries it."""
-    raw = json.dumps(modules, sort_keys=True).encode("utf-8")
+def encode_entries(entries):
+    """The payload text for a map, wrapped the way the .bat carries it."""
+    raw = json.dumps(entries, sort_keys=True).encode("utf-8")
     blob = base64.b85encode(zlib.compress(raw, 9)).decode("ascii")
     lines = [blob[at:at + WRAP] for at in range(0, len(blob), WRAP)]
     return "\n" + "\n".join(lines) + "\n"
@@ -58,17 +66,22 @@ def encode_modules(modules):
 
 def unpack(bat, out):
     text = open(bat, encoding="utf-8", newline="").read()
-    modules = read_modules(text)
-    os.makedirs(out, exist_ok=True)
-    for name, source in sorted(modules.items()):
-        path = os.path.join(out, name)
+    entries = read_entries(text)
+    for name, value in sorted(entries.items()):
+        path = os.path.join(out, name.replace("/", os.sep))
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        with open(path, "w", encoding="utf-8", newline="") as handle:
-            handle.write(source)
-        print("  %-28s %5d lines" % (name, source.count("\n")))
-    print("%d modules written to %s" % (len(modules), out))
+        if isinstance(value, dict) and "b64" in value:
+            data = base64.b64decode(value["b64"].encode("ascii"))
+            with open(path, "wb") as handle:
+                handle.write(data)
+            print("  %-34s %7d bytes" % (name, len(data)))
+        else:
+            with open(path, "w", encoding="utf-8", newline="") as handle:
+                handle.write(value)
+            print("  %-34s %5d lines" % (name, value.count("\n")))
+    print("%d entries written to %s" % (len(entries), out))
 
 
 def collect(src):
@@ -87,18 +100,34 @@ def collect(src):
     return modules
 
 
-def pack(bat, src):
+def collect_rigs(folder):
+    """Halo's rig files, carried byte for byte under rig/."""
+    entries = {}
+    if not folder:
+        return entries
+    for name in sorted(os.listdir(folder)):
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path):
+            continue
+        with open(path, "rb") as handle:
+            data = handle.read()
+        entries[RIG_PREFIX + name] = {"b64": base64.b64encode(data).decode("ascii")}
+    return entries
+
+
+def pack(bat, src, rigs=None):
     text = open(bat, encoding="utf-8", newline="").read()
     head, _payload = _split(text)
-    modules = collect(src)
-    rebuilt = head + encode_modules(modules)
-    # Prove the new payload before writing: it must decode to the same files.
-    if read_modules(rebuilt) != modules:
+    entries = collect(src)
+    entries.update(collect_rigs(rigs))
+    rebuilt = head + encode_entries(entries)
+    # Prove the new payload before writing: it must decode to the same content.
+    if read_entries(rebuilt) != entries:
         raise SystemExit("repack check failed; %s was not written" % bat)
     with open(bat, "w", encoding="utf-8", newline="") as handle:
         handle.write(rebuilt)
-    print("%d modules packed into %s (%d bytes)"
-          % (len(modules), bat, len(rebuilt)))
+    print("%d entries packed into %s (%d bytes)"
+          % (len(entries), bat, len(rebuilt)))
 
 
 def main(argv=None):
@@ -106,11 +135,12 @@ def main(argv=None):
     parser.add_argument("action", choices=("unpack", "pack"))
     parser.add_argument("bat", help="the carrier .bat")
     parser.add_argument("src", help="folder to write to, or read .py files from")
+    parser.add_argument("--rigs", help="folder holding the .blend rig files to carry")
     args = parser.parse_args(argv)
     if args.action == "unpack":
         unpack(args.bat, args.src)
     else:
-        pack(args.bat, args.src)
+        pack(args.bat, args.src, args.rigs)
     return 0
 
 
