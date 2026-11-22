@@ -516,8 +516,8 @@ def main():
                 return 1
 
         print("\nPASS: nameless bins come out as extracted1, extracted2; the GUID keeps its name")
-        print("Not covered: the rigging half (.fbx, .glb, .blend, .jms, scene.json,")
-        print("skeleton.json) needs Blender and cannot run here.")
+        print("Not covered: the rigging half (.fbx, .glb, .blend, .jms, the")
+        print("report's scene section) needs Blender and cannot run here.")
         return 0
     finally:
         shutil.rmtree(work, ignore_errors=True)

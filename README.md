@@ -68,7 +68,7 @@ Test Item\
     colour_00.png  the item's own palette, when it carries one
     Test Item_colours.txt
     card_art.png
-    report.txt, scene.json, skeleton.json, blender.log
+    report.txt, blender.log  the run's facts; rigging adds a scene section
     catalogue.json
 ```
 

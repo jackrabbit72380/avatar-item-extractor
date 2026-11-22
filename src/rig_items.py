@@ -826,51 +826,52 @@ def export_rigged(path, mesh, armature, kind):
     log("wrote %s" % os.path.basename(path))
 
 
-def write_json(path, payload):
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
-        handle.write("\n")
-    log("wrote %s" % os.path.basename(path))
+def roots_of(rig):
+    return [bone.name for bone in rig.data.bones if bone.parent is None]
 
 
-def scene_facts(armature, nxe=None):
-    objects = []
-    for item in bpy.data.objects:
-        objects.append({
-            "name": item.name,
-            "type": item.type,
-            "location": [round(value, 4) for value in item.location],
-            "rotation": [round(value, 4) for value in item.rotation_euler],
-            "scale": [round(value, 4) for value in item.scale],
-            "vertices": len(item.data.vertices) if item.type == "MESH" else 0,
-            "materials": [slot.name for slot in item.data.materials]
-            if item.type == "MESH" else [],
-        })
-    return {"blender": bpy.app.version_string,
-            "unit_scale": bpy.context.scene.unit_settings.scale_length,
-            "armature": armature.name if armature else None,
-            "nxe_armature": nxe.name if nxe else None,
-            "objects": objects}
+def rig_scene_lines(armature, nxe=None):
+    """The Blender scene and the rigs, as a short section of report.txt.
 
-
-def skeleton_facts(armature, nxe=None):
-    bones = []
-    for bone in (armature.data.bones if armature else []):
-        bones.append({
-            "name": bone.name,
-            "parent": bone.parent.name if bone.parent else None,
-            "head": [round(value, 4) for value in bone.head_local],
-            "tail": [round(value, 4) for value in bone.tail_local],
-        })
-    facts = {"armature": armature.name if armature else None,
-             "bone_count": len(bones), "bones": bones}
-    if nxe:
-        facts["nxe"] = {"armature": nxe.name, "bone_count": len(nxe.data.bones),
-                        "bones": [{"name": bone.name,
-                                   "parent": bone.parent.name if bone.parent else None,
-                                   "head": [round(value, 4) for value in bone.head_local]}
-                                  for bone in nxe.data.bones]}
-    return facts
+    These used to be scene.json and skeleton.json, two JSON dumps in every item
+    folder that nothing read back. What is worth keeping when a rig comes out
+    wrong is short: which Blender, at what scale, which meshes arrived with how
+    many vertices and materials, and where each rig's bones start. All of that
+    fits in a few lines beside the item it describes.
+    """
+    lines = ["", "scene", ""]
+    version = getattr(bpy.app, "version_string", "unknown")
+    units = getattr(getattr(bpy.context.scene, "unit_settings", None),
+                    "scale_length", 1.0)
+    lines.append("  blender      : %s, unit scale %g" % (version, units))
+    meshes = 0
+    for item in getattr(bpy.data, "objects", []):
+        if getattr(item, "type", None) != "MESH":
+            continue
+        meshes += 1
+        where = list(getattr(item, "location", []) or [])
+        moved = ""
+        if len(where) == 3 and any(abs(value) > 1e-6 for value in where):
+            moved = ", at (%.3f, %.3f, %.3f)" % (where[0], where[1], where[2])
+        lines.append("  mesh         : %s, %d vert(s), %d material(s)%s"
+                     % (item.name, len(item.data.vertices),
+                        len(item.data.materials), moved))
+    lines.append("  meshes       : %d" % meshes)
+    # The counts are already in the header; what the JSON dumps added on top of
+    # them is where each rig starts, which is what a misplaced item looks like.
+    for label, rig in (("armature", armature), ("NXE skeleton", nxe)):
+        if not rig:
+            continue
+        roots = roots_of(rig)
+        lines.append("  %-13s: root(s) %s" % (label, ", ".join(roots) or "none"))
+        if roots:
+            root = next((bone for bone in rig.data.bones
+                         if bone.name == roots[0]), None)
+            head = getattr(root, "head_local", None) if root else None
+            if head is not None:
+                lines.append("  %-13s  root at (%.3f, %.3f, %.3f)"
+                             % ("", head[0], head[1], head[2]))
+    return lines
 
 
 def report_text(options, records, stems, armature, nxe=None):
@@ -907,6 +908,7 @@ def report_text(options, records, stems, armature, nxe=None):
             lines.append("  fp arms   : %s" % record["arms_binding"])
         lines.append("  vertices  : %d" % (record.get("model", {}).get("vertices") or 0))
         lines.append("")
+    lines.extend(rig_scene_lines(armature, nxe))
     return "\n".join(lines)
 
 
@@ -916,7 +918,7 @@ HEK_DIR = "extracted for hek users"
 
 
 def mirror_fbx(out, blend_dir, stems):
-    """Copy every rigged .fbx into max\, where a Max user will look for it.
+    r"""Copy every rigged .fbx into max\, where a Max user will look for it.
 
     3ds Max opens .fbx as well as .obj, and cannot open a .blend at all, so a
     Max user should not have to reach into blender\ for the rigged model. The
@@ -937,7 +939,7 @@ def mirror_fbx(out, blend_dir, stems):
 
 
 def mirror_jms(out, stems):
-    """Copy each Halo text model into the xbox folder as well.
+    r"""Copy each Halo text model into the xbox folder as well.
 
     tool.exe compiles the same .jms for either target - which one it builds is a
     flag to the compiler, not a difference in the file - so an xbox user should
@@ -1124,8 +1126,6 @@ def main():
             export_objects(os.path.join(blend_dir, "%s - unrigged.%s" % (stem, kind)),
                            [merged], kind)
 
-    write_json(os.path.join(out, "scene.json"), scene_facts(armature, nxe_rig))
-    write_json(os.path.join(out, "skeleton.json"), skeleton_facts(armature, nxe_rig))
     # The extractor already wrote what the container held; add the rigging
     # section under it rather than replacing it.
     report_path = os.path.join(out, "report.txt")

@@ -202,6 +202,19 @@ def main():
         fail("mirror_jms copied %d files (%r), expected 2 (%r)"
              % (copied, jms_xbox, ["Item - fp arms.jms", "Item.jms"]))
 
+    # The scene and the rigs go into report.txt as a short section: two JSON
+    # dumps per item folder that nothing read back were clutter.
+    fake_bone = types.SimpleNamespace(name="hip", parent=None,
+                                      head_local=(0.0, 0.646, 0.001))
+    fake_rig = types.SimpleNamespace(
+        name="biped", data=types.SimpleNamespace(bones=[fake_bone]))
+    text = module.report_text({"rig": "rig.blend", "fp": None}, [], [], fake_rig)
+    wanted = ["scene", "root(s) hip", "root at (0.000, 0.646, 0.001)"]
+    print("  report section      -> scene section %s"
+          % ("present" if all(word in text for word in wanted) else "MISSING"))
+    if not all(word in text for word in wanted):
+        fail("report.txt has no scene section with the rig's root: %r" % (text[-300:],))
+
     print("  save_blend          -> %d save, copy=%r, scene %r"
           % (1, calls[0]["copy"] if calls else None,
              sorted(calls[0]["at_save"]) if calls else None))
