@@ -39,6 +39,13 @@ except ImportError:  # run from somewhere that has not put this folder on the pa
 # so a 1.83 m figure stands 60 units tall with its feet on z = 0.
 HALO_UNITS_PER_METRE = 100.0 / 3.048
 
+# The biped's arms. They are the seam the first-person set is cut on: Halo's
+# in-game hands are their own model, and the fingers exist nowhere else.
+ARM_BONES = (
+    "bip01 l clavicle", "bip01 l upperarm", "bip01 l forearm", "bip01 l hand",
+    "bip01 r clavicle", "bip01 r upperarm", "bip01 r forearm", "bip01 r hand",
+)
+
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
 DEFORM_BONES = (
     "bip01 pelvis", "bip01 spine", "bip01 spine1", "bip01 neck", "bip01 head",
@@ -530,6 +537,68 @@ def place_on_arms(item, biped, arms, bone_name):
         % (item.name, target, bone_name))
 
 
+def arm_region(object_data, names=ARM_BONES):
+    """The item's own arms, as a separate object, for Halo's first-person set.
+
+    Halo's first-person view is a different model from the body: the biped ends
+    at a hand with no fingers, and the arms the player sees holding a weapon are
+    their own mesh on their own skeleton. The item already carries arm geometry
+    - sleeves, gauntlets, or the base body's bare arms - so the second set is
+    cut from that mesh by the bones it is already bound to rather than modelled
+    again. Positions, faces, UVs, materials and weights all travel across, so
+    the arms keep the item's colours and shading and can be exported or merged
+    as they stand.
+
+    Returns None when the item has no geometry on an arm bone - a hat or a ring
+    is not an arm, and inventing one would only be a second wrong file.
+    """
+    mesh = object_data.data
+    arm_groups = {group.index for group in object_data.vertex_groups
+                  if group.name in names}
+    if not arm_groups:
+        return None
+    keep = set()
+    for vertex in mesh.vertices:
+        for group in vertex.groups:
+            if group.group in arm_groups and group.weight > 0.0:
+                keep.add(vertex.index)
+                break
+    # Whole faces only: half a triangle is a hole in the model, and the seam at
+    # a shoulder is already where the weights change hands.
+    faces = [polygon for polygon in mesh.polygons
+             if all(index in keep for index in polygon.vertices)]
+    if not faces:
+        return None
+    order = sorted({index for polygon in faces for index in polygon.vertices})
+    slot = {index: position for position, index in enumerate(order)}
+    copy = bpy.data.meshes.new("%s arms" % mesh.name)
+    copy.from_pydata([mesh.vertices[index].co.copy() for index in order], [],
+                     [tuple(slot[index] for index in polygon.vertices)
+                      for polygon in faces])
+    copy.update()
+    for material in mesh.materials:
+        copy.materials.append(material)
+    for position, polygon in enumerate(faces):
+        copy.polygons[position].material_index = polygon.material_index
+        copy.polygons[position].use_smooth = True
+    # from_pydata builds its loops in face order and each face's vertex order,
+    # which is the same order the source polygons' loop_indices are in.
+    old_loops = [index for polygon in faces for index in polygon.loop_indices]
+    for layer in mesh.uv_layers:
+        target = copy.uv_layers.new(name=layer.name)
+        for position, loop_index in enumerate(old_loops):
+            target.data[position].uv = layer.data[loop_index].uv
+    arms = bpy.data.objects.new("%s arms" % object_data.name, copy)
+    bpy.context.scene.collection.objects.link(arms)
+    arms.matrix_world = object_data.matrix_world
+    # The biped's weights are not carried over: this object is bound to the
+    # first-person arms rig, and two sets of groups on one mesh - one naming
+    # bones the new rig does not have - would export to the wrong nodes.
+    log("cut %s: %d of %d vert(s) are on the arms"
+        % (arms.name, len(order), len(mesh.vertices)))
+    return arms
+
+
 def is_prop(object_data, limit=3.0):
     """A solid object rather than cloth, judged by its own size.
 
@@ -748,7 +817,7 @@ def export_jms(object_data, armature, path):
     return errors
 
 
-def save_blend(path, objects):
+def save_blend(path, objects, note=None):
     """A .blend you can open: the scene, holding only these objects.
 
     bpy.data.libraries.write() writes a datablock library rather than a scene,
@@ -776,6 +845,16 @@ def save_blend(path, objects):
             bpy.data.materials.remove(material)
         except RuntimeError:
             pass
+    # A note datablock, so the file says what it is and what it is for when it
+    # is opened on its own, long after the folder around it is gone.
+    text = None
+    if note:
+        text = bpy.data.texts.new(note[0])
+        text.write(note[1])
+        # Nothing references a text block, and Blender drops datablocks with no
+        # users when the file is saved and reopened. The fake user is what keeps
+        # the note inside the file.
+        text.use_fake_user = True
     keep = set(objects)
     aside = [item for item in list(scene.collection.objects) if item not in keep]
     for item in aside:
@@ -785,6 +864,8 @@ def save_blend(path, objects):
     finally:
         for item in aside:
             scene.collection.objects.link(item)
+        if text is not None:
+            bpy.data.texts.remove(text)
     log("wrote %s" % os.path.basename(path))
 
 
@@ -807,22 +888,7 @@ def export_objects(path, objects, kind):
     log("wrote %s" % os.path.basename(path))
 
 
-def export_rig(path, armature, kind):
-    """Write the rig on its own, so an item can be built on it from scratch."""
-    bpy.ops.object.select_all(action="DESELECT")
-    armature.select_set(True)
-    bpy.context.view_layer.objects.active = armature
-    if kind == "fbx":
-        bpy.ops.export_scene.fbx(filepath=path, use_selection=True,
-                                 apply_scale_options="FBX_SCALE_ALL",
-                                 object_types={"ARMATURE"})
-    else:
-        save_blend(path, [armature])
-        return
-    log("wrote %s" % os.path.basename(path))
-
-
-def export_rigged(path, mesh, armature, kind):
+def export_rigged(path, mesh, armature, kind, note=None):
     """Write a mesh together with the armature it is skinned to."""
     bpy.ops.object.select_all(action="DESELECT")
     mesh.select_set(True)
@@ -836,9 +902,43 @@ def export_rigged(path, mesh, armature, kind):
         bpy.ops.export_scene.gltf(filepath=path, export_format="GLB",
                                   use_selection=True)
     else:
-        save_blend(path, [mesh, armature])
+        save_blend(path, [mesh, armature], note)
         return
     log("wrote %s" % os.path.basename(path))
+
+
+def halo_note(stem, mesh, armature, arms=False):
+    """The text block saved inside a Halo .blend, so the file says what it is.
+
+    Copied out of the folder - mailed, dropped into another project - a .blend
+    carries nothing that names the game its rig belongs to, or what to do with
+    it next. The note travels with the file instead of living in a README beside
+    it, and it is a datablock, not a file on disk.
+    """
+    if arms:
+        title = "Halo CE first-person arms - %s" % stem
+        what = ("the item's arms on Halo's first-person arms skeleton. Halo's "
+                "in-game hands are a separate model from the body, so this is "
+                "the set a player sees holding a weapon.")
+    else:
+        title = "Halo CE - %s" % stem
+        what = ("the item on Halo CE's 19-bone biped, ready to export or to "
+                "merge with other items.")
+    lines = [
+        title,
+        "",
+        "this file : " + what,
+        "rig       : %s, %d bones, Halo units (100 units = 1 metre)"
+        % ((armature.name, len(armature.data.bones)) if armature else ("none", 0)),
+        "mesh      : %s, %d vert(s), %d material(s)"
+        % (mesh.name, len(mesh.data.vertices), len(mesh.data.materials)),
+        "textures  : packed into this file, so it opens with its colours",
+        "export    : BlueStreak 1.0.4 .jms exporter on the mesh",
+        "merge     : append another item's - halo.blend and join the meshes;",
+        "            every item is skinned to the same biped",
+    ]
+    return ("READ ME - %s.txt" % ("fp arms" if arms else "halo"),
+            "\n".join(lines) + "\n")
 
 
 def roots_of(rig):
@@ -926,8 +1026,12 @@ def report_text(options, records, stems, armature, nxe=None):
         lines.append("  placement : %s" % (record.get("placement") or "as authored"))
         lines.append("  nxe rig   : %s" % (record.get("nxe_binding") or "not skinned"))
         lines.append("  bound to  : %s" % (record.get("binding") or "not skinned"))
-        if record.get("arms_binding"):
-            lines.append("  fp arms   : %s" % record["arms_binding"])
+        if record.get("halo_file"):
+            lines.append("  halo file : %s" % record["halo_file"])
+        if record.get("arms_file"):
+            lines.append("  fp arms   : %s" % record["arms_file"])
+            lines.append("              %s" % (record.get("arms_binding")
+                                               or "not skinned"))
         lines.append("  vertices  : %d" % (record.get("model", {}).get("vertices") or 0))
         lines.append("")
     lines.extend(rig_scene_lines(armature, nxe))
@@ -951,41 +1055,13 @@ def mirror_fbx(out, blend_dir, stems):
     os.makedirs(models_dir, exist_ok=True)
     copied = 0
     for stem in sorted(set(stems)):
-        for suffix in ("", " - fp arms", " - NXE", " - unrigged"):
+        for suffix in (" - halo", " - halo fp arms", " - NXE", " - unrigged"):
             name = "%s%s.fbx" % (stem, suffix)
             source = os.path.join(blend_dir, name)
             if os.path.exists(source):
                 shutil.copyfile(source, os.path.join(models_dir, name))
                 copied += 1
     return copied
-
-
-def ship_rigs(out, options, armature):
-    """Halo's own rig files, in the folders of the people who open them.
-
-    The pass rigs items onto Halo's skeleton, but until now the skeleton itself
-    stayed inside the .bat: someone building an item from scratch, or re-binding
-    one by hand, had nothing to open. The .blend goes to the Blender folder and
-    the armature also goes to the Max folder as .fbx, because Max cannot read a
-    .blend.
-    """
-    blend_dir = os.path.join(out, BLENDER_DIR)
-    models_dir = os.path.join(out, MAX_DIR)
-    os.makedirs(blend_dir, exist_ok=True)
-    os.makedirs(models_dir, exist_ok=True)
-    shipped = []
-    for source, rig in ((options.get("rig"), armature),
-                        (options.get("fp"), None)):
-        if not source or not os.path.exists(source):
-            continue
-        name = os.path.basename(source)
-        shutil.copyfile(source, os.path.join(blend_dir, name))
-        shipped.append(name)
-        if rig is not None:
-            fbx = os.path.splitext(name)[0] + ".fbx"
-            export_rig(os.path.join(models_dir, fbx), rig, "fbx")
-            shipped.append(fbx)
-    return shipped
 
 
 def mirror_jms(out, stems):
@@ -1118,14 +1194,36 @@ def main():
                 bpy.context.scene.collection.objects.link(arms_item)
             record["binding"] = skin(merged, armature, rigid=prop)
             bone_name = hand_bone(record.get("binding") or "")
-            if arms_item is not None:
+            if arms_item is not None and armature_fp:
                 if bone_name:
                     place_on_arms(arms_item, armature, armature_fp, bone_name)
                     record["arms_binding"] = skin(arms_item, armature_fp, rigid=True)
                 else:
-                    # Not a hand item, so the arms model has nothing for it.
+                    # Not worn on a hand, so the second set is the item's own
+                    # arms: Halo's first-person hands are a separate model, and
+                    # the sleeves or bare arms are what a player should see on
+                    # them. The unused whole-item copy is dropped - the arms are
+                    # cut from the mesh as it is already bound to the biped.
                     bpy.data.objects.remove(arms_item, do_unlink=True)
-                    arms_item = None
+                    arms_item = arm_region(merged)
+                    if arms_item is not None:
+                        place_on_arms(arms_item, armature, armature_fp,
+                                      "bip01 l upperarm")
+                        record["arms_binding"] = skin(arms_item, armature_fp)
+            elif arms_item is not None:
+                bpy.data.objects.remove(arms_item, do_unlink=True)
+                arms_item = None
+            if arms_item is None and armature_fp:
+                # Nothing on an arm bone (a hat, a badge). The second set still
+                # exists so every item has the pair tool.exe users expect, and
+                # it says why it is empty rather than looking like a bad run.
+                empty = bpy.data.meshes.new("%s arms" % merged.name)
+                arms_item = bpy.data.objects.new("%s arms" % merged.name, empty)
+                bpy.context.scene.collection.objects.link(arms_item)
+                arms_item.parent = armature_fp
+                record["arms_binding"] = "none - this item has no arm geometry"
+                log("%s has no arm geometry: the fp arms set holds the rig only"
+                    % merged.name)
         rigged.append((record, merged, nxe, arms_item))
 
     for _, merged, _nxe, _arms in rigged:
@@ -1157,20 +1255,29 @@ def main():
             if options["jms"]:
                 record["jms_errors"] = export_jms(
                     merged, armature, os.path.join(models_dir, "%s.jms" % stem))
-            export_rigged(os.path.join(blend_dir, "%s.blend" % stem),
-                          merged, armature, "blend")
-            export_rigged(os.path.join(blend_dir, "%s.fbx" % stem),
+            # The file is named for the game it is for, not for the program that
+            # wrote it: "- halo" is the answer to "which of these do I open?"
+            # when the folder also holds the NXE and unrigged copies.
+            record["halo_file"] = "%s - halo.blend" % stem
+            export_rigged(os.path.join(blend_dir, record["halo_file"]),
+                          merged, armature, "blend",
+                          halo_note(stem, merged, armature, False))
+            export_rigged(os.path.join(blend_dir, "%s - halo.fbx" % stem),
                           merged, armature, "fbx")
-        # First-person arms: Halo's hands are a separate model, so a hand item
-        # gets its own file on that rig - the fingers exist nowhere else.
+        # First-person arms: Halo's in-game hands are a separate model, so every
+        # item gets its own second set on that rig - the fingers exist nowhere
+        # else, and the player sees these arms and not the body's.
         if arms_item is not None:
-            if options["jms"]:
+            if options["jms"] and arms_item.data.vertices:
                 record["jms_arms_errors"] = export_jms(
                     arms_item, armature_fp,
                     os.path.join(models_dir, "%s - fp arms.jms" % stem))
-            for kind in ("blend", "fbx"):
-                export_rigged(os.path.join(blend_dir, "%s - fp arms.%s" % (stem, kind)),
-                              arms_item, armature_fp, kind)
+            record["arms_file"] = "%s - halo fp arms.blend" % stem
+            export_rigged(os.path.join(blend_dir, record["arms_file"]),
+                          arms_item, armature_fp, "blend",
+                          halo_note(stem, arms_item, armature_fp, True))
+            export_rigged(os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
+                          arms_item, armature_fp, "fbx")
             log("wrote %s on the first-person arms" % stem)
         # NXE rig: bound to the skeleton the package itself ships against.
         for kind in ("fbx", "glb", "blend"):
@@ -1201,10 +1308,6 @@ def main():
     copied = mirror_jms(out, stems)
     if copied:
         log("copied %d .jms into the xbox folder" % copied)
-
-    shipped = ship_rigs(out, options, armature)
-    if shipped:
-        log("shipped the rig files: %s" % ", ".join(shipped))
 
     # card_art.png used to be a copy of the item's own picture under a second
     # name - the same bytes twice in the folder, and the icon already says which

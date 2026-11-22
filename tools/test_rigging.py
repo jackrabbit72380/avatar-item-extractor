@@ -63,7 +63,8 @@ for obj in "$items/extracted for max users"/*.obj "$items"/*.obj; do
   base=$(basename "$obj" .obj)
   if [ "$mode" != "partial" ]; then
     if [ "$hasrig" = "1" ]; then
-      : > "$target/extracted for blender users/$base.blend"; : > "$target/extracted for blender users/$base.fbx"
+      : > "$target/extracted for blender users/$base - halo.blend"; : > "$target/extracted for blender users/$base - halo.fbx"
+      : > "$target/extracted for blender users/$base - halo fp arms.blend"; : > "$target/extracted for blender users/$base - halo fp arms.fbx"
       mkdir -p "$target/extracted for hek users/pc/data/$base/models"
       : > "$target/extracted for hek users/pc/data/$base/models/$base.jms"
     fi

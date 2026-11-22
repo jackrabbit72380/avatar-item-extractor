@@ -66,9 +66,28 @@ def build_stub():
     calls = []
     scene = Scene()
 
+    class Texts:
+        """The text datablocks save_blend writes the Halo note into."""
+
+        def __init__(self):
+            self.items = []
+
+        def new(self, name):
+            item = types.SimpleNamespace(name=name, body="")
+            item.write = lambda text: setattr(item, "body", item.body + text)
+            self.items.append(item)
+            return item
+
+        def remove(self, item):
+            self.items.remove(item)
+
+    texts = Texts()
+
     def save_as_mainfile(filepath=None, copy=False):
         calls.append({"path": filepath, "copy": copy,
-                      "at_save": [item.name for item in scene.collection.objects]})
+                      "at_save": [item.name for item in scene.collection.objects],
+                      "texts": [item.name for item in texts.items],
+                      "text_body": [item.body for item in texts.items]})
 
     def refuse(*_args, **_kwargs):
         raise AssertionError("bpy.data.libraries.write() must not be used for .blend")
@@ -83,7 +102,8 @@ def build_stub():
     # The save also drops images that are broken links (0x0) and materials left
     # with no users, so the stub has to offer those lists.
     bpy.data = types.SimpleNamespace(
-        libraries=types.SimpleNamespace(write=refuse), images=[], materials=[])
+        libraries=types.SimpleNamespace(write=refuse), images=[], materials=[],
+        texts=texts)
     bpy.app = types.SimpleNamespace(version_string="stub")
     return bpy, scene, calls
 
@@ -157,16 +177,21 @@ def main():
         fail("export_objects('blend') did not save a scene holding just the mesh: %r"
              % ([c["at_save"] for c in calls],))
 
-    # export_rigged(..., "blend") must keep the mesh and its armature together.
+    # export_rigged(..., "blend") must keep the mesh and its armature together,
+    # and the note must be a datablock in the file rather than a file beside it.
     calls.clear()
     mesh = Obj("rigged mesh")
     rig = Obj("rigged rig", "ARMATURE")
     scene.collection.objects.link(mesh)
     scene.collection.objects.link(rig)
-    module.export_rigged(os.path.join(os.path.dirname(path), "nxe.blend"), mesh, rig, "blend")
+    module.export_rigged(os.path.join(os.path.dirname(path), "nxe.blend"), mesh, rig,
+                         "blend", ("READ ME - halo.txt", "Halo CE\n"))
     if len(calls) != 1 or sorted(calls[0]["at_save"]) != ["rigged mesh", "rigged rig"]:
         fail("export_rigged('blend') did not save the mesh with its armature: %r"
              % ([c["at_save"] for c in calls],))
+    if calls and calls[0]["texts"] != ["READ ME - halo.txt"]:
+        fail("the Halo note was not in the .blend at save time: %r"
+             % (calls[0]["texts"],))
 
     # The rigged .fbx files are mirrored into max\: 3ds Max opens .fbx as well as
     # .obj and cannot open a .blend at all, so a Max user must not have to reach
@@ -174,13 +199,13 @@ def main():
     fbx_work = tempfile.mkdtemp(prefix="fbx-")
     fbx_dir = os.path.join(fbx_work, "extracted for blender users")
     os.makedirs(fbx_dir, exist_ok=True)
-    for name in ("Item.fbx", "Item - fp arms.fbx", "Item - NXE.fbx",
-                 "Item - unrigged.fbx", "Item.blend", "Item.glb"):
+    for name in ("Item - halo.fbx", "Item - halo fp arms.fbx", "Item - NXE.fbx",
+                 "Item - unrigged.fbx", "Item - halo.blend", "Item.glb"):
         open(os.path.join(fbx_dir, name), "w").close()
     copied = module.mirror_fbx(fbx_work, fbx_dir, ["Item", "Missing"])
     in_max = sorted(os.listdir(os.path.join(fbx_work, "extracted for max users")))
-    expected = ["Item - fp arms.fbx", "Item - NXE.fbx", "Item - unrigged.fbx",
-                "Item.fbx"]
+    expected = ["Item - halo fp arms.fbx", "Item - halo.fbx", "Item - NXE.fbx",
+                "Item - unrigged.fbx"]
     print("  mirror_fbx          -> %d copied, max\\ holds %r" % (copied, in_max))
     if copied != 4 or in_max != sorted(expected):
         fail("mirror_fbx copied %d files (%r), expected %d (%r)"
@@ -216,28 +241,37 @@ def main():
     if not all(word in text for word in wanted):
         fail("report.txt has no scene section with the rig's root: %r" % (text[-300:],))
 
-    # Halo's own rig ships beside the items: the .blend for Blender users and an
-    # .fbx of the armature for Max users, which cannot open a .blend at all.
-    rig_work = tempfile.mkdtemp(prefix="rigs-")
-    rig_source = os.path.join(rig_work, "source")
-    os.makedirs(rig_source, exist_ok=True)
-    skeleton = os.path.join(rig_source, "master chief skeleton.blend")
-    open(skeleton, "w").close()
-    exported = []
-    module.export_rig = lambda path, rig, kind: exported.append(
-        (os.path.basename(path), kind))
-    shipped = module.ship_rigs(os.path.join(rig_work, "out"),
-                               {"rig": skeleton, "fp": None},
-                               types.SimpleNamespace(name="biped"))
-    in_blender = os.listdir(os.path.join(rig_work, "out",
-                                        "extracted for blender users"))
-    print("  ship_rigs           -> %r, blender\\ holds %r, exported %r"
-          % (shipped, in_blender, exported))
-    if (shipped != ["master chief skeleton.blend", "master chief skeleton.fbx"]
-            or in_blender != ["master chief skeleton.blend"]
-            or exported != [("master chief skeleton.fbx", "fbx")]):
-        fail("ship_rigs shipped %r and exported %r, expected the rig and its .fbx"
-             % (shipped, exported))
+    # Halo's own rig files are inputs, not outputs: they travel inside the .bat
+    # and every item is skinned to them. Copying them into the item folders put
+    # a second, unskinned skeleton beside every item and left the player
+    # guessing which of the two .blend files was the item's own.
+    if hasattr(module, "ship_rigs"):
+        fail("the module still ships the source rigs into the output folder")
+
+    # The Halo .blend has to say which game it is for, in the file itself: the
+    # filename says it outside, the note says it after the file is moved.
+    if not hasattr(module, "halo_note"):
+        fail("no halo_note: the Halo .blend does not say what it is for")
+    else:
+        note_mesh = types.SimpleNamespace(
+            name="UNSC Marine Armor",
+            data=types.SimpleNamespace(vertices=[1, 2, 3], materials=[1, 2]))
+        note_rig = types.SimpleNamespace(
+            name="biped", data=types.SimpleNamespace(bones=[1, 2, 3]))
+        note = module.halo_note("UNSC Marine Armor", note_mesh, note_rig, False)
+        body = note[1]
+        wanted_note = ["Halo CE", "UNSC Marine Armor", "19-bone biped",
+                       "packed into this file"]
+        missing_note = [word for word in wanted_note if word not in body]
+        print("  halo_note           -> %r, says %s"
+              % (note[0], "ok" if not missing_note else "MISSING %r" % (missing_note,)))
+        if missing_note:
+            fail("the note in the Halo .blend does not say %r: %r"
+                 % (missing_note, body))
+        arms_note = module.halo_note("UNSC Marine Armor", note_mesh, note_rig, True)[1]
+        if "first-person arms" not in arms_note:
+            fail("the fp arms note does not say it is the first-person set: %r"
+                 % (arms_note,))
 
     print("  save_blend          -> %d save, copy=%r, scene %r"
           % (1, calls[0]["copy"] if calls else None,

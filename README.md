@@ -42,22 +42,22 @@ to download or place beside it. Files you put in a `rig\` folder beside the
 Test Item\
     extracted for max users\
         Test Item.obj  plus .mtl
-        Test Item.fbx  the rigged model, once Blender has run; also - fp arms,
-                       - NXE and - unrigged, copied out of the Blender folder
-        master chief skeleton.fbx  Halo's own biped, for building on it
+        Test Item - halo.fbx  the rigged model, once Blender has run; also
+                       - halo fp arms, - NXE and - unrigged, copied out of
+                       the Blender folder
         Test Item base map.png  also .tga  - the texture the model binds
         Test Item multipurpose.png  also .tga  Halo CE channel order
         Test Item multipurpose xbox.png  also .tga  Xbox channel order
         Test Item multipurpose sp.png  also .tga  nothing masked
         Test Item change colour.png  also .tga  the team-colour mask
     extracted for blender users\
-        Test Item.blend  on the biped with the FP arms, ready to export
-        Test Item.fbx  the same rig for tools that cannot read .blend
-        Test Item - fp arms.blend, .fbx  hand items: the item on the arms
+        Test Item - halo.blend  the item on Halo's biped, ready to export
+        Test Item - halo.fbx  the same rig for tools that cannot read .blend
+        Test Item - halo fp arms.blend, .fbx  the item's arms on Halo's
+                        first-person arms rig; every item gets this pair
         Test Item - NXE.blend, .fbx, .glb  the 71-joint NXE skeleton
         Test Item - unrigged.blend, .fbx  the model with no skeleton
         the same textures as the Max folder, so a rig opens with its maps
-        master chief skeleton.blend, fp arms.blend  Halo's rig files themselves
     extracted for hek users\
         pc\data\Test Item\
             bitmaps\    Test Item base map.tif, Test Item multipurpose.tif,
@@ -93,17 +93,36 @@ differently; nothing is left for you to swap by hand. The `.png` and `.tga`
 copies are the same images as the `.tif`s, for the programs that do not read
 TIFF.
 
-Halo's own two rig files are copied out of the `.bat` into
-`extracted for blender users\` as `.blend`, and the biped also as `.fbx` into
-`extracted for max users\`, so an item can be built or re-bound on the rig
-without the rig living only inside the tool.
+Halo's own two rig files are the base every item is skinned to, not something
+to hand back: they travel inside the `.bat`, are used for the pass, and are not
+copied into the output. What lands beside an item is the item's own file on
+that rig, so there is never a second, unskinned skeleton to choose between.
+
+Each item gets two Halo sets, because Halo's in-game hands are a separate model
+from the body and the player sees the arms, not the body's:
+
+* `Test Item - halo.blend` - the whole item on the 19-bone biped, facing the
+  way the game faces, in Halo units, with its textures packed in. Export it
+  with the BlueStreak `.jms` exporter, or append another item's `- halo.blend`
+  and join the meshes; every item is skinned to the same biped.
+* `Test Item - halo fp arms.blend` - the item's own arm geometry, cut at the
+  bones it is already weighted to (sleeves, gauntlets, or the base body's bare
+  arms) and bound to Halo's 37-bone first-person arms rig. Nothing is modelled
+  again and nothing is retextured: faces, UVs, materials and weights come
+  across as they are. A hand item - a ring, a badge - rides its hand bone
+  instead. An item with no arm geometry at all (a hat) still gets the file, on
+the arms rig with an empty mesh, and `report.txt` says why.
+
+Both `.blend` files carry a `READ ME` text block inside them naming the game,
+the rig and the mesh, so the file still says what it is after it is copied out
+of the folder.
 
 The `NXE` files need only Blender, because that skeleton travels inside the
-`.bat`. The biped, the arms, the `.jms` and `Test Item.blend` use Halo's two
-`.blend` files, which travel inside the `.bat` as well. If they are somehow
-missing, the NXE and unrigged copies are still written and the run says which
-files it could not find. If rigging cannot run at all, the reason is written to
-`blender.log` in the output folder and the window stays open to say so.
+`.bat`. The biped, the arms, the `.jms` and the two Halo `.blend` files use
+Halo's two rig files, which travel inside the `.bat` as well. If they are
+somehow missing, the NXE and unrigged copies are still written and the run says
+which files it could not find. If rigging cannot run at all, the reason is
+written to `blender.log` in the output folder and the window stays open to say so.
 
 A pass that finishes without writing the models it should is treated the same
 way. Blender exits 0 when a pass quietly does nothing, so the extractor checks
