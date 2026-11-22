@@ -151,6 +151,38 @@ def main():
 
         print("")
         print("PASS: a package file is read directly, and the newer revision wins")
+
+        # Second case: the same item as two loose files. Both must be supported,
+        # and the newer one must still win - a folder with asset.bin and
+        # asset_v2.bin side by side is the normal shape of an extract.
+        loose = os.path.join(work, "loose")
+        os.makedirs(loose)
+        with open(os.path.join(loose, "asset.bin"), "wb") as handle:
+            handle.write(old)
+        with open(os.path.join(loose, "asset_v2.bin"), "wb") as handle:
+            handle.write(new)
+
+        out2 = os.path.join(work, "out2")
+        code = extract_items.main(["--root", loose, "--obj", "--out", out2])
+        if code not in (0, None):
+            print("FAIL: the loose-file extractor returned %r" % (code,))
+            return 1
+
+        objs2 = [name for name in os.listdir(out2) if name.endswith(".obj")]
+        print("  loose .obj : %d %s" % (len(objs2), objs2))
+        if len(objs2) != 1:
+            print("FAIL: two loose revisions produced %d models, expected 1" % len(objs2))
+            return 1
+
+        with open(os.path.join(out2, "catalogue.json"), encoding="utf-8") as handle:
+            ids2 = [block["id"] for block in json.load(handle)["items"][0]["blocks"]]
+        print("  loose blocks: %s" % ids2)
+        if 8 not in ids2:
+            print("FAIL: the loose path read asset.bin, the older revision")
+            return 1
+
+        print("")
+        print("PASS: loose asset.bin + asset_v2.bin give one model, from the newer one")
         return 0
     finally:
         shutil.rmtree(work, ignore_errors=True)

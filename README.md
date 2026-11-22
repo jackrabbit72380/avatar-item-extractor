@@ -11,6 +11,10 @@ extension. A package holds the same item more than once, and the newer copy is
 the one read: the one carrying the versioned metadata block, checked by actually
 parsing each copy rather than by position. The report says which copy was used.
 
+A folder holding both `asset.bin` and `asset_v2.bin` gives one item, not two:
+they are the same part in two formats, so the newer revision is the item and the
+older copy is skipped before it is read.
+
 It reads only the folder the `.bat` sits in, and writes its results there too.
 
 Needs Python 3.8+. Blender 4.x makes the rigging files.
