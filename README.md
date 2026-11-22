@@ -73,6 +73,13 @@ no colour table still gets the text file, saying so - there is no palette to dra
 In `catalogue.json`, `mp` means the item takes your team colour and `sp` means its
 colours are baked in.
 
+The `.jms` is written in Halo CE's own layout, taken from the game's exporter
+(BlueStreak 1.0.4): positional fields, no section markers, one vertex per
+triangle corner, and the texture coordinate on the vertex line as `u v w`.
+That is the slot Halo's shader tags read - one per vertex, which is all a
+`gbxmodel` vertex stores. The `.obj` carries the UV set the item binds its
+first texture slot to; the item's other UV sets are not exported.
+
 Every item also gets an image to bind, in `.png`, `.tga` and `.tif`: the decoded
 base map when the container carries a texture, and otherwise its own colour as a
 flat 64x64 image, `<stem> colour.*`. The `.mtl` names it with `map_Kd`, so the
