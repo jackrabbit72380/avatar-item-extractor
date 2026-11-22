@@ -36,11 +36,13 @@ RIGS = ("master chief skeleton.blend", "fp arms.blend")
 #   silent - exit 0 and write nothing
 FAKE_BLENDER = """#!/bin/sh
 echo "$@" > "$FAKE_BLENDER_LOG"
-pec=""; items=""; target=""; prev=""
+pec=""; items=""; target=""; kinds="fbx glb blend"; biped=1; prev=""
 for a in "$@"; do
   if [ "$prev" = "--python-exit-code" ]; then pec="$a"; fi
   if [ "$prev" = "--items" ]; then items="$a"; fi
   if [ "$prev" = "--out" ]; then target="$a"; fi
+  if [ "$prev" = "--kinds" ]; then kinds=$(echo "$a" | tr ',' ' '); fi
+  if [ "$a" = "--no-biped" ]; then biped=0; fi
   prev="$a"
 done
 mode="${FAKE_BLENDER_MODE:-crash}"
@@ -50,18 +52,19 @@ if [ "$mode" = "crash" ]; then
   if [ "$rc" -ne 0 ] && [ -n "$pec" ]; then exit "$pec"; fi
   exit 0
 fi
-if [ "$mode" = "ok" ]; then
-  for obj in "$items"/*.obj; do
-    [ -e "$obj" ] || continue
-    base=$(basename "$obj" .obj)
-    for k in fbx glb blend; do
-      : > "$target/$base - NXE.$k"
-      if [ "$FAKE_BLENDER_BIPED" = "1" ]; then
-        : > "$target/$base - unrigged.$k"
-      fi
-    done
+if [ "$mode" = "silent" ]; then exit 0; fi
+# partial: write the NXE copies only, even when the biped was asked for.
+if [ "$mode" = "partial" ]; then biped=0; fi
+for obj in "$items"/*.obj; do
+  [ -e "$obj" ] || continue
+  base=$(basename "$obj" .obj)
+  for k in $kinds; do
+    : > "$target/$base - NXE.$k"
+    if [ "$biped" = "1" ]; then
+      : > "$target/$base - unrigged.$k"
+    fi
   done
-fi
+done
 exit 0
 """
 
@@ -91,7 +94,7 @@ def make_fake_blender(bin_dir):
     return path
 
 
-def run_case(boot, tmp, mode="crash", rigs=False, write_biped=False, item=True):
+def run_case(boot, tmp, mode="crash", rigs=False, profile="all", item=True):
     """One rig() pass against the stand-in. Returns (code, argv, out)."""
     bin_dir = os.path.join(tmp, "bin")
     os.makedirs(bin_dir, exist_ok=True)
@@ -123,9 +126,8 @@ def run_case(boot, tmp, mode="crash", rigs=False, write_biped=False, item=True):
     os.environ["FAKE_BLENDER_LOG"] = log
     os.environ["FAKE_PYTHON"] = sys.executable
     os.environ["FAKE_BLENDER_MODE"] = mode
-    os.environ["FAKE_BLENDER_BIPED"] = "1" if write_biped else "0"
     try:
-        code = boot.rig(cache, bat_dir, out)
+        code = boot.rig(cache, bat_dir, out, profile=profile)
     finally:
         os.environ.clear()
         os.environ.update(old)
@@ -181,7 +183,7 @@ def main():
                         "crashed pass reports 0 and the failure is invisible")
 
     # A pass that writes what it should is the only success.
-    check("clean pass writes NXE files", 0,
+    check("all: clean pass", 0,
           tempfile.mkdtemp(prefix="rig-ok-"), mode="ok")
 
     # The reported symptom: exits 0, writes nothing.
@@ -189,10 +191,22 @@ def main():
           tempfile.mkdtemp(prefix="rig-silent-"), mode="silent")
 
     # With Halo's rigs present the biped copies are expected too.
-    check("rigs present, unrigged missing", 7,
-          tempfile.mkdtemp(prefix="rig-biped-miss-"), mode="ok", rigs=True)
-    check("rigs present, unrigged written", 0,
-          tempfile.mkdtemp(prefix="rig-biped-ok-"), mode="ok", rigs=True, write_biped=True)
+    check("all + rigs: unrigged missing", 7,
+          tempfile.mkdtemp(prefix="rig-biped-miss-"), mode="partial", rigs=True)
+    check("all + rigs: unrigged written", 0,
+          tempfile.mkdtemp(prefix="rig-biped-ok-"), mode="ok", rigs=True)
+
+    # Each profile expects exactly the set it asks Blender for.
+    check("profile blender: .blend only", 0,
+          tempfile.mkdtemp(prefix="rig-p-blender-"), mode="ok", profile="blender")
+    check("profile max: .fbx only", 0,
+          tempfile.mkdtemp(prefix="rig-p-max-"), mode="ok", profile="max")
+    check("profile nxe: no biped copies", 0,
+          tempfile.mkdtemp(prefix="rig-p-nxe-"), mode="ok", profile="nxe", rigs=True)
+    check("profile halo: biped .fbx", 0,
+          tempfile.mkdtemp(prefix="rig-p-halo-"), mode="ok", profile="halo", rigs=True)
+    check("profile halo: falls back without rigs", 0,
+          tempfile.mkdtemp(prefix="rig-p-halo-miss-"), mode="ok", profile="halo")
 
     # No Blender at all keeps its own code, so it is never confused with this.
     check("no blender", 6,

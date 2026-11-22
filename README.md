@@ -28,6 +28,27 @@ Test Item\
     catalogue.json
 ```
 
+## Choosing what to write
+
+The tool asks once, then gets on with it. Pressing nothing picks 1 after 15
+seconds, so a double-click and a walk away gives the full set.
+
+| | Profile | Writes |
+|---|---|---|
+| 1 | Everything | all of the files above |
+| 2 | Blender | `- NXE.blend`, plus `.obj`, `.mtl`, textures and colours |
+| 3 | 3ds Max | `- NXE.fbx`, plus `.obj`, `.mtl`, textures and colours |
+| 4 | Halo CE | biped `.fbx` and `.jms`, plus `.obj`, `.mtl`, textures and colours |
+| 5 | NXE | `- NXE.fbx/.glb/.blend`, plus `.obj`, `.mtl`, textures and colours |
+
+Only the Blender-side set changes. `.obj`, `.mtl`, the base maps, the colour
+cards and `catalogue.json` are written by every profile, because they need no
+Blender at all. Profiles 2, 3 and 5 skip Halo's biped, so they work without the
+two `rig\*.blend` files; profile 4 falls back to the NXE rig when they are
+missing rather than failing.
+
+`--profile halo` works on the command line too, for scripting.
+
 "Test Item" is whatever your item is titled. Folder and file names are the
 item's title; several items at once go to `extracted\`.
 
