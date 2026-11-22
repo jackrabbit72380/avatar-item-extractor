@@ -101,10 +101,20 @@ anything - and only falls back to a texture kept in its own block when the model
 has no table at all. A table of empty slots means there is no base map to write,
 and the report says so.
 
-Each item also gets a `<stem> change colour.png/.tga/.tif` mask for Halo's team
-colour: `shader_model` takes it from the blue channel of the multipurpose map,
-so white means that surface becomes the player's colour. It is white for the
-whole item - a part that must keep its own colour needs painting black there.
+Each item also gets a `<stem> multipurpose.png/.tga/.tif`, the packed mask bitmap
+`shader_model` wants, and a `<stem> change colour.png/.tga/.tif` holding the team
+colour mask on its own. Halo CE (the Gearbox port and the HEK that builds its
+bitmaps) keeps the channels in this order - the original Xbox order is different:
+
+| | red | green | blue | alpha |
+|---|---|---|---|---|
+| Halo CE | detail mask | self-illumination | specular | colour change |
+| Xbox | specular | self-illumination | colour change | detail |
+
+The colour change mask is white for the whole item, so all of it takes the
+player's colour; a part that must keep its own colour needs painting black
+there. Specular and self-illumination are zero, because an item does not say
+which parts are shiny or glow and inventing that would be a guess.
 
 Parts keep their own colours when the item states them: each mesh batch is its
 own material with its own `Kd`, and when the batches differ, each gets its own
