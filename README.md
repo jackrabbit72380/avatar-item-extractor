@@ -68,5 +68,13 @@ python3 tools/test_pipeline.py
 
 Runs the modules the `.bat` actually ships against a synthetic container and
 checks the eight files the extractor owns: `.obj`, `.mtl`, the base map in three
-formats, `colour_00.png`, the hex list and `catalogue.json`. The rigging half
-needs Blender and is not covered.
+formats, `colour_00.png`, the hex list and `catalogue.json`.
+
+```sh
+python3 tools/test_rigging.py
+```
+
+Runs the real rigging pass against a stand-in Blender that obeys Blender's
+documented exit rule, and checks the three outcomes: a failed pass is code 7, a
+clean pass is code 0, and no Blender at all is code 6. It needs no Blender
+installed, which is the point - the failure path is what used to be invisible.
