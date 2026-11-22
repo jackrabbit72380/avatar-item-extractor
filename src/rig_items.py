@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v27"
-BUILD = "2026-11-22 fp-arms-pads-upright"
+VERSION = "v28"
+BUILD = "2026-11-22 fp-arms-glove-roll"
 
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
 DEFORM_BONES = (
@@ -586,6 +586,55 @@ def arm_share(weights):
     return arm / total if total > 0.0 else 0.0
 
 
+def principal_axes(points):
+    """A cloud's own three directions, widest first, and its middle.
+
+    Each direction is found by power iteration on the covariance and then taken
+    out of it before the next, which is what keeps them apart: an arm modelled
+    exactly along an axis is an eigenvector of its own covariance, so starting
+    each search from the widest direction left - not from +X - is the only way
+    to find the second and third at all.
+
+    Returns (axes, middle), where axes is a list of (spread, unit direction)
+    pairs in descending order, or (None, middle) for a cloud too small or too
+    round to have a direction.
+    """
+    count = len(points)
+    if count < 3:
+        return None, None
+    centre = [0.0, 0.0, 0.0]
+    for point in points:
+        for axis in range(3):
+            centre[axis] += point[axis]
+    centre = [value / count for value in centre]
+    left = [[0.0] * 3 for _ in range(3)]
+    for point in points:
+        delta = [point[axis] - centre[axis] for axis in range(3)]
+        for row in range(3):
+            for col in range(3):
+                left[row][col] += delta[row] * delta[col]
+    axes = []
+    for _ in range(3):
+        best = max(range(3), key=lambda i: left[i][i])
+        axis = [0.0, 0.0, 0.0]
+        axis[best] = 1.0
+        for _step in range(64):
+            out = [sum(left[row][col] * axis[col] for col in range(3))
+                   for row in range(3)]
+            length = math.sqrt(sum(value * value for value in out))
+            if length < 1e-9:
+                return (axes or None), centre
+            axis = [value / length for value in out]
+        spread = sum(axis[row] * sum(left[row][col] * axis[col]
+                                     for col in range(3))
+                     for row in range(3))
+        axes.append((spread, axis))
+        for row in range(3):
+            for col in range(3):
+                left[row][col] -= spread * axis[row] * axis[col]
+    return axes, centre
+
+
 def arm_axis(points):
     """Which way one of the item's arms runs, judged from the mesh itself.
 
@@ -597,34 +646,40 @@ def arm_axis(points):
     on Halo's arm, so its own longest axis is the one to use: the sleeve's length
     dominates every other direction it has.
     """
-    count = len(points)
-    if count < 3:
-        return None, None
-    centre = [0.0, 0.0, 0.0]
+    axes, centre = principal_axes(points)
+    if not axes:
+        return None, centre
+    return axes[0][1], centre
+
+
+def hand_plane(points, axis):
+    """Which way round a hand's flat lies: its palm's normal, across its arm.
+
+    A hand is a flat thing, so its thinnest way is the palm's normal - and that
+    is what a turn about the arm moves, so it is the whole answer to how far
+    round the glove is worn. It has to be measured across the arm and not from
+    the cloud as a whole: a thumb sticks out sideways from the fingers, and on
+    a glove that thumb alone can tilt the cloud's own longest direction half a
+    right angle away from the arm it hangs from. Everything along the arm is
+    taken out first, leaving a flat cross-section whose narrow way is the palm's.
+
+    Answers None for anything too round to have a flat - a mitten on a fist, or
+    the end of a bare sleeve - because turning noise onto Halo's hand is worse
+    than leaving the item's own roll alone.
+    """
+    if axis is None or len(points) < 8:
+        return None
+    across = []
     for point in points:
-        for axis in range(3):
-            centre[axis] += point[axis]
-    centre = [value / count for value in centre]
-    cov = [[0.0] * 3 for _ in range(3)]
-    for point in points:
-        delta = [point[axis] - centre[axis] for axis in range(3)]
-        for row in range(3):
-            for col in range(3):
-                cov[row][col] += delta[row] * delta[col]
-    # Start from the widest direction, not from +X: an arm modelled exactly
-    # along an axis is an eigenvector of its own covariance, so starting on a
-    # different axis would sit still on the wrong one for ever.
-    best = max(range(3), key=lambda i: cov[i][i])
-    axis = [0.0, 0.0, 0.0]
-    axis[best] = 1.0
-    for _ in range(64):
-        out = [sum(cov[row][col] * axis[col] for col in range(3))
-               for row in range(3)]
-        length = math.sqrt(sum(value * value for value in out))
-        if length < 1e-9:
-            return None, centre
-        axis = [value / length for value in out]
-    return axis, centre
+        along = sum(point[i] * axis[i] for i in range(3))
+        across.append([point[i] - axis[i] * along for i in range(3)])
+    axes, _centre = principal_axes(across)
+    if not axes or len(axes) < 2:
+        return None
+    thin, wide = axes[1], axes[0]
+    if thin[0] > 0.6 * wide[0]:
+        return None
+    return thin[1]
 
 
 def alignment(axis, target):
@@ -679,6 +734,58 @@ def alignment(axis, target):
                         + cross_product[row][col] * sine
                         + square * (1.0 - facing))
     return tuple(turn)
+
+
+def turn_about(axis, angle):
+    """A turn of `angle` radians about a unit axis, as a 3x3, row-major."""
+    x, y, z = axis
+    cosine, sine = math.cos(angle), math.sin(angle)
+    rest = 1.0 - cosine
+    return (cosine + x * x * rest, x * y * rest - z * sine,
+            x * z * rest + y * sine,
+            y * x * rest + z * sine, cosine + y * y * rest,
+            y * z * rest - x * sine,
+            z * x * rest - y * sine, z * y * rest + x * sine,
+            cosine + z * z * rest)
+
+
+def turn_product(left, right):
+    """`left` applied after `right`, as a 3x3, row-major."""
+    return tuple(sum(left[row * 3 + mid] * right[mid * 3 + col]
+                     for mid in range(3))
+                 for row in range(3) for col in range(3))
+
+
+def turn_point(turn, point):
+    """One turn applied to a direction."""
+    return tuple(sum(turn[row * 3 + col] * point[col] for col in range(3))
+                 for row in range(3))
+
+
+def hand_twist(turn, axis, here, there):
+    """How far a glove has to turn about its arm to lie in Halo's own hand.
+
+    Both directions are taken across the arm, because that is all a turn about
+    the arm can move: `here` is the glove's palm normal as the carry has already
+    turned it, `there` is Halo's own hand's. The signed angle between them is
+    the whole answer, and it moves nothing off the arm's line.
+    """
+    def across(vector):
+        along = sum(vector[i] * axis[i] for i in range(3))
+        value = [vector[i] - axis[i] * along for i in range(3)]
+        length = math.sqrt(sum(entry * entry for entry in value))
+        if length < 1e-9:
+            return None
+        return [entry / length for entry in value]
+
+    held, want = across(turn_point(turn, here)), across(there)
+    if held is None or want is None:
+        return None
+    cosine = sum(held[i] * want[i] for i in range(3))
+    sine = sum(axis[i] * (held[(i + 1) % 3] * want[(i + 2) % 3]
+                          - held[(i + 2) % 3] * want[(i + 1) % 3])
+               for i in range(3))
+    return math.atan2(sine, cosine)
 
 
 def place_point(turn, start, finish, point):
@@ -737,7 +844,8 @@ def arm_centre(points, weights, side):
     return held or list(points)
 
 
-def side_carry(armature, armature_fp, side, points, weights, middle=None):
+def side_carry(armature, armature_fp, side, points, weights, middle=None,
+               hand_flat=None, hand_cloud=None):
     """How one side's arm, as the mesh holds it, gets onto Halo's arm.
 
     One similarity for the whole side: the arm's own axis is turned onto Halo's
@@ -754,6 +862,14 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None):
     of the sleeve is smeared instead of torn. The price of no distortion is
     that an arm modelled bent keeps its bend, so its glove stands off Halo's
     straight arm by as much as the elbow was bent.
+
+    One thing is still free inside that one turn: how far round the arm the
+    side is. The shortest turn from the item's arm to Halo's leaves the roll
+    wherever the model happened to have it, and a glove authored palm-down
+    therefore lands flat across Halo's hand instead of lying in it - aligned
+    with the bone and visibly a twist. The glove's own flat is measured from
+    the glove, laid in Halo's hand's flat by one more turn about the same arm,
+    and that is still one turn: the roll moves nothing off the arm's line.
 
     Returns None when the bones or the geometry cannot answer.
     """
@@ -803,28 +919,81 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None):
     bones = ("bip01 %s upperarm" % side, "bip01 %s forearm" % side,
              "bip01 %s hand" % side)
     wrist = arm_joint(points, along, weights, bones[0], bones[1], low + 0.72 * span)
-    # The arm's own middle belongs on Halo's bone. Pinning only the shoulder
-    # joint left an arm modelled off its own bone - bulky armour sits outboard
-    # of a slim skeleton - hanging that far out on Halo's, which is why the arms
-    # stood 6.3 units from Halo's own on a sleeve 3 units out. Shifting the
-    # whole side by the same amount changes no length, so it cannot tear what it
-    # moves; this is the one placement error a similarity is still free to fix.
-    # `middle` is the arm's own shell when the caller knows it, so a pauldron
-    # weighted to the upper arm cannot drag the whole side off the bone.
-    centre = [sum(point[i] for point in held) / len(held) for i in range(3)]
-    delta = [centre[i] - shoulder[i] for i in range(3)]
-    moved = [scale * (turn[row * 3] * delta[0] + turn[row * 3 + 1] * delta[1]
-                      + turn[row * 3 + 2] * delta[2]) for row in range(3)]
     reach_axis = [tip[i] - head[i] for i in range(3)]
     length = math.sqrt(sum(value * value for value in reach_axis))
+    if length <= 1e-6:
+        return None
     reach_axis = [value / length for value in reach_axis]
-    across = sum(moved[i] * reach_axis[i] for i in range(3))
-    shift = [moved[i] - reach_axis[i] * across for i in range(3)]
-    return {"axis": axis, "shoulder": tuple(shoulder), "turn": turn,
-            "scale": scale, "from": tuple(shoulder),
-            "to": tuple(head[i] - shift[i] for i in range(3)),
-            "low": low, "high": high, "span": span,
-            "wrist": min(max(wrist, low), high)}
+
+    def placed(turn):
+        """The side's carry for one turn, shifted onto Halo's bone.
+
+        The arm's own middle belongs on Halo's bone. Pinning only the shoulder
+        joint left an arm modelled off its own bone - bulky armour sits outboard
+        of a slim skeleton - hanging that far out on Halo's, which is why the
+        arms stood 6.3 units from Halo's own on a sleeve 3 units out. Shifting
+        the whole side by the same amount changes no length, so it cannot tear
+        what it moves; this is the one placement error a similarity is still
+        free to fix. `middle` is the arm's own shell when the caller knows it,
+        so a pauldron weighted to the upper arm cannot drag the whole side off
+        the bone. The shift is worked out after the turn, so a rolled side still
+        lands its middle on the bone rather than beside it.
+        """
+        centre = [sum(point[i] for point in held) / len(held) for i in range(3)]
+        delta = [centre[i] - shoulder[i] for i in range(3)]
+        moved = [scale * sum(turn[row * 3 + col] * delta[col]
+                             for col in range(3)) for row in range(3)]
+        across = sum(moved[i] * reach_axis[i] for i in range(3))
+        shift = [moved[i] - reach_axis[i] * across for i in range(3)]
+        return {"axis": axis, "shoulder": tuple(shoulder), "turn": turn,
+                "scale": scale, "from": tuple(shoulder),
+                "to": tuple(head[i] - shift[i] for i in range(3)),
+                "low": low, "high": high, "span": span, "twist": 0.0,
+                "glove": "none", "wrist": min(max(wrist, low), high)}
+
+    place = placed(turn)
+    # How far round the arm the item's own hand goes. The carry so far lines the
+    # arm up and leaves the roll as the model had it; a glove authored with its
+    # palm facing the floor is then a quarter turn out of Halo's hand, which is
+    # exactly what a twist looks like. The glove answers which way its flat
+    # lies, Halo's own hand answers where that flat belongs, and one turn about
+    # the same arm takes one to the other.
+    # The glove is what is past the wrist, not past the elbow: the hand's own
+    # bone hands over there when the item has one, and an item that weights its
+    # glove to the forearm still stops being a sleeve down at the wrist.
+    cuff = arm_joint(points, along, weights, bones[1], bones[2],
+                     low + 0.82 * span)
+    glove = [point for point, t in zip(points, along) if t > cuff]
+    glove_thin = hand_plane(glove, axis) if len(glove) >= 8 else None
+    if glove_thin is not None and hand_flat is not None:
+        angle = hand_twist(turn, reach_axis, glove_thin, hand_flat)
+        if angle is not None:
+            # Half a turn from a glove's flat is the same flat, so two answers
+            # lie it in Halo's hand and the glove's own shape cannot say which.
+            # Halo's own hand can: it is the model the game draws, so the one
+            # whose glove stands closer to it is the one the game wears. With
+            # no hand to measure against, the smaller turn keeps more of the
+            # item's own authoring.
+            near = angle + math.pi if angle <= -0.5 * math.pi else \
+                angle - math.pi if angle > 0.5 * math.pi else angle
+            options = []
+            for value in (near, near + math.pi):
+                candidate = placed(turn_product(turn_about(reach_axis, value),
+                                                turn))
+                candidate["twist"] = math.degrees(value)
+                options.append(candidate)
+            place = options[0]
+            if hand_cloud:
+                fits = [hand_fit(option, glove, hand_cloud) for option in options]
+                if None not in fits and fits[1] < fits[0]:
+                    place = options[1]
+            place["glove"] = "flat"
+    elif len(glove) >= 8 and hand_flat is not None:
+        # A fist, or a mitten on one: every way across it is as wide as the
+        # next, so there is no flat to line up and no answer to give. Saying so
+        # is better than rolling it onto a guess.
+        place["glove"] = "round"
+    return place
 
 
 def place_arm(place, point):
@@ -857,6 +1026,26 @@ def place_pad(place, point):
     return tuple(place["to"][axis]
                  + scale * (point[axis] - place["from"][axis])
                  for axis in range(3))
+
+
+def hand_fit(place, points, cloud, sample=80):
+    """How far a glove stands from Halo's own hand, as a mean in units.
+
+    The one question a glove's flat cannot answer is which of two half-turn
+    twins Halo wears, so the answer is measured: carry the glove both ways and
+    keep the one that stands closer to the hand the game actually draws.
+    """
+    if place is None or not points or not cloud:
+        return None
+    step = max(1, len(points) // sample)
+    total, seen = 0.0, 0
+    for point in points[::step]:
+        moved = place_arm(place, point)
+        total += min(math.sqrt(sum((moved[i] - other[i]) ** 2
+                                  for i in range(3)))
+                     for other in cloud)
+        seen += 1
+    return total / seen if seen else None
 
 
 def hand_share(place, point):
@@ -1047,10 +1236,17 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         if (piece["side"] not in sleeve
                 or len(piece["indices"]) > len(sleeve[piece["side"]]["indices"])):
             sleeve[piece["side"]] = piece
+    # Which way Halo's own hand lies on each side, and its own hand's skin.
+    # Measured once per side, from the arm mesh the rig file ships.
+    flat, hands = {}, {}
+    for side in ("l", "r"):
+        flat[side], hands[side] = halo_hand(armature_fp, side)
     carry = {side: side_carry(armature, armature_fp, side, points,
                               side_weights[side],
                               middle=[world @ mesh.vertices[index].co
-                                      for index in sleeve[side]["indices"]])
+                                      for index in sleeve[side]["indices"]],
+                              hand_flat=flat[side],
+                              hand_cloud=hands[side])
              for side, points in side_points.items() if points}
     if not any(carry.values()):
         log("no arm axis could be measured: the arms keep the biped's placement")
@@ -1166,6 +1362,12 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         if place is not None:
             log("%s arm: one turn, scaled x%.2f, so every edge of it keeps its "
                 "own length" % (side, place["scale"]))
+            if place.get("glove") == "flat":
+                log("%s arm: its glove turned %.0f degrees about the arm, so its "
+                    "own flat lies in Halo's hand" % (side, place["twist"]))
+            elif place.get("glove") == "round":
+                log("%s arm: its glove is too round to say which way round it "
+                    "goes, so it keeps the roll the item gave it" % side)
 
     faces = [polygon for piece in pieces for polygon in piece["faces"]]
     copy = bpy.data.meshes.new("%s arms" % mesh.name)
@@ -1646,6 +1848,61 @@ def reference_arms(armature_fp, skip):
     return found
 
 
+def halo_arms(armature_fp):
+    """The arm mesh the rig file ships, which is Halo's own.
+
+    One pass rigs several items and every one of their first-person sets stays
+    parented to the same rig, so by the second item anything merely standing on
+    that rig includes the first item's arms. Those are not the model to aim a
+    glove at, nor to measure a fit against, so the file's own cyborg body is
+    picked when it is there and our own `... arms` objects are left out.
+    """
+    meshes = reference_arms(armature_fp, None)
+    own = [item for item in meshes if "cyborg" in item.name.lower()]
+    if own:
+        return own
+    return [item for item in meshes
+            if not item.name.lower().endswith("arms")]
+
+
+def halo_hand(armature_fp, side, reach=3.6, limit=400):
+    """Halo's own hand on one side: which way its flat lies, and its own skin.
+
+    The rig file ships the arms the game draws, so its hand is what the item's
+    glove has to lie in - a glove turned a quarter about the arm reads as a
+    twist however well it is placed. A hand is a flat thing, so its thinnest
+    direction is the palm's normal. The skin comes back with it because a glove
+    laid flat can still be a half turn out, and only the model the game draws
+    can say which way round it wears it. Both answers are None when the rig
+    file brought no arm mesh to measure.
+    """
+    bones = getattr(getattr(armature_fp, "data", None), "bones", None)
+    wrist = bones.get("frame %s wriste" % side) if bones is not None else None
+    if wrist is None:
+        return None, None
+    head = armature_fp.matrix_world @ wrist.head_local
+    tail = armature_fp.matrix_world @ wrist.tail_local
+    seen = []
+    for item in halo_arms(armature_fp):
+        matrix = item.matrix_world
+        vertices = list(getattr(item.data, "vertices", []) or [])
+        step = max(1, len(vertices) // limit)
+        for vertex in vertices[::step]:
+            point = matrix @ vertex.co
+            if point_segment_distance(point, head, tail) <= reach:
+                seen.append(point)
+    if len(seen) < 12:
+        return None, seen or None
+    heading = [tail[i] - head[i] for i in range(3)]
+    length = math.sqrt(sum(value * value for value in heading))
+    if length <= 1e-6:
+        return None, seen
+    thin = hand_plane(seen, [value / length for value in heading])
+    if thin is None:
+        return None, seen
+    return thin, seen
+
+
 def arm_fit(points, armature_fp, skip, sample=400):
     """How close the carried arms are to Halo's own, as (mean, worst) units.
 
@@ -1653,7 +1910,7 @@ def arm_fit(points, armature_fp, skip, sample=400):
     the item's arms have to stand in - not just the bones, which the item's
     thicker or longer limbs can sit around and still be in the wrong place.
     """
-    reference = reference_arms(armature_fp, skip)
+    reference = [item for item in halo_arms(armature_fp) if item is not skip]
     if not reference or not points:
         return None
     cloud = []

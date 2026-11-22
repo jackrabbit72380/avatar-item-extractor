@@ -279,7 +279,9 @@ def main():
     # stretched or torn off the arm.
     for name in ("arm_share", "ARM_SHARE", "arm_pieces", "arm_axis",
                  "alignment", "place_point", "side_carry", "hand_share",
-                 "place_pad"):
+                 "place_pad", "principal_axes", "hand_plane", "turn_about",
+                 "turn_product", "turn_point", "hand_twist", "hand_fit",
+                 "halo_hand"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -609,6 +611,128 @@ def main():
             if worst > 1.25 + 1e-9:
                 fail("a bent arm was stretched on its way to Halo's rig: x%.2f"
                      % worst)
+
+        # Which way round the glove goes. Lining the arm up with the bone leaves
+        # the roll as the model had it, so a glove authored palm-down lands
+        # across Halo's hand instead of in it - aligned with the bone and
+        # visibly a twist. The glove's own flat has to be laid in Halo's.
+        plate = [Vec(step * 1.2, 9.0 + thick, 20.0 + across_wide)
+                 for step in range(6) for across_wide in (-2.0, 0.0, 2.0)
+                 for thick in (-0.3, 0.3)]
+        thin = module.hand_plane(plate, (1.0, 0.0, 0.0))
+        print("  hand_plane         -> flat %r"
+              % ([round(v, 2) for v in (thin or ())],))
+        if thin is None:
+            fail("a flat glove was judged too round to have a palm")
+        elif abs(abs(thin[1]) - 1.0) > 1e-3:
+            fail("the glove's flat came out %r, not across its arm" % (thin,))
+        # A thumb sticking out sideways must not be mistaken for the palm's
+        # normal: the flat is measured across the arm, so the thumb is only a
+        # bit of width.
+        thumbed = plate + [Vec(step * 1.2, 9.0 + thick, 22.0 + wide)
+                          for step in (0, 1) for wide in (0.0, 1.0)
+                          for thick in (-0.3, 0.3)]
+        thumb_flat = module.hand_plane(thumbed, (1.0, 0.0, 0.0))
+        print("  hand_plane (thumb) -> flat %r"
+              % ([round(v, 2) for v in (thumb_flat or ())],))
+        if thumb_flat is None or abs(abs(thumb_flat[1]) - 1.0) > 1e-2:
+            fail("a glove's thumb tilted its palm's normal to %r" % (thumb_flat,))
+        if module.hand_plane([Vec(x, y, z) for x in (0.0, 1.0)
+                              for y in (0.0, 1.0) for z in (0.0, 1.0)],
+                             (1.0, 0.0, 0.0)) is not None:
+            fail("a round cloud was given a palm's normal")
+        if module.halo_hand(None, "l") != (None, None):
+            fail("halo_hand invented a hand with no rig or mesh to measure")
+
+        flat_turn = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+        angle = module.hand_twist(flat_turn, (1.0, 0.0, 0.0),
+                                  (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        laid = module.turn_point(module.turn_about((1.0, 0.0, 0.0), angle),
+                                 (0.0, 1.0, 0.0))
+        print("  hand_twist         -> %.1f degrees, flat onto %r"
+              % (math.degrees(angle), [round(v, 2) for v in laid]))
+        if abs(angle - math.pi / 2) > 1e-6 or laid[2] < 0.999:
+            fail("a glove a quarter turn out was not turned onto Halo's hand: "
+                 "%.1f degrees, %r" % (math.degrees(angle), laid))
+
+        # A hanging arm whose glove is authored with its palm through the x
+        # axis - a quarter turn out of Halo's hand, which faces across y.
+        hanging = [Vec(0.0, 9.0, 56.0), Vec(3.0, 9.0, 45.0),
+                   Vec(-3.0, 9.0, 45.0), Vec(0.0, 9.0, 36.0)]
+        hand_points = [Vec(thick, 9.0 + across_wide, 30.0 - step * 1.5)
+                       for step in range(4) for across_wide in (-2.0, 0.0, 2.0)
+                       for thick in (-0.3, 0.3)]
+        # a thumb, so the glove is not the same object half a turn round
+        hand_points += [Vec(thick, 9.0 + across_wide, 30.0 - step * 1.5)
+                        for step in (0, 1) for across_wide in (3.0, 3.8)
+                        for thick in (-0.3, 0.3)]
+        hanging += hand_points
+        hanging_weights = [{"bip01 l forearm": 1.0}] * len(hanging)
+        rolled = module.side_carry(biped_rig, fp_rig, "l", hanging,
+                                   hanging_weights, hand_flat=(0.0, 1.0, 0.0))
+        if rolled is None:
+            fail("a flat glove could not be rolled onto Halo's hand")
+        else:
+            palm = module.turn_point(rolled["turn"], (1.0, 0.0, 0.0))
+            print("  side_carry roll    -> palm across %r, twist %.0f"
+                  % ([round(v, 2) for v in palm], rolled["twist"]))
+            if abs(abs(palm[1]) - 1.0) > 1e-6:
+                fail("the glove's palm landed on %r, not across Halo's hand"
+                     % (palm,))
+            if abs(rolled["twist"]) < 45.0:
+                fail("a glove a quarter turn out was left twisted: %.0f degrees"
+                     % rolled["twist"])
+            # One more turn about the same arm, so the side still keeps its own
+            # shape and its middle still lands on Halo's bone.
+            ratios = []
+            for i in range(len(hanging)):
+                for j in range(i + 1, len(hanging)):
+                    was = math.dist(tuple(hanging[i]), tuple(hanging[j]))
+                    now = math.dist(tuple(module.place_arm(rolled, hanging[i])),
+                                    tuple(module.place_arm(rolled, hanging[j])))
+                    ratios.append(now / was)
+            if max(ratios) - min(ratios) > 1e-9:
+                fail("the roll distorted the arm: %r" % (ratios,))
+            moved = [module.place_arm(rolled, point) for point in hanging]
+            middle = [sum(point[axis] for point in moved) / len(moved)
+                      for axis in range(3)]
+            if abs(middle[1] - 9.4) > 0.6 or abs(middle[2]) > 0.6:
+                fail("the rolled side's middle sat at %r, off Halo's bone"
+                     % (middle,))
+            # Two answers lie a glove flat, half a turn apart, and Halo's own
+            # hand decides between them: a hand hanging the other way round
+            # must flip the choice.
+            twin = dict(rolled)
+            twin["turn"] = module.turn_product(
+                module.turn_about((1.0, 0.0, 0.0), math.pi), rolled["turn"])
+            cloud = [module.place_arm(twin, point) for point in hand_points]
+            flipped = module.side_carry(biped_rig, fp_rig, "l", hanging,
+                                        hanging_weights,
+                                        hand_flat=(0.0, 1.0, 0.0),
+                                        hand_cloud=cloud)
+            other = (module.turn_point(flipped["turn"], (1.0, 0.0, 0.0))
+                     if flipped else None)
+            print("  side_carry palm    -> %r as worn, %r the other way"
+                  % ([round(v, 2) for v in palm],
+                     [round(v, 2) for v in (other or ())]))
+            if other is None or sum(palm[i] * other[i]
+                                    for i in range(3)) > -0.99:
+                fail("Halo's own hand did not decide which way round the glove "
+                     "goes: %r vs %r" % (palm, other))
+        # A fist has no flat to line up: it keeps the item's own roll instead of
+        # being turned onto a guess, and the report says so.
+        fist_arm = [Vec(0.0, 9.0, 56.0), Vec(3.0, 9.0, 45.0),
+                    Vec(-3.0, 9.0, 45.0)]
+        fist_arm += [Vec(x, 9.0 + y, 27.0 - z) for x in (-1.6, 1.6)
+                     for y in (-1.6, 1.6) for z in (0.0, 2.4)]
+        fist = module.side_carry(biped_rig, fp_rig, "l", fist_arm,
+                                 [{"bip01 l forearm": 1.0}] * len(fist_arm),
+                                 hand_flat=(0.0, 1.0, 0.0))
+        print("  side_carry fist   -> glove %r, twist %r"
+              % (fist.get("glove") if fist else None,
+                 fist.get("twist") if fist else None))
+        if fist is None or fist.get("glove") != "round" or fist["twist"] != 0.0:
+            fail("a fist was rolled onto a guess: %r" % (fist,))
 
         # The shoulder rule, exercised: a pad that hugs a clavicle is kept and
         # rides the upper arm, and a chest plate carrying the same clavicle

@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract-AvatarItem-v26.bat` - one folder
+Put your Xbox 360 avatar items beside `Extract-AvatarItem-v28.bat` - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
 writes everything each one needs - models, textures, masks, colours, rigs -
@@ -138,7 +138,17 @@ from the body and the player sees the arms, not the body's:
   Turned with the arm, the little height a pad has over the joint swings a
   quarter turn and leaves the plate standing across the arm like a fin, which is
   what a Marine's pauldrons did. A band mounted on the arm itself - a bracer, a
-  gauntlet - is below the joint and turns with the arm, as it should. A bent
+  gauntlet - is below the joint and turns with the arm, as it should. How far
+  round the arm the side sits is answered separately: the shortest turn onto
+  Halo's arm leaves the glove rolled however the item was modelled, so a glove
+  authored palm-down lands flat across Halo's hand instead of lying in it -
+  aligned with the bone and visibly a twist. The glove's own palm normal is
+  measured across its arm, Halo's own hand's flat is measured from the arm mesh
+  inside `fp arms.blend`, and one turn about the arm lays one in the other;
+  being about the arm's own line, it moves nothing off it and still cannot
+  stretch an edge. The half turn that is also flat is settled by whichever
+  stands closer to Halo's own hand, and a glove too round to have a flat - a
+  fist - keeps the roll the item gave it, which `report.txt` says. A bent
   arm keeps its bend. Its vertex groups are renamed to Halo's (`frame l upperarm`,
   `frame l forearm`, `frame l wriste`), and a glove the item weighted to its
   forearm alone - an avatar rig has no finger bones - hands over to
@@ -296,9 +306,9 @@ the rigging section is added underneath it when Blender is there.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack Extract-AvatarItem-v26.bat src/
+python3 tools/payload.py unpack Extract-AvatarItem-v28.bat src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack Extract-AvatarItem-v26.bat src/ --rigs src/rig
+python3 tools/payload.py pack Extract-AvatarItem-v28.bat src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
