@@ -14,6 +14,7 @@ writer was called at all.
 """
 
 import importlib.util
+import math
 import os
 import sys
 import tempfile
@@ -276,8 +277,8 @@ def main():
     # What belongs in the first-person set: whole shells picked by the bones
     # they are mostly weighted to, and carried across rigidly so no piece can be
     # stretched or torn off the arm.
-    for name in ("arm_share", "ARM_SHARE", "arm_pieces", "bone_frame",
-                 "arm_frames", "carry_point"):
+    for name in ("arm_share", "ARM_SHARE", "arm_pieces", "arm_axis",
+                 "alignment", "place_point", "side_carry"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -349,10 +350,12 @@ def main():
                     or cut[0]["bone"] != "bip01 l forearm"):
             fail("the sleeve is not on the left forearm: %r" % (cut[0],))
 
-        # The arms are carried onto Halo's rig by the bones each vertex rides,
-        # blended by its own weights: one-bone vertices follow that bone exactly,
-        # two-bone vertices are pulled by both, and nothing is invented for a
-        # bone Halo's rig does not have.
+        # The carry is one turn per side, measured from the arm's own mesh. The
+        # item is modelled in the avatar's pose while the bones are Halo's, so
+        # the arm's direction has to come from the geometry; and each bone's rest
+        # frame cannot be used either, because the biped's left hand is rolled a
+        # half turn against its forearm - that turned gloves inside out against
+        # sleeves and tore them apart on a real item.
         class Vec:
             def __init__(self, *values):
                 self.values = list(values)
@@ -368,6 +371,12 @@ def main():
 
             def __sub__(self, other):
                 return Vec(*(a - b for a, b in zip(self.values, other.values)))
+
+            def __getitem__(self, index):
+                return self.values[index]
+
+            def __len__(self):
+                return len(self.values)
 
             def dot(self, other):
                 return sum(a * b for a, b in zip(self.values, other.values))
@@ -387,26 +396,95 @@ def main():
             def __matmul__(self, point):
                 return Vec(*(point.values[i] + self.offset[i] for i in range(3)))
 
-        frames = {"bip01 l upperarm": Shift((0.0, 0.0, 10.0)),
-                  "bip01 l forearm": Shift((10.0, 0.0, 0.0))}
-        one = module.carry_point(frames, {"bip01 l upperarm": 1.0},
-                                 Vec(1.0, 2.0, 3.0), "bip01 l upperarm")
-        half = module.carry_point(
-            frames, {"bip01 l upperarm": 0.5, "bip01 l forearm": 0.5},
-            Vec(1.0, 2.0, 3.0), "bip01 l upperarm")
-        print("  carry_point         -> one bone %r, blended %r"
-              % (one.values, half.values))
-        if [round(value, 6) for value in one.values] != [1.0, 2.0, 13.0]:
-            fail("a vertex riding one bone did not follow that bone: %r"
-                 % (one.values,))
-        if [round(value, 6) for value in half.values] != [6.0, 2.0, 8.0]:
-            fail("a vertex riding two bones was not carried by both: %r"
-                 % (half.values,))
-        if module.carry_point({}, {"bip01 l upperarm": 1.0},
-                              Vec(0.0, 0.0, 0.0), None) is not None:
-            fail("a point was moved by a bone the first-person rig has not got")
-        if not hasattr(module, "arm_frames"):
-            fail("no arm_frames: the arms cannot be carried onto Halo's rig")
+        if not hasattr(module, "arm_axis"):
+            fail("no arm_axis: the carry cannot find which way the arm runs")
+
+        def cloud(direction, spread=4.0, rings=8):
+            """A sleeve-shaped cloud pointing the way the arm does."""
+            step = list(direction)
+            length = sum(value * value for value in step) ** 0.5
+            step = [value / length for value in step]
+            catch = [1.0, 0.0, 0.0] if abs(step[0]) < 0.9 else [0.0, 1.0, 0.0]
+            across = [step[1] * catch[2] - step[2] * catch[1],
+                      step[2] * catch[0] - step[0] * catch[2],
+                      step[0] * catch[1] - step[1] * catch[0]]
+            norm = sum(value * value for value in across) ** 0.5
+            across = [value / norm for value in across]
+            up = [step[1] * across[2] - step[2] * across[1],
+                  step[2] * across[0] - step[0] * across[2],
+                  step[0] * across[1] - step[1] * across[0]]
+            points = []
+            for ring in range(rings):
+                t = ring / (rings - 1.0)
+                centre = [step[i] * 22.0 * t for i in range(3)]
+                for k in range(6):
+                    a = 2 * math.pi * k / 6
+                    points.append(Vec(*[
+                        centre[i] + (across[i] * math.cos(a)
+                                     + up[i] * math.sin(a)) * spread
+                        for i in range(3)]))
+            # a pauldron off to one side, as a real item has
+            points.extend([Vec(6.0, 0.0, 2.0), Vec(-6.0, 0.0, 2.0),
+                           Vec(*[step[i] * 3.0 for i in range(3)])])
+            return points
+
+        for label, direction in (("along x", (1.0, 0.0, 0.0)),
+                                 ("hanging", (0.0, 0.1, -1.0))):
+            axis, centre = module.arm_axis(cloud(direction))
+            print("  arm_axis  %-10s -> %r" % (label, [round(v, 2) for v in axis]))
+            along = sum(axis[i] * direction[i] for i in range(3))
+            if abs(along) < 0.99:
+                fail("the arm's axis came out %r for an arm %s" % (axis, label))
+
+        turn = module.alignment((0.0, 0.0, -1.0), (1.0, 0.0, 0.0))
+        aim = [-turn[2], -turn[5], -turn[8]]
+        print("  alignment  hanging -> straight out: %r" % ([round(v, 3) for v in aim],))
+        if max(abs(aim[0] - 1.0), abs(aim[1]), abs(aim[2])) > 1e-6:
+            fail("a hanging arm was turned to %r, not straight out" % (aim,))
+        flat = module.alignment((1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        if tuple(flat) != (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0):
+            fail("an arm already straight out was turned: %r" % (flat,))
+        back = module.alignment((1.0, 0.0, 0.0), (-1.0, 0.0, 0.0))
+        sent = [back[0], back[3], back[6]]
+        if max(abs(sent[0] + 1.0), abs(sent[1]), abs(sent[2])) > 1e-6:
+            fail("a reversed arm was not turned by half a turn: %r" % (back,))
+
+        moved = module.place_point(flat, (0.0, 0.0, 0.0), (0.0, 9.4, 0.0),
+                                   (1.0, 2.0, 3.0))
+        if [round(value, 6) for value in moved] != [1.0, 11.4, 3.0]:
+            fail("a point was not shifted onto Halo's shoulder: %r" % (moved,))
+
+        class Bone:
+            def __init__(self, head, tail):
+                self.head_local = Vec(*head)
+                self.tail_local = Vec(*tail)
+
+        biped_rig = types.SimpleNamespace(
+            matrix_world=Shift((0.0, 0.0, 0.0)),
+            data=types.SimpleNamespace(bones={
+                "bip01 l upperarm": Bone((0.0, 9.0, 56.0), (0.0, 9.0, 45.0))}))
+        fp_rig = types.SimpleNamespace(
+            matrix_world=Shift((0.0, 0.0, 0.0)),
+            data=types.SimpleNamespace(bones={
+                "frame l upperarm": Bone((0.0, 9.4, 0.0), (10.25, 9.4, 0.0))}))
+        arm = [Vec(0.0, 9.0, 50.0), Vec(3.0, 9.0, 40.0), Vec(-3.0, 9.0, 40.0),
+               Vec(0.0, 9.0, 30.0), Vec(3.0, 9.0, 30.0), Vec(-3.0, 9.0, 30.0)]
+        place = module.side_carry(biped_rig, fp_rig, "l", arm)
+        if place is None:
+            fail("side_carry could not place an arm whose bones both exist")
+        else:
+            hand = module.place_point(place["turn"], place["from"], place["to"],
+                                      Vec(0.0, 9.0, 30.0))
+            print("  side_carry hanging -> hand at %r"
+                  % ([round(v, 2) for v in hand],))
+            # 26 units below a shoulder that Halo holds straight out at y 9.4
+            if max(abs(hand[0] - 26.0), abs(hand[1] - 9.4), abs(hand[2])) > 1e-6:
+                fail("the hand landed at %r, not 26 units out along Halo's arm"
+                     % (hand,))
+        if module.side_carry(None, fp_rig, "l", arm) is not None:
+            fail("an arm was placed with no biped to measure from")
+        if module.side_carry(biped_rig, fp_rig, "r", arm) is not None:
+            fail("a side with no first-person bone was placed anyway")
 
         # The shoulder rule, exercised: a pad that hugs a clavicle is kept and
         # rides the upper arm, and a chest plate carrying the same clavicle

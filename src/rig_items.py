@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v22"
-BUILD = "2026-11-22 fp-arms-pads"
+VERSION = "v23"
+BUILD = "2026-11-22 fp-arms-mesh-axis"
 
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
 DEFORM_BONES = (
@@ -586,74 +586,146 @@ def arm_share(weights):
     return arm / total if total > 0.0 else 0.0
 
 
-def bone_frame(armature, armature_fp, source, target):
-    """The transform carrying one bone's rest frame onto the first-person bone
-    of the same job: the same point on the bone, the same way round.
+def arm_axis(points):
+    """Which way one of the item's arms runs, judged from the mesh itself.
 
-    The bone's rest matrix holds its direction *and* its roll, which is the only
-    way round the question can be answered here: Halo's first-person arm chain
-    is exactly collinear, so there is no bend in it to read a roll from.
+    The bones cannot answer this. An avatar item is modelled in the avatar's own
+    pose, while the skeleton it is bound to can hold its arms somewhere else -
+    the biped's arms hang, and Halo's first-person arms are held straight out.
+    Asking the bones turned the sleeves to suit the bones rather than the body,
+    which is what left the arms at the wrong angle. The mesh is what has to land
+    on Halo's arm, so its own longest axis is the one to use: the sleeve's length
+    dominates every other direction it has.
     """
-    was = armature.data.bones.get(source)
-    now = armature_fp.data.bones.get(target)
+    count = len(points)
+    if count < 3:
+        return None, None
+    centre = [0.0, 0.0, 0.0]
+    for point in points:
+        for axis in range(3):
+            centre[axis] += point[axis]
+    centre = [value / count for value in centre]
+    cov = [[0.0] * 3 for _ in range(3)]
+    for point in points:
+        delta = [point[axis] - centre[axis] for axis in range(3)]
+        for row in range(3):
+            for col in range(3):
+                cov[row][col] += delta[row] * delta[col]
+    # Start from the widest direction, not from +X: an arm modelled exactly
+    # along an axis is an eigenvector of its own covariance, so starting on a
+    # different axis would sit still on the wrong one for ever.
+    best = max(range(3), key=lambda i: cov[i][i])
+    axis = [0.0, 0.0, 0.0]
+    axis[best] = 1.0
+    for _ in range(64):
+        out = [sum(cov[row][col] * axis[col] for col in range(3))
+               for row in range(3)]
+        length = math.sqrt(sum(value * value for value in out))
+        if length < 1e-9:
+            return None, centre
+        axis = [value / length for value in out]
+    return axis, centre
+
+
+def alignment(axis, target):
+    """The shortest turn taking one direction onto another, as a 3x3, row-major.
+
+    A turn and nothing else: no twist is invented, so the arm keeps the way
+    round it was modelled and only its direction changes. Bone rolls cannot be
+    trusted for this - the biped's left hand is rolled a half turn against its
+    forearm, so a frame built from the bone's rest matrix turned the glove inside
+    out against the sleeve and tore the two apart.
+    """
+    def unit(values):
+        length = math.sqrt(sum(value * value for value in values))
+        if length < 1e-9:
+            return None
+        return [value / length for value in values]
+
+    here, there = unit(axis), unit(target)
+    if here is None or there is None:
+        return None
+    across = [here[1] * there[2] - here[2] * there[1],
+              here[2] * there[0] - here[0] * there[2],
+              here[0] * there[1] - here[1] * there[0]]
+    facing = sum(left * right for left, right in zip(here, there))
+    sine = math.sqrt(sum(value * value for value in across))
+    if sine < 1e-9:
+        if facing > 0.0:
+            return (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+        # Opposed: half a turn about any axis across them.
+        aside = unit([1.0, 0.0, 0.0] if abs(here[0]) < 0.9 else [0.0, 1.0, 0.0])
+        across = unit([here[1] * aside[2] - here[2] * aside[1],
+                       here[2] * aside[0] - here[0] * aside[2],
+                       here[0] * aside[1] - here[1] * aside[0]])
+        x, y, z = across
+        return (2 * x * x - 1, 2 * x * y, 2 * x * z,
+                2 * y * x, 2 * y * y - 1, 2 * y * z,
+                2 * z * x, 2 * z * y, 2 * z * z - 1)
+    across = [value / sine for value in across]
+    cross_product = [[0.0, -across[2], across[1]],
+                     [across[2], 0.0, -across[0]],
+                     [-across[1], across[0], 0.0]]
+    turn = []
+    for row in range(3):
+        for col in range(3):
+            square = sum(cross_product[row][mid] * cross_product[mid][col]
+                         for mid in range(3))
+            # `across` is a unit axis and `sine` its length, so the turn is
+            # sin*K + (1-cos)*K*K. Dividing by sine twice as well as scaling by
+            # it squared the error instead of cancelling it, and blew the arms up
+            # to 1e15 units on an item whose arms were already straight out.
+            turn.append((1.0 if row == col else 0.0)
+                        + cross_product[row][col] * sine
+                        + square * (1.0 - facing))
+    return tuple(turn)
+
+
+def place_point(turn, start, finish, point):
+    """Turn one point about `start`, then shift it so `start` lands on
+    `finish`."""
+    delta = [point[axis] - start[axis] for axis in range(3)]
+    return tuple(turn[row * 3] * delta[0] + turn[row * 3 + 1] * delta[1]
+                 + turn[row * 3 + 2] * delta[2] + finish[row]
+                 for row in range(3))
+
+
+def side_carry(armature, armature_fp, side, points):
+    """How one side's arm, as the mesh holds it, gets onto Halo's arm.
+
+    Returns the turn, the point it turns about (the biped's shoulder joint) and
+    where that point has to land (the first-person shoulder joint), or None when
+    the bones or the geometry cannot answer. Applied to the whole side at once,
+    so sleeve, glove and pad keep their shape exactly: a rigid move cannot tear
+    a shell or stretch an edge.
+    """
+    if armature is None or armature_fp is None or not points:
+        return None
+    was = armature.data.bones.get("bip01 %s upperarm" % side)
+    now = armature_fp.data.bones.get("frame %s upperarm" % side)
     if was is None or now is None:
         return None
-    return ((armature_fp.matrix_world @ now.matrix_local)
-            @ (armature.matrix_world @ was.matrix_local).inverted())
-
-
-def nearest_arm(point, armature, names):
-    """The arm bone whose segment passes closest to a point, in world space."""
-    best, best_gap = None, None
-    for name in names:
-        bone = armature.data.bones.get(name) if armature is not None else None
-        if bone is None:
-            continue
-        gap = point_segment_distance(point,
-                                     armature.matrix_world @ bone.head_local,
-                                     armature.matrix_world @ bone.tail_local)
-        if best_gap is None or gap < best_gap:
-            best, best_gap = name, gap
-    return best
-
-
-def arm_frames(armature, armature_fp, names=ARM_BONES):
-    """Item bone name -> its frame on Halo's first-person rig."""
-    frames = {}
-    for source in names:
-        target = FP_BONES.get(source)
-        if target is None:
-            continue
-        frame = bone_frame(armature, armature_fp, source, target)
-        if frame is not None:
-            frames[source] = frame
-    return frames
-
-
-def carry_point(frames, weights, point, home=None):
-    """Move one point onto Halo's first-person arms, weighted as it is bound.
-
-    Every bone the vertex rides pulls it into that bone's frame and the pulls are
-    averaged by the weights, so the arm bends at the elbow where its skin does.
-    Swinging the whole limb on one bone put it at the wrong angle; moving each
-    vertex on only its heaviest bone tore the shells apart. Blending the bones
-    the vertex actually rides does neither.
-
-    Returns None when the vertex rides none of the bones with a frame.
-    """
-    pulled = None
-    total = 0.0
-    for name, weight in weights.items():
-        frame = frames.get(name)
-        if frame is None or weight <= 0.0:
-            continue
-        moved = frame @ point
-        pulled = moved * weight if pulled is None else pulled + moved * weight
-        total += weight
-    if total <= 0.0:
-        fallback = frames.get(home) if home else None
-        return fallback @ point if fallback is not None else None
-    return pulled / total
+    axis, centre = arm_axis(points)
+    if axis is None:
+        return None
+    start = armature.matrix_world @ was.head_local
+    # Point the axis away from the body: an arm leaves the shoulder, it does not
+    # arrive at it. The vertex farthest from the shoulder joint decides which end
+    # is the hand - measured from the arm's own centre it was the pauldron, which
+    # is off to the side and can be further out than the glove is down.
+    far = max(points, key=lambda point: sum(
+        (point[i] - start[i]) ** 2 for i in range(3)))
+    if sum((far[i] - centre[i]) * axis[i] for i in range(3)) < 0.0:
+        axis = [-value for value in axis]
+    finish = armature_fp.matrix_world @ now.head_local
+    aim = ((armature_fp.matrix_world @ now.tail_local)
+           - (armature_fp.matrix_world @ now.head_local))
+    turn = alignment(axis, (aim[0], aim[1], aim[2]))
+    if turn is None:
+        return None
+    return {"turn": turn,
+            "from": (start[0], start[1], start[2]),
+            "to": (finish[0], finish[1], finish[2])}
 
 
 def shell_faces(mesh):
@@ -780,11 +852,13 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     as they stand.
 
     The arms are carried onto Halo's own first-person rig, which holds them
-    straight out in its rest pose: every vertex is moved by the bones it rides
-    (upper arm, forearm, hand to the wrist), blended by its own weights, and its
-    groups are renamed to that rig's bones. Nothing is re-modelled and nothing
-    is re-skinned - the weights are the item's own, only the frames they act in
-    change. A hand item never gets here - it rides its hand bone whole.
+    straight out in its rest pose. The carry is one turn per side, measured from
+    the arm's own mesh: its long axis onto Halo's arm axis, turned about the
+    shoulder joint and shifted onto it. The whole side moves rigidly - sleeve,
+    glove and pad - so it keeps its shape exactly and cannot tear, and its
+    groups are renamed to that rig's bones with its own weights travelling
+    across. Nothing is re-modelled and nothing is re-skinned. A hand item never
+    gets here - it rides its hand bone whole.
 
     Returns (arms object, armature it rides), or (None, None) when the item has
     no geometry on an arm bone - a hat is not an arm, and inventing one would
@@ -800,22 +874,32 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
             % object_data.name)
         return None, None
 
-    # Halo's own first-person rig, in its own rest pose: the arms are carried
-    # onto it bone by bone, so the file the arms ship in is the rig the game's
-    # first-person animations drive.
-    frames = {}
-    if armature is not None and armature_fp is not None:
-        frames = arm_frames(armature, armature_fp, ARM_BONES)
-    mapping = {source: FP_BONES[source] for source in frames
-               if armature_fp.data.bones.get(FP_BONES[source]) is not None}
-    if not frames:
-        log("no matching arm bones on the first-person rig: the cut keeps the "
-            "biped's placement")
+    world = object_data.matrix_world
+    # Each side's own arm, as the mesh holds it, then the turn that lays it on
+    # Halo's arm. Measured from the mesh rather than from the bones: the item is
+    # modelled in the avatar's pose and the bones are Halo's, so the two can
+    # disagree about which way an arm points.
+    side_points = {"l": [], "r": []}
+    for piece in pieces:
+        for index in piece["indices"]:
+            side_points[piece["side"]].append(world @ mesh.vertices[index].co)
+    carry = {side: side_carry(armature, armature_fp, side, points)
+             for side, points in side_points.items() if points}
+    if not any(carry.values()):
+        log("no arm axis could be measured: the arms keep the biped's placement")
 
-    home = {}
+    mapping = {}
+    if armature_fp is not None:
+        for source in ARM_BONES:
+            target = FP_BONES.get(source)
+            if target and armature_fp.data.bones.get(target) is not None:
+                mapping[source] = target
+
+    home, side_of = {}, {}
     for piece in pieces:
         for index in piece["indices"]:
             home[index] = piece["bone"]
+            side_of[index] = piece["side"]
     order = sorted(home)
     slot = {index: position for position, index in enumerate(order)}
     coords = []
@@ -824,43 +908,33 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     moved_verts = 0
     moved_worst = 0.0
     for index in order:
-        point = object_data.matrix_world @ mesh.vertices[index].co
-        # The item's weights also put some of a sleeve on the body - a clavicle,
-        # the spine. Carrying only the arm share and dividing by it made a vertex
-        # with 5% hand and 95% spine fly all the way to the hand while its
-        # neighbour stayed on the upper arm: a step, and a torn shell. That body
-        # weight belongs to the arm nearest the vertex, so it moves with it.
-        carried_weights = {}
-        for name, weight in weights[index].items():
-            if weight <= 0.0:
-                continue
-            source = name if name in frames else SHOULDER_BONES.get(name)
-            if source in frames:
-                carried_weights[source] = carried_weights.get(source, 0.0) + weight
-        held = sum(carried_weights.values())
-        total = sum(weights[index].values())
-        if armature is not None and total - held > 1e-9:
-            near = nearest_arm(point, armature, list(frames))
-            if near is not None:
-                carried_weights[near] = (carried_weights.get(near, 0.0)
-                                         + total - held)
-        moved = carry_point(frames, carried_weights, point, home[index])
-        if moved is None:
+        point = world @ mesh.vertices[index].co
+        place = carry.get(side_of[index])
+        if place is None:
             coords.append((float(point[0]), float(point[1]), float(point[2])))
         else:
-            coords.append((float(moved[0]), float(moved[1]), float(moved[2])))
-            step = (moved - point).length
+            moved = place_point(place["turn"], place["from"], place["to"], point)
+            coords.append(moved)
+            step = math.sqrt(sum((moved[axis] - point[axis]) ** 2
+                                 for axis in range(3)))
             if step > 1e-6:
                 moved_verts += 1
                 moved_worst = max(moved_worst, step)
+        # The item's own weights, renamed to Halo's bones. Its shoulder weight
+        # goes on the upper arm, the bone Halo carries a shoulder with. A vertex
+        # that is mostly body but came along inside a kept shell rides that
+        # shell's own bone rather than being flung at the nearest arm.
         per = {}
-        for name, weight in carried_weights.items():
-            renamed = mapping.get(name, name)
-            per[renamed] = per.get(renamed, 0.0) + weight
+        for name, weight in weights[index].items():
+            if weight <= 0.0:
+                continue
+            source = name if name in mapping else SHOULDER_BONES.get(name)
+            if source in mapping:
+                per[mapping[source]] = per.get(mapping[source], 0.0) + weight
+        held = sum(weights[index].values())
+        if sum(per.values()) < 0.5 * held and home[index] in mapping:
+            per = {mapping[home[index]]: 1.0}
         if not per and home[index] is not None:
-            # A shell is kept whole, so a vertex of it that was weighted to the
-            # body rides the piece's own arm bone rather than being left with no
-            # group at all.
             per = {mapping.get(home[index], home[index]): 1.0}
         if per.get("frame l wriste", 0.0) > 0.5:
             hand_slots["l"].append(slot[index])
@@ -950,15 +1024,16 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         arms["fit_mean"] = fit[0]
         arms["fit_worst"] = fit[1]
         log("fit to Halo's own arms: mean %.2f, worst %.2f units" % fit)
-    if frames and not moved_verts:
+    if any(carry.values()) and not moved_verts:
         log("%s: every arm weight sits on a bone with no first-person frame, so "
             "nothing was carried - report.txt and the file's own note say so"
             % arms.name)
     log("cut %s: %d of %d vert(s), %d face(s) in %d shell(s), %s, on %s"
         % (arms.name, len(order), len(mesh.vertices), len(faces), len(pieces),
-           ("carried on %d bone frame(s) onto Halo's fp rig, moved %d vert(s) up "
-            "to %.2f units" % (len(frames), moved_verts, moved_worst))
-           if frames else "kept in place",
+           ("%d side(s) turned onto Halo's fp rig, moved %d vert(s) up to "
+            "%.2f units" % (sum(1 for place in carry.values() if place),
+                            moved_verts, moved_worst))
+           if any(carry.values()) else "kept in place",
            ", ".join(sorted(carried)) or "no bone (the rig has none of them)"))
     return arms, holder
 
