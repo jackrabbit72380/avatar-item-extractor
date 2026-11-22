@@ -95,7 +95,7 @@ def make_fake_blender(bin_dir):
     return path
 
 
-def run_case(boot, tmp, mode="crash", rigs=True, item=True):
+def run_case(boot, tmp, mode="crash", rigs=True, item=True, beside=False):
     """One rig() pass against the stand-in. Returns (code, argv)."""
     bin_dir = os.path.join(tmp, "bin")
     os.makedirs(bin_dir, exist_ok=True)
@@ -110,7 +110,8 @@ def run_case(boot, tmp, mode="crash", rigs=True, item=True):
     bat_dir = os.path.join(tmp, "bat")
     os.makedirs(bat_dir, exist_ok=True)
     if rigs:
-        rig_dir = os.path.join(bat_dir, "rig")
+        # Either in rig\ or dropped straight beside the .bat: both must work.
+        rig_dir = bat_dir if beside else os.path.join(bat_dir, "rig")
         os.makedirs(rig_dir, exist_ok=True)
         for name in RIGS:
             open(os.path.join(rig_dir, name), "w").close()
@@ -184,6 +185,12 @@ def main():
                         "crashed pass reports 0 and the failure is invisible")
     if "--rig" not in argv:
         failures.append("the rig files were found but never passed to Blender")
+
+    # The same files dropped beside the .bat, instead of in rig\, must be found.
+    argv = check("rig files beside the .bat", 0,
+                 tempfile.mkdtemp(prefix="rig-beside-"), mode="ok", beside=True)
+    if "--rig" not in argv:
+        failures.append("rig files beside the .bat were not found")
 
     # Without the rig files the biped cannot be made; the other two sets still
     # are, and that is a success, not a failure.

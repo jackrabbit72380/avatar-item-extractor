@@ -262,7 +262,17 @@ def missing_rigged(out, biped):
 def rig(cache, bat_dir, out, inside=False):
     """One rigging pass over everything that was just extracted."""
     rig_dir = os.path.join(bat_dir, "rig")
-    blends = [os.path.join(rig_dir, name) for name in RIGS]
+    # Halo's two files are looked for in rig\ first, then beside the .bat: both
+    # are natural places to put them, and neither should need explaining.
+    blends = []
+    for name in RIGS:
+        for folder in (rig_dir, bat_dir):
+            candidate = os.path.join(folder, name)
+            if os.path.exists(candidate):
+                blends.append(candidate)
+                break
+        else:
+            blends.append(os.path.join(rig_dir, name))
     missing = [name for name, path in zip(RIGS, blends) if not os.path.exists(path)]
     # The biped needs Halo's two rig files; without them the item still gets
     # the NXE and unrigged copies, which need nothing but Blender.
