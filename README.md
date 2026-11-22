@@ -103,6 +103,14 @@ triangle corner, and the texture coordinate on the vertex line as `u v w`.
 That is the slot Halo's shader tags read - one per vertex, which is all a
 `gbxmodel` vertex stores.
 
+Every `.jms` is then read back by `jms_check.py`, which walks it by its counts
+the way `tool.exe` has to: the header, the node block and the hierarchy its
+child/sibling links describe, each corner's two node slots and their weights, the
+`u v w` slot with `w` at zero, and the faces against the vertex, material and
+region counts. The result is logged as it is written and recorded in `report.txt`
+as `jms check : ok`. That proves the file is well formed - only the compiler can
+prove `tool.exe` accepts it.
+
 The `.obj` carries the UV set the item binds its first texture slot to, because
 that is all an OBJ can hold. The item's other sets travel in `catalogue.json` and
 become real layers in the `.blend` - `uv0`, `uv1`, `uv2` - so a map that belongs
