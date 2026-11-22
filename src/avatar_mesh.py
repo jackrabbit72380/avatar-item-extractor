@@ -930,6 +930,68 @@ def read_shape_overrides(payload):
     return facts
 
 
+# A skeleton block (id 5) is plain little-endian: eight header words, the bone
+# count last, then a bit stream whose two groups quantise positions and
+# rotations the way a mesh header does. Each bone then leads with its parent
+# byte (255 for the root). The block ends on its last bone, and that is checked:
+# a block that does not end there is refused rather than read as bones.
+SKELETON_HEADER = 32
+
+
+def _as_float(bits):
+    return struct.unpack("<f", struct.pack("<I", bits))[0]
+
+
+def _read_group(reader):
+    """f32 step, f32 min x, y, z, then three 6-bit widths."""
+    step = _as_float(reader.read(32))
+    minimum = [_as_float(reader.read(32)) for _ in range(3)]
+    widths = [reader.read(6) for _ in range(3)]
+    return {"step": step, "min": minimum, "widths": widths}
+
+
+def read_skeleton(payload):
+    """The bone count and tree a prop's own skeleton block holds."""
+    if len(payload) < SKELETON_HEADER:
+        raise Malformed("skeleton block is %d bytes" % len(payload))
+    bones = struct.unpack_from("<I", payload, 28)[0]
+    if not 1 <= bones <= 512:
+        raise Malformed("skeleton block claims %d bones" % bones)
+    reader = BitStream(payload[SKELETON_HEADER:])
+    position = _read_group(reader)
+    rotation = _read_group(reader)
+    position_bits = sum(position["widths"])
+    rotation_bits = sum(rotation["widths"])
+    if not 0 < position_bits <= 96 or not 0 < rotation_bits <= 96:
+        raise Malformed("skeleton block widths are %r and %r"
+                        % (position["widths"], rotation["widths"]))
+    parents = []
+    for _ in range(bones):
+        parents.append(reader.read(8))
+        for width in (position_bits, rotation_bits):
+            left = width
+            while left > 0:
+                reader.read(min(64, left))
+                left -= min(64, left)
+    used = SKELETON_HEADER * 8 + reader.offset
+    if used > len(payload) * 8 or used <= (len(payload) - 1) * 8:
+        raise Malformed("skeleton block ends at bit %d of %d"
+                        % (used, len(payload) * 8))
+    roots = [index for index, parent in enumerate(parents) if parent == 255]
+    if any(parent != 255 and parent >= index
+           for index, parent in enumerate(parents)):
+        raise Malformed("skeleton parent does not come before its bone")
+    return {
+        "bones": bones,
+        "roots": len(roots),
+        "root": roots[0] if roots else None,
+        "parents": parents,
+        "position": position,
+        "rotation": rotation,
+        "bytes": len(payload),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Decode an avatar mesh from the asset pack.")
     parser.add_argument("--pack", required=True, help="AvatarAssetPack.toc")

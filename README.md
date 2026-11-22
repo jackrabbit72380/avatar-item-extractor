@@ -166,10 +166,11 @@ colour survives import in Max and Blender rather than being dropped along with
 Every block the container held is named in `catalogue.json` and in `report.txt` -
 its id, its name and its size - and the two that say what an item *is* are read,
 not just listed: the metadata block gives its gender, asset type, component and
-subcategory, and the shape block gives the body triangles the item hides and the
-vertices it moves. No block is written out as a raw file: the bytes stay in the
-container, and a block this build has no reader for is named with its size, so a
-missing texture can be looked at rather than guessed about.
+subcategory, the shape block gives the body triangles the item hides and the
+vertices it moves, and a prop's skeleton block gives its bones and its tree. No
+block is written out as a raw file: the bytes stay in the container, and a block
+this build has no reader for is named with its size, so a missing texture can be
+looked at rather than guessed about.
 
 The base map comes from the model block's own texture table first - the item
 names its slots there and each slot states its size, format and whether it holds
@@ -267,8 +268,10 @@ python3 tools/test_blocks.py
 Checks the two blocks that say what an item is: metadata (gender, asset type,
 component, subcategory, and the skeleton in the versioned form) and shape
 overrides (the target body, the triangle numbers read back as written, and the
-vertex overrides). A truncated metadata block and a shape block with a non-zero
-reserved word must both be refused, because that is what a misread looks like.
+vertex overrides), and a skeleton's bones and parent tree. A truncated metadata
+block, a shape block with a non-zero reserved word and a skeleton that does not
+end on its last bone must all be refused, because that is what a misread looks
+like.
 
 ```sh
 python3 tools/test_rigging.py

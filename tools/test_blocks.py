@@ -67,6 +67,49 @@ def shape_block(triangles, width=12, overrides=2, reserved=0):
     return out
 
 
+class Bits(object):
+    """LSB-first bit writer, the mirror of what the formats read."""
+
+    def __init__(self):
+        self.acc = 0
+        self.left = 0
+        self.out = bytearray()
+
+    def push(self, value, width):
+        self.acc |= value << self.left
+        self.left += width
+        while self.left >= 8:
+            self.out.append(self.acc & 0xFF)
+            self.acc >>= 8
+            self.left -= 8
+
+    def done(self):
+        if self.left:
+            self.out.append(self.acc & 0xFF)
+        return bytes(self.out)
+
+
+def f32_bits(value):
+    return struct.unpack("<I", struct.pack("<f", value))[0]
+
+
+def skeleton_block(parents=(255, 0, 1)):
+    """Block 5: eight header words, two 292-bit groups, then a record a bone."""
+    head = struct.pack("<7I", 0, 0, 0, 0, 0, 0, 0) + struct.pack("<I", len(parents))
+    bits = Bits()
+    for _ in range(2):
+        bits.push(f32_bits(7.0710678e-06), 32)
+        for axis in (-0.1, 0.0, 0.1):
+            bits.push(f32_bits(axis), 32)
+        for width in (12, 12, 12):
+            bits.push(width, 6)
+    for parent in parents:
+        bits.push(parent, 8)
+        bits.push(0, 36)   # three quantised positions
+        bits.push(0, 36)   # three quantised rotations
+    return head + bits.done()
+
+
 def load():
     sys.path.insert(0, MODULES)
     path = os.path.join(MODULES, "avatar_mesh.py")
@@ -113,6 +156,22 @@ def main():
         failures.append("vertex step is %r, expected the mesh step"
                         % (shape.get("vertex_step"),))
 
+    skeleton = mesh.read_skeleton(skeleton_block())
+    print("  block 5 : %s bones, parents %r" % (skeleton["bones"], skeleton["parents"]))
+    if skeleton["bones"] != 3 or skeleton["parents"] != [255, 0, 1]:
+        failures.append("skeleton reads %d bones with parents %r, expected 3/[255, 0, 1]"
+                        % (skeleton["bones"], skeleton["parents"]))
+    if skeleton["roots"] != 1:
+        failures.append("skeleton has %r roots, expected 1" % (skeleton["roots"],))
+
+    # A block that does not end on its last bone is not that skeleton.
+    try:
+        mesh.read_skeleton(skeleton_block()[:-1])
+    except mesh.Malformed:
+        pass
+    else:
+        failures.append("a skeleton block one byte short was accepted")
+
     # A shape block's reserved word is zero; anything else is a misread.
     try:
         mesh.read_metadata(metadata_unversioned()[:5])
@@ -131,7 +190,7 @@ def main():
         for failure in failures:
             print("FAIL: %s" % failure)
         return 1
-    print("PASSED: metadata and shape blocks read as the format stores them")
+    print("PASSED: metadata, shape and skeleton blocks read as the format stores them")
     return 0
 
 

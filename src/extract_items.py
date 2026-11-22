@@ -1108,6 +1108,10 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
         lines.append("shape:     hides %d %s triangle(s), %d vertex override(s)"
                      % (shape["triangles"], shape["target"],
                         shape["vertex_overrides"]))
+    skeleton = facts.get("skeleton")
+    if skeleton:
+        lines.append("skeleton:  %d bones, %d root(s)"
+                     % (skeleton["bones"], skeleton["roots"]))
 
     model = facts.get("model") or {}
     if model.get("parses"):
@@ -1710,6 +1714,10 @@ def main(argv=None):
                     if ident == 4:
                         facts["shape"] = mesh.read_shape_overrides(body)
                         record["shape"] = facts["shape"]
+                        continue
+                    if ident == 5:
+                        facts["skeleton"] = mesh.read_skeleton(body)
+                        record["skeleton"] = facts["skeleton"]
                         continue
                 except Exception as exc:
                     why = str(exc)
