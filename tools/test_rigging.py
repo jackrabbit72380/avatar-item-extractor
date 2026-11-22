@@ -57,16 +57,18 @@ if [ "$mode" = "crash" ]; then
   exit 0
 fi
 if [ "$mode" = "silent" ]; then exit 0; fi
-for obj in "$items"/*.obj; do
+mkdir -p "$target/blender" "$target/hek/pc/data"
+for obj in "$items"/max/*.obj "$items"/*.obj; do
   [ -e "$obj" ] || continue
   base=$(basename "$obj" .obj)
   if [ "$mode" != "partial" ]; then
     if [ "$hasrig" = "1" ]; then
-      : > "$target/$base.blend"; : > "$target/$base.fbx"; : > "$target/$base.jms"
+      : > "$target/blender/$base.blend"; : > "$target/blender/$base.fbx"
+      : > "$target/hek/pc/data/$base.jms"
     fi
-    for k in blend fbx; do : > "$target/$base - unrigged.$k"; done
+    for k in blend fbx; do : > "$target/blender/$base - unrigged.$k"; done
   fi
-  for k in fbx glb blend; do : > "$target/$base - NXE.$k"; done
+  for k in fbx glb blend; do : > "$target/blender/$base - NXE.$k"; done
 done
 exit 0
 """
@@ -128,7 +130,8 @@ def run_case(boot, tmp, mode="crash", rigs=True, item=True, rigs_in="rig"):
     os.makedirs(out, exist_ok=True)
     if item:
         # The extractor writes this before the rigging pass runs.
-        open(os.path.join(out, "UNSC Marine Armor.obj"), "w").close()
+        os.makedirs(os.path.join(out, "max"), exist_ok=True)
+        open(os.path.join(out, "max", "UNSC Marine Armor.obj"), "w").close()
 
     log = os.path.join(tmp, "argv.log")
     old = dict(os.environ)

@@ -116,7 +116,9 @@ def main():
             print("FAIL: the extractor returned %r" % (code,))
             return 1
 
-        objs = [name for name in os.listdir(out) if name.endswith(".obj")]
+        models = os.path.join(out, "max")
+        objs = [name for name in os.listdir(models if os.path.isdir(models) else out)
+                if name.endswith(".obj")]
         print("  .obj files : %d %s" % (len(objs), objs))
         if len(objs) != 1:
             print("FAIL: expected one model, got %d" % len(objs))
@@ -168,7 +170,9 @@ def main():
             print("FAIL: the loose-file extractor returned %r" % (code,))
             return 1
 
-        objs2 = [name for name in os.listdir(out2) if name.endswith(".obj")]
+        models2 = os.path.join(out2, "max")
+        objs2 = [name for name in os.listdir(models2 if os.path.isdir(models2) else out2)
+                 if name.endswith(".obj")]
         print("  loose .obj : %d %s" % (len(objs2), objs2))
         if len(objs2) != 1:
             print("FAIL: two loose revisions produced %d models, expected 1" % len(objs2))

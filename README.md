@@ -40,21 +40,31 @@ to download or place beside it. Files you put in a `rig\` folder beside the
 
 ```
 Test Item\
-    Test Item.obj  plus .mtl
-    Test Item base map.png  also .tga and .tif
-    Test Item multipurpose.png  also .tga and .tif  Halo CE channel order
-    Test Item multipurpose xbox.png  also .tga and .tif  Xbox channel order
-    Test Item multipurpose sp.png  also .tga and .tif  nothing masked
-    Test Item change colour.png  also .tga and .tif  the team-colour mask
+    max\
+        Test Item.obj  plus .mtl
+        Test Item base map.png  also .tga  - the texture the model binds
+        Test Item multipurpose.png  also .tga  Halo CE channel order
+        Test Item multipurpose xbox.png  also .tga  Xbox channel order
+        Test Item multipurpose sp.png  also .tga  nothing masked
+        Test Item change colour.png  also .tga  the team-colour mask
+    blender\
+        Test Item.blend  on the biped with the FP arms, ready to export
+        Test Item.fbx  the same rig for tools that cannot read .blend
+        Test Item - fp arms.blend, .fbx  hand items: the item on the arms
+        Test Item - NXE.blend, .fbx, .glb  the 71-joint NXE skeleton
+        Test Item - unrigged.blend, .fbx  the model with no skeleton
+        the same textures as max\, so a rig opens with its maps
+    hek\
+        pc\data\    Test Item base map.tif, Test Item multipurpose.tif,
+                    Test Item change colour.tif - Halo CE channel order
+                    Test Item.jms  the model, for tool.exe
+        pc\tags\    where tool.exe writes what it builds
+        xbox\data\  the same bitmaps in the original Xbox channel order
+        xbox\tags\
     Test Item.png  the item's icon, when the package has one
     colour_00.png  the item's own palette, when it carries one
     Test Item_colours.txt
     card_art.png
-    Test Item.blend  the item on the biped with the FP arms, ready to export
-    Test Item.fbx, Test Item.jms  the same rig, for tools that cannot read .blend
-    Test Item - fp arms.blend, .fbx, .jms  hand items only: the item on the arms
-    Test Item - NXE.blend, .fbx, .glb  rigged to the 71-joint NXE skeleton
-    Test Item - unrigged.blend, .fbx  the model with no skeleton
     report.txt, scene.json, skeleton.json, blender.log
     catalogue.json
 ```
@@ -63,6 +73,15 @@ Test Item\
 Title, or the container folder it arrived in. One item gets a folder named after
 it, next to `extracted\`; several items share `extracted\`, each file carrying
 its item's name. Either way it is one double-click for the whole folder.
+
+Each folder holds what one program needs and nothing else, so nobody sorts
+through another program's files: `max\` has the model with its textures already
+beside it, `blender\` has the rigs with the same textures, and `hek\pc\` and
+`hek\xbox\` have `data\` with the `.tif` bitmaps `tool.exe` compiles plus an
+empty `tags\` for what it builds. Both channel orders ship because the port and
+the original Xbox read the masks differently; nothing is left for you to swap by
+hand. The `.png` and `.tga` copies are the same images as the `.tif`s, for the
+programs that do not read TIFF.
 
 The `NXE` files need only Blender, because that skeleton travels inside the
 `.bat`. The biped, the arms, the `.jms` and `Test Item.blend` use Halo's two
