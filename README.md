@@ -110,13 +110,19 @@ from the body and the player sees the arms, not the body's:
   way the game faces, in Halo units, with its textures packed in. Export it
   with the BlueStreak `.jms` exporter, or append another item's `- halo.blend`
   and join the meshes; every item is skinned to the same biped.
-* `Test Item - halo fp arms.blend` - the item's own arm geometry, cut at the
-  bones it is already weighted to (sleeves, gauntlets, or the base body's bare
-  arms) and bound to Halo's 37-bone first-person arms rig. Nothing is modelled
-  again and nothing is retextured: faces, UVs, materials and weights come
-  across as they are. A hand item - a ring, a badge - rides its hand bone
-  instead. An item with no arm geometry at all (a hat) still gets the file, on
-the arms rig with an empty mesh, and `report.txt` says why.
+* `Test Item - halo fp arms.blend` - the item's own arm geometry (sleeves,
+  gauntlets, or the base body's bare arms) on Halo's 37-bone first-person arms
+  rig. A vertex joins the set when most of its weight is on an upper arm,
+  forearm or hand bone - shoulder plates weighted to a clavicle are left out -
+  and a face joins whole once most of it is arm, so the shells stay closed and
+  the seam falls where the arm ends. Each piece is then moved on its own bone's
+  frame and its weights carried onto the matching first-person bone (upper arm,
+  forearm, hand to the wrist), because the biped's arms hang at its sides while
+  Halo's first-person arms run straight out. Nothing is modelled again and
+  nothing is retextured: faces, UVs and materials come across as they are. A
+  hand item - a ring, a badge - rides its hand bone instead. An item with no arm
+  geometry at all (a hat) still gets the file, on the arms rig with an empty
+  mesh, and `report.txt` says why.
 
 Both `.blend` files carry a `READ ME` text block inside them naming the game,
 the rig and the mesh, so the file still says what it is after it is copied out

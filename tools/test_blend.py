@@ -273,6 +273,40 @@ def main():
             fail("the fp arms note does not say it is the first-person set: %r"
                  % (arms_note,))
 
+    # What belongs in the first-person set: a vertex mostly on an arm bone, and
+    # a face once most of it is arm. Anything looser dragged torso plates in;
+    # anything tighter cut holes along the seam.
+    for name in ("arm_share", "face_is_arm", "ARM_SHARE"):
+        if not hasattr(module, name):
+            fail("no %s: the arm cut cannot say what is an arm" % name)
+    if hasattr(module, "arm_share"):
+        cases = [
+            ({"bip01 l forearm": 1.0}, 1.0),
+            ({"bip01 l forearm": 0.9, "bip01 spine1": 0.1}, 0.9),
+            ({"bip01 spine1": 1.0}, 0.0),
+            ({"bip01 l upperarm": 0.2, "bip01 spine1": 0.8}, 0.2),
+            ({"bip01 l clavicle": 1.0}, 0.0),
+            ({}, 0.0),
+        ]
+        for weights, wanted in cases:
+            got = module.arm_share(weights)
+            if abs(got - wanted) > 1e-9:
+                fail("arm_share(%r) = %r, expected %r" % (weights, got, wanted))
+        if abs(module.ARM_SHARE - 0.5) > 1e-9:
+            fail("ARM_SHARE is %r, expected 0.5" % (module.ARM_SHARE,))
+        if hasattr(module, "face_is_arm"):
+            for kept, total, wanted in ((3, 3, True), (2, 3, True), (1, 3, False),
+                                        (0, 3, False), (2, 4, True), (1, 4, False)):
+                if module.face_is_arm(kept, total) is not wanted:
+                    fail("face_is_arm(%d, %d) is not %r" % (kept, total, wanted))
+        # Every bone the cut keeps has to exist on the first-person rig, or the
+        # carried weights name a bone that rig does not have.
+        for bone in getattr(module, "ARM_BONES", ()):
+            if bone not in module.FP_BONES:
+                fail("ARM_BONES has %r, which has no first-person bone" % bone)
+        print("  arm cut             -> share and face rules ok, %d arm bones"
+              % len(getattr(module, "ARM_BONES", ())))
+
     # A failed cut is a second set lost, not a failed run: arms_for must report
     # it and return, so the Halo body, the .jms and the rest of the items are
     # still written. Before this, one exception in the cut ended the pass.

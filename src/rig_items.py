@@ -41,10 +41,19 @@ HALO_UNITS_PER_METRE = 100.0 / 3.048
 
 # The biped's arms. They are the seam the first-person set is cut on: Halo's
 # in-game hands are their own model, and the fingers exist nowhere else.
+# The arms proper: shoulder to hand. The clavicles are deliberately not here -
+# a pauldron weighted to one is shoulder armour, and carrying it onto the arm
+# would swing a plate off the shoulder the moment the arm moves.
 ARM_BONES = (
-    "bip01 l clavicle", "bip01 l upperarm", "bip01 l forearm", "bip01 l hand",
-    "bip01 r clavicle", "bip01 r upperarm", "bip01 r forearm", "bip01 r hand",
+    "bip01 l upperarm", "bip01 l forearm", "bip01 l hand",
+    "bip01 r upperarm", "bip01 r forearm", "bip01 r hand",
 )
+
+# How much of a vertex has to belong to the arms before it is part of them. The
+# body is skinned by distance, so every plate near a shoulder carries some arm
+# weight; without a floor, one arm bone's 15% share dragged whole torso plates
+# into the first-person set, where they hung scattered around the arm.
+ARM_SHARE = 0.5
 
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
 DEFORM_BONES = (
@@ -537,7 +546,39 @@ def place_on_arms(item, biped, arms, bone_name):
         % (item.name, target, bone_name))
 
 
-def arm_region(object_data, names=ARM_BONES):
+def weights_summary(object_data, limit=4):
+    """The bones a mesh actually rides, as a report line."""
+    totals = {}
+    for vertex in object_data.data.vertices:
+        for entry in vertex.groups:
+            name = object_data.vertex_groups[entry.group].name
+            totals[name] = totals.get(name, 0.0) + entry.weight
+    total = sum(totals.values())
+    if not total:
+        return "no bone weights"
+    top = sorted(totals.items(), key=lambda pair: -pair[1])[:limit]
+    return ", ".join("%s %.0f%%" % (name, weight * 100.0 / total)
+                     for name, weight in top)
+
+
+def arm_share(weights, names=ARM_BONES):
+    """How much of one vertex belongs to the arms, 0 to 1."""
+    arm = sum(weight for name, weight in weights.items() if name in names)
+    total = sum(weights.values())
+    return arm / total if total > 0.0 else 0.0
+
+
+def face_is_arm(kept, total):
+    """A face joins the arms whole, and only when most of it is already arm.
+
+    Keeping every face that touches one arm vertex drags whole torso plates in
+    by a single corner; keeping only fully-arm faces cuts holes along the seam.
+    Most-of-the-face keeps the shells closed and the edge where the arm ends.
+    """
+    return kept > 0 and kept * 2 >= total
+
+
+def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     """The item's own arms, as a separate object, for Halo's first-person set.
 
     Halo's first-person view is a different model from the body: the biped ends
@@ -549,30 +590,84 @@ def arm_region(object_data, names=ARM_BONES):
     the arms keep the item's colours and shading and can be exported or merged
     as they stand.
 
+    Each vertex changes rig on its own bone's frame - upper arm on the upper
+    arm, forearm on the forearm, hand on the wrist - because the two skeletons
+    hold their arms differently: the biped's hang down its side, Halo's first
+    person arms run straight out. Moving the whole cut by one bone, as this did
+    before, left every other piece of the arm at the wrong angle.
+
     Returns None when the item has no geometry on an arm bone - a hat or a ring
     is not an arm, and inventing one would only be a second wrong file.
     """
     mesh = object_data.data
-    arm_groups = {group.index for group in object_data.vertex_groups
-                  if group.name in names}
+    names_of = {group.index: group.name for group in object_data.vertex_groups}
+    arm_groups = {index for index, name in names_of.items() if name in names}
     if not arm_groups:
         return None
-    keep = set()
+
+    shares = {}
     for vertex in mesh.vertices:
-        for group in vertex.groups:
-            if group.group in arm_groups and group.weight > 0.0:
-                keep.add(vertex.index)
-                break
-    # Whole faces only: half a triangle is a hole in the model, and the seam at
-    # a shoulder is already where the weights change hands.
+        weights = {}
+        for entry in vertex.groups:
+            if entry.weight > 0.0:
+                weights[names_of[entry.group]] = weights.get(names_of[entry.group], 0.0) + entry.weight
+        shares[vertex.index] = arm_share(weights, names)
+    keep = {index for index, share in shares.items() if share >= ARM_SHARE}
+    if not keep:
+        log("%s: no vertex is mostly on the arms, so there is no arm to cut"
+            % object_data.name)
+        return None
     faces = [polygon for polygon in mesh.polygons
-             if all(index in keep for index in polygon.vertices)]
+             if face_is_arm(sum(1 for index in polygon.vertices if index in keep),
+                            len(polygon.vertices))]
     if not faces:
         return None
+
+    # How the cut is carried across: for each arm bone, the transform that maps
+    # the biped's frame for it onto the first-person rig's frame for it.
+    frames = {}
+    if armature is not None and armature_fp is not None:
+        for source, target in FP_BONES.items():
+            was = armature.data.bones.get(source)
+            now = armature_fp.data.bones.get(target)
+            if was is None or now is None:
+                continue
+            frames[source] = ((armature_fp.matrix_world @ now.matrix_local)
+                              @ (armature.matrix_world
+                                 @ was.matrix_local).inverted())
+    if not frames:
+        log("no matching arm bones on the first-person rig: the cut keeps the "
+            "biped's placement")
+
     order = sorted({index for polygon in faces for index in polygon.vertices})
     slot = {index: position for position, index in enumerate(order)}
+    world = object_data.matrix_world
+    coords = []
+    carried = {}
+    for position, index in enumerate(order):
+        weights = {}
+        for entry in mesh.vertices[index].groups:
+            if entry.weight > 0.0 and entry.group in arm_groups:
+                name = names_of[entry.group]
+                weights[name] = weights.get(name, 0.0) + entry.weight
+        dominant = max(weights, key=weights.get) if weights else None
+        frame = frames.get(dominant)
+        point = world @ mesh.vertices[index].co
+        coords.append(frame @ point if frame is not None else point)
+        mapped = {}
+        for name, weight in weights.items():
+            target = FP_BONES.get(name)
+            if not target:
+                continue
+            if armature_fp is not None and target not in armature_fp.data.bones:
+                continue
+            mapped[target] = mapped.get(target, 0.0) + weight
+        total = sum(mapped.values())
+        for target, weight in mapped.items():
+            carried.setdefault(target, []).append((position, weight / total))
+
     copy = bpy.data.meshes.new("%s arms" % mesh.name)
-    copy.from_pydata([mesh.vertices[index].co.copy() for index in order], [],
+    copy.from_pydata(coords, [],
                      [tuple(slot[index] for index in polygon.vertices)
                       for polygon in faces])
     copy.update()
@@ -590,13 +685,43 @@ def arm_region(object_data, names=ARM_BONES):
             target.data[position].uv = layer.data[loop_index].uv
     arms = bpy.data.objects.new("%s arms" % object_data.name, copy)
     bpy.context.scene.collection.objects.link(arms)
-    arms.matrix_world = object_data.matrix_world
-    # The biped's weights are not carried over: this object is bound to the
-    # first-person arms rig, and two sets of groups on one mesh - one naming
-    # bones the new rig does not have - would export to the wrong nodes.
-    log("cut %s: %d of %d vert(s) are on the arms"
-        % (arms.name, len(order), len(mesh.vertices)))
+    # Coordinates were moved into the first-person rig's own space above, so the
+    # object sits at the origin of that rig rather than at the item's.
+    for name, pairs in carried.items():
+        group = arms.vertex_groups.new(name=name)
+        for position, weight in pairs:
+            group.add([position], weight, "REPLACE")
+    if armature_fp is not None:
+        arms.parent = armature_fp
+        arms.matrix_parent_inverse = armature_fp.matrix_world.inverted()
+        modifier = arms.modifiers.new(name="Armature", type="ARMATURE")
+        modifier.object = armature_fp
+    # The biped's own group names are not carried over: this object is bound to
+    # the first-person arms rig, and groups naming bones that rig does not have
+    # would export to the wrong nodes. Only the mapped arm bones come across.
+    shells = shells_of(faces)
+    log("cut %s: %d of %d vert(s), %d face(s) in %d shell(s), on %s"
+        % (arms.name, len(order), len(mesh.vertices), len(faces), shells,
+           ", ".join(sorted(carried)) or "no bone (the rig has none of them)"))
     return arms
+
+
+def shells_of(faces):
+    """How many separate pieces a set of faces forms, joined by shared verts."""
+    roots = {}
+
+    def find(index):
+        while roots.setdefault(index, index) != index:
+            index = roots[index]
+        return index
+
+    for polygon in faces:
+        first = find(polygon.vertices[0])
+        for other in polygon.vertices[1:]:
+            root = find(other)
+            if root != first:
+                roots[root] = first
+    return len({find(polygon.vertices[0]) for polygon in faces})
 
 
 def arms_for(merged, armature, armature_fp, bone_name, record):
@@ -619,10 +744,12 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
             place_on_arms(arms, armature, armature_fp, bone_name)
             record["arms_binding"] = skin(arms, armature_fp, rigid=True)
             return arms
-        arms = arm_region(merged)
+        arms = arm_region(merged, armature, armature_fp)
         if arms is not None:
-            place_on_arms(arms, armature, armature_fp, "bip01 l upperarm")
-            record["arms_binding"] = skin(arms, armature_fp)
+            # Already placed on its own bones and weighted by arm_region: a
+            # second, distance-based bind here would re-guess weights that
+            # were carried over exactly.
+            record["arms_binding"] = weights_summary(arms)
         return arms
     except Exception as problem:  # noqa: BLE001 - a bad cut must not end the pass
         log("could not build the first-person arms for %s (%s: %s)"
@@ -1174,6 +1301,11 @@ def main():
         armature = biped_armature(append_from(options["rig"]))
         if not armature:
             log("%s holds no armature" % options["rig"])
+        else:
+            # Both rig files call their armature "Armature"; opened together
+            # one becomes "Armature.001" and the item's notes stop saying
+            # which skeleton the file is on.
+            armature.name = "halo biped"
     else:
         log("no --rig given: writing the NXE rigs only")
     fit = 1.0
@@ -1191,6 +1323,7 @@ def main():
                 if object_data.type == "ARMATURE":
                     armature_fp = object_data
             if armature_fp:
+                armature_fp.name = "halo fp arms rig"
                 log("first-person arms rig: %r with %d bones"
                     % (armature_fp.name, len(armature_fp.data.bones)))
 
