@@ -80,7 +80,10 @@ def build_stub():
     bpy.ops = types.SimpleNamespace(
         wm=types.SimpleNamespace(save_as_mainfile=save_as_mainfile),
         object=types.SimpleNamespace(select_all=lambda action=None: None))
-    bpy.data = types.SimpleNamespace(libraries=types.SimpleNamespace(write=refuse))
+    # The save also drops images that are broken links (0x0) and materials left
+    # with no users, so the stub has to offer those lists.
+    bpy.data = types.SimpleNamespace(
+        libraries=types.SimpleNamespace(write=refuse), images=[], materials=[])
     bpy.app = types.SimpleNamespace(version_string="stub")
     return bpy, scene, calls
 
