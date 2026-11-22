@@ -168,6 +168,24 @@ def main():
         fail("export_rigged('blend') did not save the mesh with its armature: %r"
              % ([c["at_save"] for c in calls],))
 
+    # The rigged .fbx files are mirrored into max\: 3ds Max opens .fbx as well as
+    # .obj and cannot open a .blend at all, so a Max user must not have to reach
+    # into blender\ for the rigged model. Only .fbx travels; nothing else does.
+    fbx_work = tempfile.mkdtemp(prefix="fbx-")
+    fbx_dir = os.path.join(fbx_work, "blender")
+    os.makedirs(fbx_dir, exist_ok=True)
+    for name in ("Item.fbx", "Item - fp arms.fbx", "Item - NXE.fbx",
+                 "Item - unrigged.fbx", "Item.blend", "Item.glb"):
+        open(os.path.join(fbx_dir, name), "w").close()
+    copied = module.mirror_fbx(fbx_work, fbx_dir, ["Item", "Missing"])
+    in_max = sorted(os.listdir(os.path.join(fbx_work, "max")))
+    expected = ["Item - fp arms.fbx", "Item - NXE.fbx", "Item - unrigged.fbx",
+                "Item.fbx"]
+    print("  mirror_fbx          -> %d copied, max\\ holds %r" % (copied, in_max))
+    if copied != 4 or in_max != sorted(expected):
+        fail("mirror_fbx copied %d files (%r), expected %d (%r)"
+             % (copied, in_max, len(expected), sorted(expected)))
+
     print("  save_blend          -> %d save, copy=%r, scene %r"
           % (1, calls[0]["copy"] if calls else None,
              sorted(calls[0]["at_save"]) if calls else None))
