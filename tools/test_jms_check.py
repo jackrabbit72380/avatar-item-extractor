@@ -14,7 +14,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODULES = os.environ.get("RIG_MODULES") or os.path.join(
-    os.path.dirname(os.path.dirname(HERE)), "recovered")
+    os.path.dirname(HERE), "src")
 sys.path.insert(0, MODULES)
 
 from jms_check import check_jms  # noqa: E402

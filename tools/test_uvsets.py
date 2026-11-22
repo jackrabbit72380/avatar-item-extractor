@@ -27,7 +27,7 @@ import types
 HERE = os.path.dirname(os.path.abspath(__file__))
 BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v21.bat")
 MODULES = os.environ.get("RIG_MODULES") or os.path.join(
-    os.path.dirname(os.path.dirname(HERE)), "recovered")
+    os.path.dirname(HERE), "src")
 
 
 def batches():

@@ -22,7 +22,7 @@ import types
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Any build can be checked: point RIG_MODULES at an unpacked payload.
 MODULES = os.environ.get("RIG_MODULES") or os.path.join(
-    os.path.dirname(os.path.dirname(HERE)), "recovered")
+    os.path.dirname(HERE), "src")
 
 
 class Objs:
@@ -286,8 +286,9 @@ def main():
             ({"bip01 l forearm": 0.9, "bip01 spine1": 0.1}, 0.9),
             ({"bip01 spine1": 1.0}, 0.0),
             ({"bip01 l upperarm": 0.2, "bip01 spine1": 0.8}, 0.2),
-            # shoulder armour is arm armour: Halo's own fp arms carry their pads
-            ({"bip01 l clavicle": 1.0}, 1.0),
+            # a clavicle is not an arm bone: shoulder armour is judged apart,
+            # by arm_pieces, so a chest plate cannot ride in on its corners
+            ({"bip01 l clavicle": 1.0}, 0.0),
             ({}, 0.0),
         ]
         for weights, wanted in cases:
@@ -340,11 +341,10 @@ def main():
             vertex_groups=groups))
         kept = [sorted(piece["indices"]) for piece in cut]
         print("  arm_pieces          -> %r" % (kept,))
-        if kept != [[0, 1, 2], [6, 7, 8]]:
-            fail("the cut kept %r, not the sleeve and the pauldron" % (kept,))
-        pad = [piece for piece in cut if sorted(piece["indices"]) == [6, 7, 8]]
-        if pad and pad[0]["bone"] != "bip01 l upperarm":
-            fail("the pauldron rides %r, not the upper arm" % (pad[0]["bone"],))
+        # No armature here, so the shoulder rule declines to guess and the
+        # pauldron stays on the body; the rule is exercised below, with one.
+        if kept != [[0, 1, 2]]:
+            fail("the cut kept %r, not just the sleeve" % (kept,))
         if cut and (cut[0]["side"] != "l"
                     or cut[0]["bone"] != "bip01 l forearm"):
             fail("the sleeve is not on the left forearm: %r" % (cut[0],))
@@ -365,6 +365,20 @@ def main():
 
             def __add__(self, other):
                 return Vec(*(a + b for a, b in zip(self.values, other.values)))
+
+            def __sub__(self, other):
+                return Vec(*(a - b for a, b in zip(self.values, other.values)))
+
+            def dot(self, other):
+                return sum(a * b for a, b in zip(self.values, other.values))
+
+            @property
+            def length_squared(self):
+                return sum(value * value for value in self.values)
+
+            @property
+            def length(self):
+                return self.length_squared ** 0.5
 
         class Shift:
             def __init__(self, offset):
@@ -393,6 +407,75 @@ def main():
             fail("a point was moved by a bone the first-person rig has not got")
         if not hasattr(module, "arm_frames"):
             fail("no arm_frames: the arms cannot be carried onto Halo's rig")
+
+        # The shoulder rule, exercised: a pad that hugs a clavicle is kept and
+        # rides the upper arm, and a chest plate carrying the same clavicle
+        # weight stays on the body because it never comes near the shoulder.
+        # Halo's own first-person arms wear their pads, so this is the rule that
+        # has to hold - it was assumed before, not tested.
+        if not hasattr(module, "near_shoulder"):
+            fail("no near_shoulder: a chest plate would ride in with the pads")
+        else:
+            class Bone:
+                def __init__(self, head, tail):
+                    self.head_local = head
+                    self.tail_local = tail
+
+            shoulder_rig = types.SimpleNamespace(
+                matrix_world=Shift((0.0, 0.0, 0.0)),
+                data=types.SimpleNamespace(bones={
+                    "bip01 l clavicle": Bone(Vec(0.0, 0.0, 0.0), Vec(0.0, 10.0, 0.0)),
+                    "bip01 r clavicle": Bone(Vec(0.0, 0.0, 0.0), Vec(0.0, -10.0, 0.0)),
+                }))
+            rule_groups = [Group(0, "bip01 l clavicle"), Group(1, "bip01 l upperarm"),
+                           Group(2, "bip01 spine1")]
+
+            class Spotty:
+                def __init__(self, index, per, co):
+                    self.index = index
+                    self.co = co
+                    self.groups = [Entry(group, weight) for group, weight in per]
+
+            body = [
+                # a pad sitting on the clavicle: within a few units of it
+                Spotty(0, ((0, 1.0),), Vec(0.0, 1.0, 0.0)),
+                Spotty(1, ((0, 1.0),), Vec(1.0, 1.0, 0.0)),
+                Spotty(2, ((0, 1.0),), Vec(0.0, 2.0, 0.0)),
+                # a chest plate whose corners carry clavicle weight too
+                Spotty(3, ((0, 0.6), (2, 0.4)), Vec(0.0, 20.0, 0.0)),
+                Spotty(4, ((0, 0.6), (2, 0.4)), Vec(10.0, 20.0, 0.0)),
+                Spotty(5, ((0, 0.6), (2, 0.4)), Vec(0.0, 25.0, 0.0)),
+                # a sleeve on the upper arm, out at the arm
+                Spotty(6, ((1, 1.0),), Vec(0.0, 40.0, 0.0)),
+                Spotty(7, ((1, 1.0),), Vec(5.0, 40.0, 0.0)),
+                Spotty(8, ((1, 1.0),), Vec(0.0, 41.0, 0.0)),
+            ]
+            rule_object = types.SimpleNamespace(
+                data=types.SimpleNamespace(
+                    vertices=body,
+                    polygons=[Poly(0, 1, 2), Poly(3, 4, 5), Poly(6, 7, 8)]),
+                vertex_groups=rule_groups,
+                matrix_world=Shift((0.0, 0.0, 0.0)))
+            rule = module.arm_pieces(rule_object, armature=shoulder_rig)
+            shoulder_kept = [sorted(piece["indices"]) for piece in rule]
+            print("  shoulder rule       -> %r" % (shoulder_kept,))
+            if shoulder_kept != [[0, 1, 2], [6, 7, 8]]:
+                fail("the shoulder rule kept %r, expected the pad and the sleeve"
+                     % (shoulder_kept,))
+            pad = [piece for piece in rule if sorted(piece["indices"]) == [0, 1, 2]]
+            if pad and pad[0]["bone"] != "bip01 l upperarm":
+                fail("the pad rides %r, not the upper arm" % (pad[0]["bone"],))
+            if module.near_shoulder(rule_object, {3, 4, 5}, shoulder_rig):
+                fail("a chest plate was judged to sit on the shoulder")
+            if not module.near_shoulder(rule_object, {0, 1, 2}, shoulder_rig):
+                fail("a pad on the clavicle was judged not to sit on it")
+            # Without the rig there is nothing to measure, so no shoulder shell
+            # is guessed at: the pad stays on the body rather than a chest plate
+            # coming into the arms uninvited.
+            loose = module.arm_pieces(rule_object)
+            if [sorted(piece["indices"]) for piece in loose] != [[6, 7, 8]]:
+                fail("with no armature the shoulder rule kept %r, expected only "
+                     "the sleeve" % ([sorted(p["indices"]) for p in loose],))
 
         # Every bone the cut keeps has to exist on the first-person rig, or the
         # carried weights name a bone that rig does not have.

@@ -574,9 +574,14 @@ def weights_summary(object_data, limit=4):
                      for name, weight in top)
 
 
-def arm_share(weights, names=ARM_WEIGHTS):
-    """How much of one vertex belongs to the arms, 0 to 1."""
-    arm = sum(weight for name, weight in weights.items() if name in names)
+def arm_share(weights):
+    """How much of one vertex belongs to the arms proper, 0 to 1.
+
+    Shoulder armour is judged apart from this, in arm_pieces: a pauldron's
+    weight is on a clavicle, and counting that here would count a chest plate's
+    corners too, which is how a torso shell got taken for an arm.
+    """
+    arm = sum(weight for name, weight in weights.items() if name in ARM_BONES)
     total = sum(weights.values())
     return arm / total if total > 0.0 else 0.0
 
@@ -701,7 +706,9 @@ def near_shoulder(object_data, indices, armature, limit=5.0, need=0.6):
     that one belongs to the body. A pad hugs the shoulder; a chest does not.
     """
     if armature is None:
-        return True
+        # Nothing to measure against: leave shoulder shells on the body. A pad
+        # missing from the arms is a smaller fault than a chest plate pulled in.
+        return False
     segments = []
     for name in SHOULDER_BONES:
         bone = armature.data.bones.get(name)
@@ -724,10 +731,11 @@ def arm_pieces(object_data, names=ARM_WEIGHTS, share=ARM_SHARE, armature=None):
     """The item's shells that are arms, with the side and bone each rides.
 
     A piece joins the first-person set when most of its weight is on an upper
-    arm, forearm or hand bone. It is decided per shell rather than per vertex
-    because a vertex on either side of a seam would tear its piece in half;
-    keeping shells whole also keeps torso plates out, since by their own
-    weighting those are mostly on the spine.
+    arm, forearm or hand bone, or when it is shoulder armour that sits on a
+    clavicle - Halo's own first-person arms wear their shoulder pads. It is
+    decided per shell rather than per vertex because a vertex on either side of
+    a seam would tear its piece in half; keeping shells whole also keeps torso
+    plates out, since by their own weighting those are mostly on the spine.
     """
     weights = vertex_weights(object_data)
     pieces = []
@@ -736,7 +744,7 @@ def arm_pieces(object_data, names=ARM_WEIGHTS, share=ARM_SHARE, armature=None):
         total = sum(sum(weights[index].values()) for index in indices)
         if total <= 0.0:
             continue
-        arm = sum(arm_share(weights[index], ARM_BONES) * sum(weights[index].values())
+        arm = sum(arm_share(weights[index]) * sum(weights[index].values())
                   for index in indices)
         shoulder = sum(weight for index in indices
                        for name, weight in weights[index].items()

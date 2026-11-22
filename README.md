@@ -113,11 +113,14 @@ from the body and the player sees the arms, not the body's:
 * `Test Item - halo fp arms.blend` - the item's own arm geometry (sleeves,
   gauntlets, or the base body's bare arms) on Halo's 37-bone first-person arms
   rig, in that rig's own rest pose. Whole shells are taken, not loose vertices:
-  a piece joins the set when most of its weight is on an upper arm, forearm,
-  hand or clavicle bone. Shoulder pads are included on purpose: Halo's own
-  first-person arms carry theirs, and a Marine's pauldron is part of the arm you
-  see. Halo's rig has no clavicle, so a pad rides the upper arm, which is the
-  bone that moves a shoulder. The seam falls where the arm ends, and no plate is
+  a piece joins the set when most of its weight is on an upper arm, forearm or
+  hand bone. Shoulder pads are included on purpose: Halo's own first-person arms
+  carry theirs, and a Marine's pauldron is part of the arm you see. A pad is
+  recognised by sitting on a clavicle - the shell has to hug the shoulder, not
+  merely carry clavicle weight at its corners, or a chest plate would come with
+  it. Halo's rig has no clavicle, so a pad rides the upper arm, which is the
+  bone that moves a shoulder. If no biped rig is there to measure against,
+  shoulder shells stay on the body: a missing pad is the smaller fault. The seam falls where the arm ends, and no plate is
   ever cut in half. The shells are then
   carried onto Halo's rig bone by bone: each vertex is pulled by the bones it
   already rides, blended by its own weights, and its vertex groups are renamed

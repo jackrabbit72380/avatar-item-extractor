@@ -32,7 +32,7 @@ import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODULES = os.environ.get("RIG_MODULES") or os.path.join(
-    os.path.dirname(os.path.dirname(HERE)), "recovered")
+    os.path.dirname(HERE), "src")
 
 
 # --------------------------------------------------------------- stand-in bpy
