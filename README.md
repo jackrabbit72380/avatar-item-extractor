@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract-AvatarItem-v23.bat` - one folder
+Put your Xbox 360 avatar items beside `Extract-AvatarItem-v24.bat` - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
 writes everything each one needs - models, textures, masks, colours, rigs -
@@ -122,11 +122,15 @@ from the body and the player sees the arms, not the body's:
   bone that moves a shoulder. If no biped rig is there to measure against,
   shoulder shells stay on the body: a missing pad is the smaller fault. The seam falls where the arm ends, and no plate is
   ever cut in half. The shells are then
-  carried onto Halo's rig as one turn per side: the arm's own long axis, measured
-  from that side's mesh, is turned onto Halo's arm axis about the shoulder joint
-  and moved onto it. The whole side moves rigidly, so sleeve, glove and pad keep
-  their shape exactly and nothing tears; its vertex groups are renamed to Halo's
-  (`frame l upperarm`, `frame l forearm`, `frame l wriste`). The rig in
+  carried onto Halo's rig a part at a time: each side is measured from its own
+  mesh and split at its own elbow and wrist (where its weights change bone, not
+  at an assumed ratio), and upper arm, forearm and hand are each turned onto the
+  bone that drives them, blended across the joints so a sleeve that runs through
+  the elbow stays joined. A bent arm therefore fits the bone chain instead of
+  being swung out straight on the shoulder. The glove is trimmed along the arm to
+  Halo's own fingertips, blended by weight so the cuff does not tear from the
+  sleeve. Its vertex groups are renamed to Halo's (`frame l upperarm`,
+  `frame l forearm`, `frame l wriste`). The rig in
   the file *is* Halo's own 37-bone set, so the game's first-person animations
   drive it as they stand, and the hand lands at the wrist where Halo's own
   fingers are. The hand is then trimmed along the arm to end where Halo's own
@@ -282,9 +286,9 @@ the rigging section is added underneath it when Blender is there.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack Extract-AvatarItem-v23.bat src/
+python3 tools/payload.py unpack Extract-AvatarItem-v24.bat src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack Extract-AvatarItem-v23.bat src/ --rigs src/rig
+python3 tools/payload.py pack Extract-AvatarItem-v24.bat src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it

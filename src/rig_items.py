@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v23"
-BUILD = "2026-11-22 fp-arms-mesh-axis"
+VERSION = "v24"
+BUILD = "2026-11-22 fp-arms-segmented"
 
 # Which bones deform what, by Blender bone name. Used for the fallback skin.
 DEFORM_BONES = (
@@ -690,42 +690,144 @@ def place_point(turn, start, finish, point):
                  for row in range(3))
 
 
-def side_carry(armature, armature_fp, side, points):
+def arm_joint(points, along, weights, first, second, fallback):
+    """Where one arm bone hands over to the next, measured along the arm.
+
+    A vertex the two bones share is skin at the joint, so the middle of those
+    vertices is the joint. With hard weights - each vertex on one bone, as
+    avatar items often are - there is no shared skin, and the middle of the gap
+    between the two bones' vertices stands in.
+    """
+    shared = []
+    nearer_first, nearer_second = [], []
+    for t, per in zip(along, weights):
+        one = per.get(first, 0.0)
+        two = per.get(second, 0.0)
+        if one > 0.0 and two > 0.0 and abs(one - two) <= 0.25 * (one + two):
+            shared.append(t)
+        elif one > 0.0 and two <= 0.0:
+            nearer_first.append(t)
+        elif two > 0.0 and one <= 0.0:
+            nearer_second.append(t)
+    if shared:
+        return sum(shared) / len(shared)
+    if nearer_first and nearer_second:
+        return (max(nearer_first) + min(nearer_second)) / 2.0
+    return fallback
+
+
+def side_carry(armature, armature_fp, side, points, weights):
     """How one side's arm, as the mesh holds it, gets onto Halo's arm.
 
-    Returns the turn, the point it turns about (the biped's shoulder joint) and
-    where that point has to land (the first-person shoulder joint), or None when
-    the bones or the geometry cannot answer. Applied to the whole side at once,
-    so sleeve, glove and pad keep their shape exactly: a rigid move cannot tear
-    a shell or stretch an edge.
+    The arm is taken apart at its own elbow and wrist - found from where its
+    weights change bones, not assumed from a ratio - and each part is turned
+    separately onto the bone that drives it: upper arm, forearm, hand. Turning
+    the whole limb on one shoulder put a bent arm out as a straight one and left
+    the forearm and the glove off their bones; a single turn is right only for an
+    arm that is already straight. The parts are blended across the joints, so a
+    sleeve that runs through the elbow stays joined: the blend is only ever
+    between two nearly parallel turns, which cannot collapse anything.
+
+    Returns None when the bones or the geometry cannot answer.
     """
-    if armature is None or armature_fp is None or not points:
+    if armature is None or armature_fp is None or len(points) < 4:
         return None
     was = armature.data.bones.get("bip01 %s upperarm" % side)
-    now = armature_fp.data.bones.get("frame %s upperarm" % side)
-    if was is None or now is None:
+    if was is None or not armature_fp.data.bones.get("frame %s upperarm" % side):
         return None
     axis, centre = arm_axis(points)
     if axis is None:
         return None
-    start = armature.matrix_world @ was.head_local
-    # Point the axis away from the body: an arm leaves the shoulder, it does not
-    # arrive at it. The vertex farthest from the shoulder joint decides which end
-    # is the hand - measured from the arm's own centre it was the pauldron, which
-    # is off to the side and can be further out than the glove is down.
+    shoulder = armature.matrix_world @ was.head_local
+    # Point the axis away from the body: an arm leaves the shoulder. The vertex
+    # farthest from the shoulder joint decides which end is the hand.
     far = max(points, key=lambda point: sum(
-        (point[i] - start[i]) ** 2 for i in range(3)))
-    if sum((far[i] - centre[i]) * axis[i] for i in range(3)) < 0.0:
+        (point[i] - shoulder[i]) ** 2 for i in range(3)))
+    if sum((far[i] - shoulder[i]) * axis[i] for i in range(3)) < 0.0:
         axis = [-value for value in axis]
-    finish = armature_fp.matrix_world @ now.head_local
-    aim = ((armature_fp.matrix_world @ now.tail_local)
-           - (armature_fp.matrix_world @ now.head_local))
-    turn = alignment(axis, (aim[0], aim[1], aim[2]))
-    if turn is None:
+    along = [sum((point[i] - shoulder[i]) * axis[i] for i in range(3))
+             for point in points]
+    low, high = min(along), max(along)
+    span = high - low
+    if span <= 1e-6:
         return None
-    return {"turn": turn,
-            "from": (start[0], start[1], start[2]),
-            "to": (finish[0], finish[1], finish[2])}
+    bones = ("bip01 %s upperarm" % side, "bip01 %s forearm" % side,
+             "bip01 %s hand" % side)
+    elbow = arm_joint(points, along, weights, bones[0], bones[1], low + 0.42 * span)
+    wrist = arm_joint(points, along, weights, bones[1], bones[2], low + 0.72 * span)
+    if not low < elbow < wrist < high:
+        elbow, wrist = low + 0.42 * span, low + 0.72 * span
+
+    def anchor(t):
+        """The mesh's own centre at a joint, rather than a point on an axis."""
+        near = [point for point, value in zip(points, along)
+                if abs(value - t) <= 0.06 * span]
+        if not near:
+            return tuple(shoulder[i] + axis[i] * t for i in range(3))
+        return tuple(sum(point[i] for point in near) / len(near) for i in range(3))
+
+    at = [tuple(shoulder), anchor(elbow), anchor(wrist)]
+    aim_from = [None,
+                [at[1][i] - at[0][i] for i in range(3)],
+                [at[2][i] - at[1][i] for i in range(3)]]
+    aim_from[0] = aim_from[1] if aim_from[1] and any(aim_from[1]) else axis
+
+    parts = []
+    bounds = [low - 1.0, elbow, wrist, high + 1.0]
+    for part, bone_name in enumerate(("frame %s upperarm" % side,
+                                      "frame %s forearm" % side,
+                                      "frame %s wriste" % side)):
+        now = armature_fp.data.bones.get(bone_name)
+        if now is None:
+            return None
+        head = armature_fp.matrix_world @ now.head_local
+        tail = armature_fp.matrix_world @ now.tail_local
+        aim = [tail[i] - head[i] for i in range(3)]
+        turn = alignment(aim_from[part], aim)
+        if turn is None:
+            return None
+        start_at = at[part] if part < 2 else at[2]
+        if part == 0:
+            start_at = tuple(shoulder)
+        parts.append({"turn": turn, "from": start_at,
+                      "to": (head[0], head[1], head[2]),
+                      "t0": bounds[part], "t1": bounds[part + 1]})
+    return {"axis": axis, "shoulder": tuple(shoulder), "parts": parts,
+            "blend": 0.05 * span}
+
+
+def place_arm(place, point):
+    """Where one arm vertex goes, blending across the elbow and the wrist."""
+    if place is None:
+        return tuple(point)
+    t = sum((point[i] - place["shoulder"][i]) * place["axis"][i]
+            for i in range(3))
+    blend = max(place["blend"], 1e-6)
+    weights = []
+    for part in place["parts"]:
+        low, high = part["t0"], part["t1"]
+        if t <= low - blend or t >= high + blend:
+            weights.append(0.0)
+        elif t < low + blend:
+            weights.append((t - (low - blend)) / (2.0 * blend))
+        elif t > high - blend:
+            weights.append(((high + blend) - t) / (2.0 * blend))
+        else:
+            weights.append(1.0)
+    total = sum(weights)
+    if total <= 1e-9:
+        weights = [1.0, 0.0, 0.0]
+        total = 1.0
+    out = [0.0, 0.0, 0.0]
+    for part, share in zip(place["parts"], weights):
+        if share <= 0.0:
+            continue
+        smooth = share * share * (3.0 - 2.0 * share)
+        moved = place_point(part["turn"], part["from"], part["to"], point)
+        for i in range(3):
+            out[i] += moved[i] * smooth
+    done = sum(share * share * (3.0 - 2.0 * share) for share in weights) or 1.0
+    return tuple(value / done for value in out)
 
 
 def shell_faces(mesh):
@@ -880,10 +982,13 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     # modelled in the avatar's pose and the bones are Halo's, so the two can
     # disagree about which way an arm points.
     side_points = {"l": [], "r": []}
+    side_weights = {"l": [], "r": []}
     for piece in pieces:
         for index in piece["indices"]:
             side_points[piece["side"]].append(world @ mesh.vertices[index].co)
-    carry = {side: side_carry(armature, armature_fp, side, points)
+            side_weights[piece["side"]].append(weights[index])
+    carry = {side: side_carry(armature, armature_fp, side, points,
+                              side_weights[side])
              for side, points in side_points.items() if points}
     if not any(carry.values()):
         log("no arm axis could be measured: the arms keep the biped's placement")
@@ -913,7 +1018,7 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         if place is None:
             coords.append((float(point[0]), float(point[1]), float(point[2])))
         else:
-            moved = place_point(place["turn"], place["from"], place["to"], point)
+            moved = place_arm(place, point)
             coords.append(moved)
             step = math.sqrt(sum((moved[axis] - point[axis]) ** 2
                                  for axis in range(3)))
@@ -936,10 +1041,10 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
             per = {mapping[home[index]]: 1.0}
         if not per and home[index] is not None:
             per = {mapping.get(home[index], home[index]): 1.0}
-        if per.get("frame l wriste", 0.0) > 0.5:
-            hand_slots["l"].append(slot[index])
-        elif per.get("frame r wriste", 0.0) > 0.5:
-            hand_slots["r"].append(slot[index])
+        if per.get("frame l wriste", 0.0) > 0.0:
+            hand_slots["l"].append((slot[index], per["frame l wriste"]))
+        elif per.get("frame r wriste", 0.0) > 0.0:
+            hand_slots["r"].append((slot[index], per["frame r wriste"]))
         total = sum(per.values())
         if total <= 0.0:
             continue
@@ -1482,17 +1587,23 @@ def hand_fit(coords, sides, armature_fp, skip):
         if axis.length < 1e-6:
             continue
         axis.normalize()
-        ours = max((Vector(coords[slot]) - wrist_head).dot(axis) for slot in slots)
+        ours = max((Vector(coords[slot]) - wrist_head).dot(axis)
+                   for slot, _share in slots)
         theirs = [((point - wrist_head).dot(axis), point) for point in cloud
                   if (point.y > 0.0) == (side == "l")]
         theirs = max((value for value, _point in theirs if value > 0.0), default=0.0)
         if ours <= 1e-6 or theirs <= 1e-6 or theirs >= ours:
             continue
         scale = theirs / ours
-        for slot in slots:
+        for slot, share in slots:
             point = Vector(coords[slot])
             along = (point - wrist_head).dot(axis)
-            coords[slot] = tuple(point + axis * (along * scale - along))
+            # How much of the hand this vertex is: a glove's cuff is half sleeve,
+            # half hand, and moving it as far as the fingertips tore the two
+            # apart at the wrist. Blending by the weight keeps the cuff joined.
+            follow = min(1.0, max(0.0, (share - 0.2) / 0.6))
+            follow = follow * follow * (3.0 - 2.0 * follow)
+            coords[slot] = tuple(point + axis * ((along * scale - along) * follow))
         done[side] = scale
     return done
 

@@ -466,25 +466,66 @@ def main():
         fp_rig = types.SimpleNamespace(
             matrix_world=Shift((0.0, 0.0, 0.0)),
             data=types.SimpleNamespace(bones={
-                "frame l upperarm": Bone((0.0, 9.4, 0.0), (10.25, 9.4, 0.0))}))
+                "frame l upperarm": Bone((0.0, 9.4, 0.0), (10.25, 9.4, 0.0)),
+                "frame l forearm": Bone((10.25, 9.4, 0.0), (21.14, 9.4, 0.0)),
+                "frame l wriste": Bone((21.14, 9.4, 0.0), (24.52, 9.4, 0.0))}))
         arm = [Vec(0.0, 9.0, 50.0), Vec(3.0, 9.0, 40.0), Vec(-3.0, 9.0, 40.0),
                Vec(0.0, 9.0, 30.0), Vec(3.0, 9.0, 30.0), Vec(-3.0, 9.0, 30.0)]
-        place = module.side_carry(biped_rig, fp_rig, "l", arm)
+        # avatar-style hard weights: each vertex on one bone, no shared skin
+        per_bone = [{"bip01 l upperarm": 1.0}, {"bip01 l upperarm": 1.0},
+                    {"bip01 l upperarm": 1.0}, {"bip01 l forearm": 1.0},
+                    {"bip01 l forearm": 1.0}, {"bip01 l forearm": 1.0}]
+        place = module.side_carry(biped_rig, fp_rig, "l", arm, per_bone)
         if place is None:
             fail("side_carry could not place an arm whose bones both exist")
         else:
-            hand = module.place_point(place["turn"], place["from"], place["to"],
-                                      Vec(0.0, 9.0, 30.0))
+            hand = module.place_arm(place, Vec(0.0, 9.0, 30.0))
             print("  side_carry hanging -> hand at %r"
                   % ([round(v, 2) for v in hand],))
-            # 26 units below a shoulder that Halo holds straight out at y 9.4
-            if max(abs(hand[0] - 26.0), abs(hand[1] - 9.4), abs(hand[2])) > 1e-6:
-                fail("the hand landed at %r, not 26 units out along Halo's arm"
-                     % (hand,))
-        if module.side_carry(None, fp_rig, "l", arm) is not None:
+            # Far down a hanging arm, so far out along Halo's: y is the arm's
+            # own line, z is nothing.
+            if abs(hand[1] - 9.4) > 0.5 or abs(hand[2]) > 0.5:
+                fail("the hand left Halo's arm line: %r" % (hand,))
+            if not 20.0 < hand[0] < 28.0:
+                fail("the hand landed at %r, not out along Halo's arm" % (hand,))
+            # Piecewise rigid: each part keeps its shape, and the blends are
+            # between nearly parallel turns, so nothing may stretch far.
+            worst = 1.0
+            for i in range(len(arm)):
+                for j in range(i + 1, len(arm)):
+                    was = math.dist(tuple(arm[i]), tuple(arm[j]))
+                    now = math.dist(tuple(module.place_arm(place, arm[i])),
+                                    tuple(module.place_arm(place, arm[j])))
+                    worst = max(worst, now / was, was / max(now, 1e-9))
+            if worst > 1.6:
+                fail("the arm was stretched on its way to Halo's rig: %.2fx"
+                     % worst)
+        if module.side_carry(None, fp_rig, "l", arm, per_bone) is not None:
             fail("an arm was placed with no biped to measure from")
-        if module.side_carry(biped_rig, fp_rig, "r", arm) is not None:
+        if module.side_carry(biped_rig, fp_rig, "r", arm, per_bone) is not None:
             fail("a side with no first-person bone was placed anyway")
+
+        # A bent arm: the elbow and wrist are found from where the weights change
+        # bone, and each part turns onto its own bone. Straightening a bent arm in
+        # one turn left the forearm and glove off their bones.
+        if not hasattr(module, "arm_joint"):
+            fail("no arm_joint: a bent arm cannot be split at its own elbow")
+        bent = [Vec(0.0, 9.0, 56.0), Vec(0.0, 9.0, 46.0), Vec(2.9, 9.0, 39.0),
+                Vec(4.9, 9.0, 36.0), Vec(4.9, 9.0, 33.0), Vec(5.6, 9.0, 31.0)]
+        bent_weights = [{"bip01 l upperarm": 1.0}, {"bip01 l upperarm": 1.0},
+                        {"bip01 l forearm": 1.0}, {"bip01 l forearm": 1.0},
+                        {"bip01 l hand": 1.0}, {"bip01 l hand": 1.0}]
+        place = module.side_carry(biped_rig, fp_rig, "l", bent, bent_weights)
+        if place is None:
+            fail("side_carry could not place a bent arm")
+        else:
+            end = module.place_arm(place, bent[-1])
+            print("  side_carry bent    -> hand at %r"
+                  % ([round(v, 2) for v in end],))
+            if end[0] <= 15.0:
+                fail("a bent arm was not carried out along Halo's arm: %r" % (end,))
+            if abs(end[1] - 9.4) > 2.0 or abs(end[2]) > 2.0:
+                fail("a bent arm was carried off Halo's arm line: %r" % (end,))
 
         # The shoulder rule, exercised: a pad that hugs a clavicle is kept and
         # rides the upper arm, and a chest plate carrying the same clavicle

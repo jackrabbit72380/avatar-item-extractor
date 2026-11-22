@@ -13,9 +13,9 @@ that way the tool needs nothing beside it, not even a ``rig`` folder.
 
 Unpack before editing, repack after:
 
-    python3 tools/payload.py unpack Extract-AvatarItem-v23.bat src/
+    python3 tools/payload.py unpack Extract-AvatarItem-v24.bat src/
     # edit src/extract_items.py ...
-    python3 tools/payload.py pack Extract-AvatarItem-v23.bat src/ --rigs src/rig
+    python3 tools/payload.py pack Extract-AvatarItem-v24.bat src/ --rigs src/rig
 
 ``pack`` decodes its own output and refuses to write unless it matches the files
 it was given, so a half-written rebuild cannot be shipped.

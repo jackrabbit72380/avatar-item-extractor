@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract retail Xbox 360 avatar items into a catalogue and per-item files.
 
-Carried inside Extract-AvatarItem-v23.bat together with the two reader modules
+Carried inside Extract-AvatarItem-v24.bat together with the two reader modules
 it needs, which are written beside this script on first run. Written in plain
 ASCII on purpose: the batch file copies these bytes verbatim.
 
