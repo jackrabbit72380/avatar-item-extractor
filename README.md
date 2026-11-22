@@ -192,11 +192,13 @@ is different, so both are written rather than leaving you to swap channels:
 | Halo CE | detail mask | self-illumination | specular | colour change |
 | Xbox | specular | self-illumination | colour change | detail |
 
-  * `<stem> multipurpose.*` - Halo CE order. The colour change mask is white for
-    the whole item, so all of it takes the player's colour; a part that must keep
-    its own needs painting black there. Specular and self-illumination are zero,
-    because an item does not say which parts are shiny or glow and inventing that
-    would be a guess.
+  * `<stem> multipurpose.*` - Halo CE order. The colour change mask is painted
+    from the item's own UV layout, 256x256, so it sits on the item's islands the
+    way the base map does: white where the item has geometry, so all of it takes
+    the player's colour, and black elsewhere. A part that must keep its own
+    colour needs painting black there. Detail, specular and self-illumination are
+    zero, because an item does not say which parts are shiny, glow or take a
+    detail map, and inventing that would be a guess.
   * `<stem> multipurpose xbox.*` - the same masks in Xbox order, for H1A with the
     shader's "og xbox channel order" flag (0x40) set. Halo CE and the legacy HEK
     always read Gearbox order, which is why the first set is not a substitute.
@@ -205,7 +207,9 @@ is different, so both are written rather than leaving you to swap channels:
     image valid in either order: one set covers both, so it is written once.
 
 The masks are the same four channels either way; only which channel holds which
-mask moves, and the colour change channel is the team colour.
+mask moves, and the colour change channel is the team colour. The mask follows
+the UV set the item's base-colour material names, which is the space the shader
+samples the base map and the mask in together.
 
 Parts keep their own colours when the item states them: each mesh batch is its
 own material with its own `Kd`, and when the batches differ, each gets its own

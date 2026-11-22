@@ -1142,7 +1142,9 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                      % stem)
     lines.append("change colour: %s change colour.png/.tga/.tif - white takes the"
                  " team colour; this is the alpha channel of the multipurpose map"
-                 " on Halo CE (blue on the original Xbox)" % stem)
+                 " on Halo CE (blue on the original Xbox). The white is painted"
+                 " where the item's own UV layout has geometry, so the mask sits"
+                 " on its islands the way the base map does" % stem)
     lines.append("multipurpose: %s multipurpose.png/.tga/.tif - Halo CE order:"
                  " red detail, green self-illumination, blue specular,"
                  " alpha colour change" % stem)
@@ -1178,6 +1180,10 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
     lines.append("  multipurpose.png is the Halo CE order; multipurpose xbox.png")
     lines.append("  is the Xbox order; multipurpose sp.png has every channel at")
     lines.append("  zero, so it is valid in either order and leaves the colour alone.")
+    lines.append("  Colour change is the item's own UV coverage. Detail, specular and")
+    lines.append("  self-illumination are zero: an item does not say which parts are")
+    lines.append("  shiny, glow or take a detail map, and inventing that would put")
+    lines.append("  someone else's look on the item.")
     lines.append("")
     lines.append("Both builds are ready; which one the item was is not recorded in")
     lines.append("the file, so pick the one you are making:")
@@ -1607,11 +1613,29 @@ def main(argv=None):
             # in an item file says which parts those would be. Shiny and glowing
             # parts are equally unstated, so specular and self-illumination are
             # zero - matte and unlit - rather than invented.
+            # The masks are painted where the item's own UV layout has geometry,
+            # because the shader samples them in the base map's texture space: an
+            # island-shaped mask lines up with the model, a flat fill only looks
+            # the same where there happens to be geometry under it.
+            mask_size = 256
+            coverage, painted = mesh.uv_coverage(batches, mask_size)
+            if not painted:
+                # No usable UVs. A blanket fill means the same thing in play -
+                # the shader can only sample texels with geometry over them.
+                coverage = b"\xff" * (mask_size * mask_size)
+                painted = mask_size * mask_size
+
+            def mask_with(channel):
+                """One mask byte a texel in `channel`, the other channels zero."""
+                packed = bytearray(mask_size * mask_size * 4)
+                packed[channel::4] = coverage
+                return bytes(packed)
+
             mask = os.path.join(out, "%s change colour" % stem)
-            alpha = b"\x00\x00\x00\xff" * (64 * 64)
-            write_png(mask + ".png", alpha, 64, 64)
-            write_tga(mask + ".tga", alpha, 64, 64)
-            write_tiff(mask + ".tif", alpha, 64, 64)
+            alpha = mask_with(3)
+            write_png(mask + ".png", alpha, mask_size, mask_size)
+            write_tga(mask + ".tga", alpha, mask_size, mask_size)
+            write_tiff(mask + ".tif", alpha, mask_size, mask_size)
             record["change_colour"] = {
                 "png": "%s change colour.png" % stem,
                 "tga": "%s change colour.tga" % stem,
@@ -1619,12 +1643,14 @@ def main(argv=None):
                 "channel": "alpha of the multipurpose map on Halo CE, "
                            "blue on the original Xbox",
                 "meaning": "white = takes the team colour",
+                "size": mask_size,
+                "coverage": round(painted / float(mask_size * mask_size), 3),
             }
             multipurpose = os.path.join(out, "%s multipurpose" % stem)
-            packed = b"\x00\x00\x00\xff" * (64 * 64)
-            write_png(multipurpose + ".png", packed, 64, 64)
-            write_tga(multipurpose + ".tga", packed, 64, 64)
-            write_tiff(multipurpose + ".tif", packed, 64, 64)
+            packed = mask_with(3)
+            write_png(multipurpose + ".png", packed, mask_size, mask_size)
+            write_tga(multipurpose + ".tga", packed, mask_size, mask_size)
+            write_tiff(multipurpose + ".tif", packed, mask_size, mask_size)
             record["multipurpose"] = {
                 "png": "%s multipurpose.png" % stem,
                 "tga": "%s multipurpose.tga" % stem,
@@ -1633,6 +1659,9 @@ def main(argv=None):
                             "blue specular, alpha colour change",
                 "xbox_order": "red specular, green self-illumination, "
                               "blue colour change, alpha detail",
+                "size": mask_size,
+                "painted": "the item's own UV layout",
+                "coverage": round(painted / float(mask_size * mask_size), 3),
             }
             # The same masks in the original Xbox channel order, rather than
             # only a note saying they are different. Colour change moves from
@@ -1642,10 +1671,10 @@ def main(argv=None):
             # map uses og xbox channel order" flag (0x40) is set; Halo CE and
             # the legacy HEK always read Gearbox order, so both are written.
             multipurpose_xbox = os.path.join(out, "%s multipurpose xbox" % stem)
-            xbox_order = b"\x00\x00\xff\x00" * (64 * 64)
-            write_png(multipurpose_xbox + ".png", xbox_order, 64, 64)
-            write_tga(multipurpose_xbox + ".tga", xbox_order, 64, 64)
-            write_tiff(multipurpose_xbox + ".tif", xbox_order, 64, 64)
+            xbox_order = mask_with(2)
+            write_png(multipurpose_xbox + ".png", xbox_order, mask_size, mask_size)
+            write_tga(multipurpose_xbox + ".tga", xbox_order, mask_size, mask_size)
+            write_tiff(multipurpose_xbox + ".tif", xbox_order, mask_size, mask_size)
             record["multipurpose_xbox"] = {
                 "png": "%s multipurpose xbox.png" % stem,
                 "tga": "%s multipurpose xbox.tga" % stem,
@@ -1653,15 +1682,17 @@ def main(argv=None):
                 "channels": "Xbox: red specular, green self-illumination, "
                             "blue colour change, alpha detail",
                 "use": "H1A with the og-xbox-channel-order flag (0x40) set",
+                "size": mask_size,
+                "coverage": round(painted / float(mask_size * mask_size), 3),
             }
             # Single player: no mask lit, so nothing takes a colour and the item
             # keeps the one it was drawn in. Every channel is zero, so the image
             # is identical in either channel order - one set covers both.
             multipurpose_sp = os.path.join(out, "%s multipurpose sp" % stem)
-            sp_mask = b"\x00\x00\x00\x00" * (64 * 64)
-            write_png(multipurpose_sp + ".png", sp_mask, 64, 64)
-            write_tga(multipurpose_sp + ".tga", sp_mask, 64, 64)
-            write_tiff(multipurpose_sp + ".tif", sp_mask, 64, 64)
+            sp_mask = b"\x00\x00\x00\x00" * (mask_size * mask_size)
+            write_png(multipurpose_sp + ".png", sp_mask, mask_size, mask_size)
+            write_tga(multipurpose_sp + ".tga", sp_mask, mask_size, mask_size)
+            write_tiff(multipurpose_sp + ".tif", sp_mask, mask_size, mask_size)
             record["multipurpose_sp"] = {
                 "png": "%s multipurpose sp.png" % stem,
                 "tga": "%s multipurpose sp.tga" % stem,

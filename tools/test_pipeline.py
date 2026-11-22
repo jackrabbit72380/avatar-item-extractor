@@ -88,10 +88,12 @@ def colour_block():
 
 
 def batches():
+    # One UV set a vertex, laid out as a small island: the masks are painted from
+    # this, so it has to be a real layout rather than a single shared point.
     return [{
         "shader_id": 1,
         "vertices": [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
-        "uvs": [[(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]],
+        "uvs": [[(0.10, 0.10)], [(0.40, 0.10)], [(0.10, 0.40)]],
         "materials": [{"kind": "texture", "id": 1, "texture": 0, "uv_set": 0, "mode": 0}],
         "joints": [(0, 0, 0, 0)] * 3,
         "weights": [(1.0, 0.0, 0.0, 0.0)] * 3,
@@ -107,7 +109,7 @@ def two_parts():
         parts.append({
             "shader_id": 0,
             "vertices": [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
-            "uvs": [[(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]],
+            "uvs": [[(0.10, 0.10)], [(0.40, 0.10)], [(0.10, 0.40)]],
             "materials": [{"kind": "vector", "id": 22, "value": colour + [1.0]}],
             "joints": [(0, 0, 0, 0)] * 3,
             "weights": [(1.0, 0.0, 0.0, 0.0)] * 3,
@@ -117,18 +119,19 @@ def two_parts():
     return parts
 
 
-def first_pixel(path):
-    """The RGBA of a PNG's top-left pixel, without a decoder library."""
+def pixels(path):
+    """Every RGBA pixel of a PNG, without a decoder library."""
     with open(path, "rb") as handle:
         raw = handle.read()
     name = os.path.basename(path)
     if raw[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("%s is not a PNG" % name)
-    pos, idat = 8, b""
+    pos, idat, width, height = 8, b"", 0, 0
     while pos + 8 <= len(raw):
         size = struct.unpack_from(">I", raw, pos)[0]
         tag = raw[pos + 4:pos + 8]
         if tag == b"IHDR":
+            width, height = struct.unpack_from(">II", raw, pos + 8)
             depth, colour = raw[pos + 16], raw[pos + 17]
             if (depth, colour) != (8, 6):
                 raise ValueError("%s is %d-bit type %d, not 8-bit RGBA"
@@ -137,9 +140,21 @@ def first_pixel(path):
             idat += raw[pos + 8:pos + 8 + size]
         pos += 12 + size
     rows = zlib.decompress(idat)
-    if rows[0] != 0:
-        raise ValueError("%s starts with filter %d" % (name, rows[0]))
-    return struct.unpack(">BBBB", rows[1:5])
+    stride = width * 4
+    out = []
+    for row in range(height):
+        start = row * (stride + 1)
+        if rows[start] != 0:
+            raise ValueError("%s row %d uses filter %d"
+                             % (name, row, rows[start]))
+        line = rows[start + 1:start + 1 + stride]
+        out.extend(struct.unpack(">%dB" % stride, line))
+    return [tuple(out[i:i + 4]) for i in range(0, len(out), 4)]
+
+
+def first_pixel(path):
+    """The RGBA of a PNG's top-left pixel."""
+    return pixels(path)[0]
 
 
 def main():
@@ -316,15 +331,7 @@ def main():
         # green self-illumination, blue colour change, alpha detail. The two
         # orders differ in exactly two channels, so a set that was copied
         # instead of reordered passes a name check and still renders wrong.
-        mask_sets = [
-            ("multipurpose", (0, 0, 0, 255),
-             "Halo CE: colour change in alpha, specular in blue"),
-            ("multipurpose xbox", (0, 0, 255, 0),
-             "Xbox: colour change moved to blue, detail in alpha"),
-            ("multipurpose sp", (0, 0, 0, 0),
-             "single player: nothing masked, valid in either order"),
-        ]
-        for suffix, expected, meaning in mask_sets:
+        for suffix in ("multipurpose", "multipurpose xbox", "multipurpose sp"):
             stem_set = "Plain Tee " + suffix
             for folder, ext in homes_for(suffix):
                 name = "%s.%s" % (stem_set, ext)
@@ -334,12 +341,42 @@ def main():
                 if not found:
                     print("\nFAIL: %s is missing from %s" % (name, folder))
                     return 1
-            got = first_pixel(os.path.join(out3, "extracted for max users", stem_set + ".png"))
-            print("    %s first pixel %s - %s" % (suffix, got, meaning))
-            if got != expected:
-                print("\nFAIL: %s carries %s, expected %s (%s)"
-                      % (suffix, got, expected, meaning))
-                return 1
+
+        def mask(suffix):
+            return pixels(os.path.join(out3, "extracted for max users",
+                                       "Plain Tee %s.png" % suffix))
+
+        ce, xbox, sp = mask("multipurpose"), mask("multipurpose xbox"), mask("multipurpose sp")
+        change = mask("change colour")
+        # The mask is painted from the item's own UV layout, so it has to follow
+        # that island: a blanket fill would pass a channel check and still not
+        # line up with the base map the shader samples beside it.
+        coverage = [p[3] for p in ce]
+        covered = sum(1 for value in coverage if value) / float(len(coverage))
+        print("  multipurpose    -> %d texels, %.1f%% lit, alpha values %r"
+              % (len(ce), covered * 100, sorted(set(coverage))))
+        if sorted(set(coverage)) != [0, 255]:
+            print("\nFAIL: the Halo CE mask is not a two-value island mask")
+            return 1
+        if not 0.01 <= covered <= 0.75:
+            print("\nFAIL: the mask covers %.1f%% of the canvas" % (covered * 100))
+            return 1
+        if any(p[0] or p[1] or p[2] for p in ce):
+            print("\nFAIL: the Halo CE set lights something other than alpha")
+            return 1
+        if [p[2] for p in xbox] != coverage:
+            print("\nFAIL: the Xbox set does not carry the colour change in blue")
+            return 1
+        if any(p[0] or p[1] or p[3] for p in xbox):
+            print("\nFAIL: the Xbox set lights red, green or alpha")
+            return 1
+        if any(any(pixel) for pixel in sp):
+            print("\nFAIL: the single-player set masks something")
+            return 1
+        if ([p[3] for p in change] != coverage
+                or any(p[0] or p[1] or p[2] for p in change)):
+            print("\nFAIL: change colour is not black with the same mask in alpha")
+            return 1
 
         for folder, ext in homes_for("change colour"):
             name = "Plain Tee change colour.%s" % ext
@@ -367,7 +404,8 @@ def main():
                 print("\nFAIL: report.txt does not say %r" % phrase)
                 return 1
 
-        print("\nPASS: three mask sets in both channel orders, sp masks nothing")
+        print("\nPASS: masks painted from the item's UV island, both channel orders,"
+              " sp masks nothing")
 
         # Fourth case: two parts in one item, each with its own colour, and the
         # same shader id on both. They must stay two materials with two colours -

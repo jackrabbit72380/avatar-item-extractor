@@ -992,6 +992,67 @@ def read_skeleton(payload):
     }
 
 
+def uv_coverage(batches, size=256, set_index=None):
+    """One byte a texel: 255 where the item's own UV layout covers the canvas.
+
+    Halo's shader samples the multipurpose and change-colour bitmaps in the same
+    texture space as the base map, so the masks have to follow the mesh's own
+    islands. Painting each triangle into that space gives exactly that; a single
+    flat colour does not, and cannot show which island a mask belongs to.
+
+    With no set named, each batch uses the UV set its base-colour material does,
+    which is the space the shader will sample the masks in.
+    """
+    mask = bytearray(size * size)
+    last = float(size - 1)
+    painted = 0
+    for batch in batches:
+        uvs = batch.get("uvs") or []
+        indices = batch.get("indices") or []
+        if not uvs:
+            continue
+        chosen = set_index
+        if chosen is None:
+            chosen = 0
+            for record in batch.get("materials") or []:
+                if record.get("kind") == "texture" and record.get("id") == 1:
+                    chosen = record.get("uv_set") or 0
+                    break
+        if chosen >= len(uvs[0]):
+            continue
+        for step in range(0, len(indices) - 2, 3):
+            points = []
+            for index in indices[step:step + 3]:
+                if index >= len(uvs):
+                    points = []
+                    break
+                u, v = uvs[index][chosen]
+                points.append((u * last, (1.0 - v) * last))
+            if len(points) != 3:
+                continue
+            (x1, y1), (x2, y2), (x3, y3) = points
+            low_x = max(0, int(min(x1, x2, x3)))
+            high_x = min(size - 1, int(max(x1, x2, x3)) + 1)
+            low_y = max(0, int(min(y1, y2, y3)))
+            high_y = min(size - 1, int(max(y1, y2, y3)) + 1)
+            if (high_x - low_x) * (high_y - low_y) > size * size // 2:
+                # A triangle that wraps the whole atlas is a bad reading of the
+                # UVs, not a mask: skip it rather than flood the image.
+                continue
+            for y in range(low_y, high_y + 1):
+                for x in range(low_x, high_x + 1):
+                    d1 = (x - x2) * (y3 - y2) - (x3 - x2) * (y - y2)
+                    d2 = (x3 - x1) * (y - y1) - (x - x1) * (y3 - y1)
+                    d3 = (x1 - x2) * (y - y2) - (x2 - x1) * (y - y2)
+                    if ((d1 >= 0 and d2 >= 0 and d3 >= 0)
+                            or (d1 <= 0 and d2 <= 0 and d3 <= 0)):
+                        mask[y * size + x] = 255
+    for value in mask:
+        if value:
+            painted += 1
+    return bytes(mask), painted
+
+
 def main():
     parser = argparse.ArgumentParser(description="Decode an avatar mesh from the asset pack.")
     parser.add_argument("--pack", required=True, help="AvatarAssetPack.toc")
