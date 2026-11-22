@@ -826,6 +826,11 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     arms["build"] = BUILD
     arms["version"] = VERSION
     arms["on_rig"] = bool(moved_verts)
+    fit = arm_fit([Vector(point) for point in coords], armature_fp, arms)
+    if fit is not None:
+        arms["fit_mean"] = fit[0]
+        arms["fit_worst"] = fit[1]
+        log("fit to Halo's own arms: mean %.2f, worst %.2f units" % fit)
     if frames and not moved_verts:
         log("%s: every arm weight sits on a bone with no first-person frame, so "
             "nothing was carried - report.txt and the file's own note say so"
@@ -864,6 +869,11 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
         arms, rig = arm_region(merged, armature, armature_fp)
         if arms is not None:
             worst = meta(arms, "carried_units")
+            if meta(arms, "fit_worst") is not None:
+                record["arms_fit"] = ("stands in Halo's own arms to within "
+                                      "%.2f units (mean %.2f)"
+                                      % (meta(arms, "fit_worst"),
+                                         meta(arms, "fit_mean")))
             if worst is None:
                 record["arms_carried"] = "arms stayed where they were"
             elif not (meta(arms, "carried_verts") or 0):
@@ -1211,6 +1221,39 @@ def export_rigged(path, mesh, armature, kind, note=None):
     log("wrote %s" % os.path.basename(path))
 
 
+def reference_arms(armature_fp, skip):
+    """Halo's own first-person arm mesh, when the rig file brought one along."""
+    found = []
+    for item in getattr(bpy.data, "objects", []) or []:
+        if item is skip or getattr(item, "type", None) != "MESH":
+            continue
+        if item.parent is armature_fp or "cyborg" in item.name.lower():
+            found.append(item)
+    return found
+
+
+def arm_fit(points, armature_fp, skip, sample=400):
+    """How close the carried arms are to Halo's own, as (mean, worst) units.
+
+    The rig file ships the arms the game actually uses, so they are the target
+    the item's arms have to stand in - not just the bones, which the item's
+    thicker or longer limbs can sit around and still be in the wrong place.
+    """
+    reference = reference_arms(armature_fp, skip)
+    if not reference or not points:
+        return None
+    cloud = []
+    for item in reference:
+        verts = list(item.data.vertices)
+        step = max(1, len(verts) // 600)
+        cloud.extend(item.matrix_world @ vert.co for vert in verts[::step])
+    if not cloud:
+        return None
+    step = max(1, len(points) // sample)
+    gaps = [min((point - other).length for other in cloud) for point in points[::step]]
+    return sum(gaps) / len(gaps), max(gaps)
+
+
 def meta(object_data, key, default=None):
     """A custom property off an object, tolerating anything that has none."""
     try:
@@ -1360,6 +1403,8 @@ def report_text(options, records, stems, armature, nxe=None):
                                                or "not skinned"))
             if record.get("arms_carried"):
                 lines.append("              %s" % record["arms_carried"])
+            if record.get("arms_fit"):
+                lines.append("              %s" % record["arms_fit"])
         lines.append("  vertices  : %d" % (record.get("model", {}).get("vertices") or 0))
         lines.append("")
     lines.extend(rig_scene_lines(armature, nxe))
