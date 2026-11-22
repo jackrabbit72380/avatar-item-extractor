@@ -112,19 +112,17 @@ from the body and the player sees the arms, not the body's:
   and join the meshes; every item is skinned to the same biped.
 * `Test Item - halo fp arms.blend` - the item's own arm geometry (sleeves,
   gauntlets, or the base body's bare arms) on Halo's 37-bone first-person arms
-  rig. Whole shells are taken, not loose vertices: a piece joins the set when
-  most of its weight is on an upper arm, forearm or hand bone - shoulder plates
-  weighted to a clavicle are left out - so the seam falls where the arm ends and
-    no plate is ever cut in half. The arms are not moved and not re-skinned: they
-  ride an armature built from the very bones they are already weighted to, in
-  place, with those bones renamed the way Halo's first-person set names them
-  (`frame l upperarm`, `frame l forearm`, `frame l wriste`) over one
-  `frame bone24` root, the way Halo's own set is built. The skeleton is therefore
-  inside the arms wherever they hang, instead of the arms being rotated onto a
-  second rig's rest pose - Halo's first-person rig holds its arms dead straight
-  out, so there is no bend in it to line anything up with. Halo's own 37-bone
-  rig is saved in the same file beside it, so it is there to retarget onto.
-  Nothing is modelled again and nothing is retextured: faces, UVs, smoothing and
+  rig, in that rig's own rest pose. Whole shells are taken, not loose vertices:
+  a piece joins the set when most of its weight is on an upper arm, forearm or
+  hand bone - shoulder plates weighted to a clavicle are left out - so the seam
+  falls where the arm ends and no plate is ever cut in half. The shells are then
+  carried onto Halo's rig bone by bone: each vertex is pulled by the bones it
+  already rides, blended by its own weights, and its vertex groups are renamed
+  to Halo's (`frame l upperarm`, `frame l forearm`, `frame l wriste`). The rig in
+  the file *is* Halo's own 37-bone set, so the game's first-person animations
+  drive it as they stand, and the hand lands at the wrist where Halo's own
+  fingers are. Nothing is modelled again and nothing is retextured: faces, UVs,
+  smoothing and
   materials come across as they are. A hand item - a ring, a badge - rides its
   hand bone instead, whole, on the supplied arms rig. An item with no arm
   geometry at all (a hat) still gets the file, on the arms rig with an empty

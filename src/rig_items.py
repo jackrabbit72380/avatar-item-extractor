@@ -568,90 +568,59 @@ def arm_share(weights, names=ARM_BONES):
     return arm / total if total > 0.0 else 0.0
 
 
-def arm_bones(armature, names=ARM_BONES):
-    """The item's own arm bones, as a plan for an armature of their own.
+def bone_frame(armature, armature_fp, source, target):
+    """The transform carrying one bone's rest frame onto the first-person bone
+    of the same job: the same point on the bone, the same way round.
 
-    Each entry is (own bone, first-person bone, head, tail, matrix, parent's own
-    bone). The head, tail and matrix are the bones the cut arms are already
-    weighted to, so a skeleton built from this plan sits inside those arms
-    wherever they hang. The matrix is what carries the roll: a bone in Blender
-    5 has no roll of its own to read. Halo's first-person rig holds its arms
-    straight out in a rest pose of its own, so carrying the arms onto it means
-    inventing a rotation between two bodies - which is what kept landing them
-    at the wrong angle.
+    The bone's rest matrix holds its direction *and* its roll, which is the only
+    way round the question can be answered here: Halo's first-person arm chain
+    is exactly collinear, so there is no bend in it to read a roll from.
     """
-    plan = []
+    was = armature.data.bones.get(source)
+    now = armature_fp.data.bones.get(target)
+    if was is None or now is None:
+        return None
+    return ((armature_fp.matrix_world @ now.matrix_local)
+            @ (armature.matrix_world @ was.matrix_local).inverted())
+
+
+def arm_frames(armature, armature_fp, names=ARM_BONES):
+    """Item bone name -> its frame on Halo's first-person rig."""
+    frames = {}
     for source in names:
-        was = armature.data.bones.get(source) if armature is not None else None
         target = FP_BONES.get(source)
-        if was is None or target is None:
+        if target is None:
             continue
-        parent = was.parent.name if was.parent is not None else None
-        plan.append((source, target,
-                     tuple(float(value) for value in was.head_local),
-                     tuple(float(value) for value in was.tail_local),
-                     was.matrix_local.copy(), parent))
-    return plan
+        frame = bone_frame(armature, armature_fp, source, target)
+        if frame is not None:
+            frames[source] = frame
+    return frames
 
 
-def build_arm_rig(armature, plan, label="halo fp arms rig"):
-    """An armature holding just the arms, named the way Halo's set names them.
+def carry_point(frames, weights, point, home=None):
+    """Move one point onto Halo's first-person arms, weighted as it is bound.
 
-    Built in place from the item's own arm bones, so the mesh needs no moving:
-    the bones are exactly where the arms already are. The bones carry Halo's
-    first-person names (frame l upperarm, forearm, wriste), so the arms are
-    addressed the same way and can be posed, exported or merged by name.
+    Every bone the vertex rides pulls it into that bone's frame and the pulls are
+    averaged by the weights, so the arm bends at the elbow where its skin does.
+    Swinging the whole limb on one bone put it at the wrong angle; moving each
+    vertex on only its heaviest bone tore the shells apart. Blending the bones
+    the vertex actually rides does neither.
+
+    Returns None when the vertex rides none of the bones with a frame.
     """
-    data = bpy.data.armatures.new(label)
-    rig = bpy.data.objects.new(label, data)
-    bpy.context.scene.collection.objects.link(rig)
-    rig.matrix_world = armature.matrix_world
-    active = bpy.context.view_layer.objects.active
-    bpy.context.view_layer.objects.active = rig
-    rig.select_set(True)
-    try:
-        bpy.ops.object.mode_set(mode="EDIT")
-        made = {}
-        # One root for the whole set. Halo's own first-person rig hangs both
-        # arms off a single bone, and a .jms with two roots (one per arm) is
-        # rejected by tool.exe before it reads a single vertex.
-        loose = [entry for entry in plan
-                 if entry[5] not in {other[0] for other in plan}]
-        if loose:
-            mid = Vector((0.0, 0.0, 0.0))
-            span = 0.0
-            for entry in loose:
-                mid += Vector(entry[2])
-                span += (Vector(entry[3]) - Vector(entry[2])).length
-            mid /= len(loose)
-            span /= len(loose)
-            toward = (Vector(loose[0][3]) - Vector(loose[0][2])).normalized()
-            root = data.edit_bones.new("frame bone24")
-            root.head = mid
-            root.tail = mid + toward * span
-        for source, target, head, tail, matrix, _parent in plan:
-            bone = data.edit_bones.new(target)
-            bone.head = head
-            bone.tail = tail
-            # The matrix sets the bone's direction and its roll together.
-            bone.matrix = matrix
-            made[source] = bone
-        for source, _target, _head, _tail, _roll, parent in plan:
-            if parent in made:
-                made[source].parent = made[parent]
-            elif loose:
-                made[source].parent = root
-            made[source].use_connect = False
-        bpy.ops.object.mode_set(mode="OBJECT")
-    except Exception:
-        try:
-            bpy.ops.object.mode_set(mode="OBJECT")
-        except Exception:
-            pass
-        raise
-    finally:
-        bpy.context.view_layer.objects.active = active
-    return rig
+    pulled = None
+    total = 0.0
+    for name, weight in weights.items():
+        frame = frames.get(name)
+        if frame is None or weight <= 0.0:
+            continue
+        moved = frame @ point
+        pulled = moved * weight if pulled is None else pulled + moved * weight
+        total += weight
+    if total <= 0.0:
+        fallback = frames.get(home) if home else None
+        return fallback @ point if fallback is not None else None
+    return pulled / total
 
 
 def shell_faces(mesh):
@@ -741,12 +710,12 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     the arms keep the item's colours and shading and can be exported or merged
     as they stand.
 
-    Nothing is moved and nothing is re-skinned: the arms keep the positions and
-    weights they already have, and the armature they ride is a copy of those
-    very bones, renamed the way Halo's first-person set names them (upper arm,
-    forearm, hand to the wrist). The bones are therefore inside the arms by
-    construction, which is the one thing no cross-rig alignment could promise.
-    A hand item never gets here - it rides its hand bone whole.
+    The arms are carried onto Halo's own first-person rig, which holds them
+    straight out in its rest pose: every vertex is moved by the bones it rides
+    (upper arm, forearm, hand to the wrist), blended by its own weights, and its
+    groups are renamed to that rig's bones. Nothing is re-modelled and nothing
+    is re-skinned - the weights are the item's own, only the frames they act in
+    change. A hand item never gets here - it rides its hand bone whole.
 
     Returns (arms object, armature it rides), or (None, None) when the item has
     no geometry on an arm bone - a hat is not an arm, and inventing one would
@@ -762,20 +731,17 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
             % object_data.name)
         return None, None
 
-    # The armature the arms ride: their own copy of the bones they are already
-    # weighted to, named the way Halo's first-person set names them. If it
-    # cannot be built the arms stay on the biped, which is equally in place.
-    plan = arm_bones(armature, names)
-    rig = None
-    if plan:
-        try:
-            rig = build_arm_rig(armature, plan)
-        except Exception as problem:  # noqa: BLE001 - the biped already fits
-            log("could not build an armature for the arms (%s: %s); they stay "
-                "on the biped's arm bones"
-                % (type(problem).__name__, problem))
-    mapping = ({source: target for source, target, _h, _t, _r, _p in plan}
-               if rig is not None else {})
+    # Halo's own first-person rig, in its own rest pose: the arms are carried
+    # onto it bone by bone, so the file the arms ship in is the rig the game's
+    # first-person animations drive.
+    frames = {}
+    if armature is not None and armature_fp is not None:
+        frames = arm_frames(armature, armature_fp, names)
+    mapping = {source: FP_BONES[source] for source in frames
+               if armature_fp.data.bones.get(FP_BONES[source]) is not None}
+    if not frames:
+        log("no matching arm bones on the first-person rig: the cut keeps the "
+            "biped's placement")
 
     home = {}
     for piece in pieces:
@@ -787,7 +753,11 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     carried = {}
     for index in order:
         point = object_data.matrix_world @ mesh.vertices[index].co
-        coords.append((float(point[0]), float(point[1]), float(point[2])))
+        moved = carry_point(frames, weights[index], point, home[index])
+        if moved is None:
+            coords.append((float(point[0]), float(point[1]), float(point[2])))
+        else:
+            coords.append((float(moved[0]), float(moved[1]), float(moved[2])))
         per = {}
         for name, weight in weights[index].items():
             if name not in names:
@@ -829,9 +799,10 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
         group = arms.vertex_groups.new(name=name)
         for position, weight in pairs:
             group.add([position], weight, "REPLACE")
-    # The arms ride their own armature when it was built, and the biped's arm
-    # bones when it was not. Either way the bones are inside the mesh.
-    holder = rig if rig is not None else armature
+    # Carried onto the first-person rig when the frames exist, so the object
+    # rides Halo's own arms skeleton; otherwise it stays on the biped, which is
+    # where its weights already put it.
+    holder = armature_fp if mapping else armature
     if holder is not None:
         arms.parent = holder
         arms.matrix_parent_inverse = holder.matrix_world.inverted()
@@ -839,9 +810,8 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
         modifier.object = holder
     log("cut %s: %d of %d vert(s), %d face(s) in %d shell(s), %s, on %s"
         % (arms.name, len(order), len(mesh.vertices), len(faces), len(pieces),
-           ("its own armature, %d bones" % len(plan)) if rig is not None
-           else ("the biped's arm bones" if armature is not None
-                 else "no armature"),
+           ("carried on %d bone frame(s) onto Halo's fp rig" % len(frames))
+           if frames else "kept in place",
            ", ".join(sorted(carried)) or "no bone (the rig has none of them)"))
     return arms, holder
 
@@ -1189,13 +1159,8 @@ def export_rig(path, armature, kind):
     log("wrote %s" % os.path.basename(path))
 
 
-def export_rigged(path, mesh, armature, kind, note=None, extra=()):
-    """Write a mesh together with the armature it is skinned to.
-
-    ``extra`` objects go into the .blend as well, so the file can hold a
-    reference rig (Halo's own first-person arms) beside the one the mesh rides.
-    They are not skinned to it, so the .fbx and .glb carry the rig that does.
-    """
+def export_rigged(path, mesh, armature, kind, note=None):
+    """Write a mesh together with the armature it is skinned to."""
     bpy.ops.object.select_all(action="DESELECT")
     mesh.select_set(True)
     armature.select_set(True)
@@ -1208,7 +1173,7 @@ def export_rigged(path, mesh, armature, kind, note=None, extra=()):
         bpy.ops.export_scene.gltf(filepath=path, export_format="GLB",
                                   use_selection=True)
     else:
-        save_blend(path, [mesh, armature] + list(extra), note)
+        save_blend(path, [mesh, armature], note)
         return
     log("wrote %s" % os.path.basename(path))
 
@@ -1599,15 +1564,12 @@ def main():
                         arms_item, arms_rig,
                         os.path.join(models_dir, "%s - fp arms.jms" % stem))
                 record["arms_file"] = "%s - halo fp arms.blend" % stem
-                # The item's arms ride their own armature, which sits inside
-                # them. Halo's rig goes in the file as well, so the reference
-                # the arms were meant for travels with them instead of being
-                # dropped - append it to retarget.
-                beside = () if arms_rig is armature_fp else (armature_fp,)
+                # The arms are carried onto Halo's own first-person rig, so
+                # that rig is the one in the file - the game's animations drive
+                # it as they are, with nothing to retarget first.
                 export_rigged(os.path.join(blend_dir, record["arms_file"]),
                               arms_item, arms_rig, "blend",
-                              halo_note(stem, arms_item, arms_rig, True),
-                              beside)
+                              halo_note(stem, arms_item, arms_rig, True))
                 export_rigged(os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
                               arms_item, arms_rig, "fbx")
                 log("wrote %s on the first-person arms" % stem)
