@@ -589,6 +589,21 @@ def bone_frame(armature, armature_fp, source, target):
             @ (armature.matrix_world @ was.matrix_local).inverted())
 
 
+def nearest_arm(point, armature, names):
+    """The arm bone whose segment passes closest to a point, in world space."""
+    best, best_gap = None, None
+    for name in names:
+        bone = armature.data.bones.get(name) if armature is not None else None
+        if bone is None:
+            continue
+        gap = point_segment_distance(point,
+                                     armature.matrix_world @ bone.head_local,
+                                     armature.matrix_world @ bone.tail_local)
+        if best_gap is None or gap < best_gap:
+            best, best_gap = name, gap
+    return best
+
+
 def arm_frames(armature, armature_fp, names=ARM_BONES):
     """Item bone name -> its frame on Halo's first-person rig."""
     frames = {}
@@ -760,7 +775,21 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     moved_worst = 0.0
     for index in order:
         point = object_data.matrix_world @ mesh.vertices[index].co
-        moved = carry_point(frames, weights[index], point, home[index])
+        # The item's weights also put some of a sleeve on the body - a clavicle,
+        # the spine. Carrying only the arm share and dividing by it made a vertex
+        # with 5% hand and 95% spine fly all the way to the hand while its
+        # neighbour stayed on the upper arm: a step, and a torn shell. That body
+        # weight belongs to the arm nearest the vertex, so it moves with it.
+        carried_weights = {name: weight for name, weight in weights[index].items()
+                           if name in frames and weight > 0.0}
+        held = sum(carried_weights.values())
+        total = sum(weights[index].values())
+        if armature is not None and total - held > 1e-9:
+            near = nearest_arm(point, armature, list(frames))
+            if near is not None:
+                carried_weights[near] = (carried_weights.get(near, 0.0)
+                                         + total - held)
+        moved = carry_point(frames, carried_weights, point, home[index])
         if moved is None:
             coords.append((float(point[0]), float(point[1]), float(point[2])))
         else:
@@ -770,9 +799,7 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
                 moved_verts += 1
                 moved_worst = max(moved_worst, step)
         per = {}
-        for name, weight in weights[index].items():
-            if name not in names:
-                continue
+        for name, weight in carried_weights.items():
             renamed = mapping.get(name, name)
             per[renamed] = per.get(renamed, 0.0) + weight
         if not per and home[index] is not None:
@@ -826,6 +853,25 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_BONES):
     arms["build"] = BUILD
     arms["version"] = VERSION
     arms["on_rig"] = bool(moved_verts)
+    # A vertex carried by the wrong bone ends up off the arms entirely. Count
+    # them, so a run says "12 vertices are 40 units away" instead of leaving it
+    # to be spotted in Blender later.
+    stray, stray_worst = 0, 0.0
+    if armature_fp is not None and coords:
+        bones = [(armature_fp.matrix_world @ bone.head_local,
+                  armature_fp.matrix_world @ bone.tail_local)
+                 for bone in armature_fp.data.bones]
+        for point in coords:
+            spot = Vector(point)
+            gap = min(point_segment_distance(spot, head, tail) for head, tail in bones)
+            if gap > 5.0:
+                stray += 1
+            stray_worst = max(stray_worst, gap)
+        arms["stray_verts"] = stray
+        arms["stray_worst"] = stray_worst
+        if stray:
+            log("%d vert(s) of %d sit more than 5 units off the rig (worst %.1f)"
+                % (stray, len(coords), stray_worst))
     fit = arm_fit([Vector(point) for point in coords], armature_fp, arms)
     if fit is not None:
         arms["fit_mean"] = fit[0]
@@ -869,6 +915,11 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
         arms, rig = arm_region(merged, armature, armature_fp)
         if arms is not None:
             worst = meta(arms, "carried_units")
+            if meta(arms, "stray_verts"):
+                record["arms_stray"] = (
+                    "%d of its vert(s) sit more than 5 units off the rig "
+                    "(worst %.1f) - those are the misplaced ones"
+                    % (meta(arms, "stray_verts"), meta(arms, "stray_worst")))
             if meta(arms, "fit_worst") is not None:
                 record["arms_fit"] = ("stands in Halo's own arms to within "
                                       "%.2f units (mean %.2f)"
@@ -1405,6 +1456,8 @@ def report_text(options, records, stems, armature, nxe=None):
                 lines.append("              %s" % record["arms_carried"])
             if record.get("arms_fit"):
                 lines.append("              %s" % record["arms_fit"])
+            if record.get("arms_stray"):
+                lines.append("              %s" % record["arms_stray"])
         lines.append("  vertices  : %d" % (record.get("model", {}).get("vertices") or 0))
         lines.append("")
     lines.extend(rig_scene_lines(armature, nxe))
