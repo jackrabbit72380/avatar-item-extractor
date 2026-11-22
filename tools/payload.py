@@ -15,7 +15,7 @@ Unpack before editing, repack after:
 
     python3 tools/payload.py unpack Extract-AvatarItem-v20.bat src/
     # edit src/extract_items.py ...
-    python3 tools/payload.py pack Extract-AvatarItem-v20.bat src/ --rigs rigs/
+    python3 tools/payload.py pack Extract-AvatarItem-v20.bat src/ --rigs src/rig
 
 ``pack`` decodes its own output and refuses to write unless it matches the files
 it was given, so a half-written rebuild cannot be shipped.
@@ -117,9 +117,21 @@ def collect_rigs(folder):
 
 def pack(bat, src, rigs=None):
     text = open(bat, encoding="utf-8", newline="").read()
-    head, _payload = _split(text)
+    head, _old_payload = _split(text)
     entries = collect(src)
     entries.update(collect_rigs(rigs))
+    # A rebuild must never lose what the shipped file already carries. Editing
+    # src/ supplies .py files only, so a forgotten --rigs dropped Halo's two
+    # .blend rigs and still passed the check below, because that check only
+    # compares the rebuild against what it was handed.
+    carried = read_entries(text)
+    lost = sorted(set(carried) - set(entries))
+    if lost:
+        raise SystemExit(
+            "refusing to pack: %s already carries %d entr%s that this rebuild "
+            "would lose (%s).\nPass the folder holding them, e.g. --rigs %s"
+            % (bat, len(lost), "y" if len(lost) == 1 else "ies",
+               ", ".join(lost[:6]), "src/rig"))
     rebuilt = head + encode_entries(entries)
     # Prove the new payload before writing: it must decode to the same content.
     if read_entries(rebuilt) != entries:
@@ -135,7 +147,9 @@ def main(argv=None):
     parser.add_argument("action", choices=("unpack", "pack"))
     parser.add_argument("bat", help="the carrier .bat")
     parser.add_argument("src", help="folder to write to, or read .py files from")
-    parser.add_argument("--rigs", help="folder holding the .blend rig files to carry")
+    parser.add_argument("--rigs",
+                        help="folder holding the .blend rig files to carry "
+                             "(required: a rebuild that dropped them is refused)")
     args = parser.parse_args(argv)
     if args.action == "unpack":
         unpack(args.bat, args.src)

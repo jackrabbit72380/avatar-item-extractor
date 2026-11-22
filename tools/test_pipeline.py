@@ -15,11 +15,13 @@ write path: block scan, texture decode, colour-table decode, naming, catalogue.
 """
 
 import base64
+import json
 import os
 import shutil
 import struct
 import sys
 import tempfile
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v20.bat")
@@ -88,6 +90,31 @@ def two_parts():
             "indices": [0, 1, 2],
         })
     return parts
+
+
+def first_pixel(path):
+    """The RGBA of a PNG's top-left pixel, without a decoder library."""
+    with open(path, "rb") as handle:
+        raw = handle.read()
+    name = os.path.basename(path)
+    if raw[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("%s is not a PNG" % name)
+    pos, idat = 8, b""
+    while pos + 8 <= len(raw):
+        size = struct.unpack_from(">I", raw, pos)[0]
+        tag = raw[pos + 4:pos + 8]
+        if tag == b"IHDR":
+            depth, colour = raw[pos + 16], raw[pos + 17]
+            if (depth, colour) != (8, 6):
+                raise ValueError("%s is %d-bit type %d, not 8-bit RGBA"
+                                 % (name, depth, colour))
+        elif tag == b"IDAT":
+            idat += raw[pos + 8:pos + 8 + size]
+        pos += 12 + size
+    rows = zlib.decompress(idat)
+    if rows[0] != 0:
+        raise ValueError("%s starts with filter %d" % (name, rows[0]))
+    return struct.unpack(">BBBB", rows[1:5])
 
 
 def main():
@@ -251,6 +278,65 @@ def main():
 
         print("\nPASS: an item with no texture still writes its colour as .png/.tga/.tif")
 
+        # Fourth case (masks): the team-colour path is the whole point of these
+        # files, so the channels are checked, not just the names. Halo CE and the
+        # HEK read Gearbox order - red detail, green self-illumination, blue
+        # specular, alpha colour change. The original Xbox and H1A read Xbox
+        # order when the shader's og-xbox flag (0x40) is set - red specular,
+        # green self-illumination, blue colour change, alpha detail. The two
+        # orders differ in exactly two channels, so a set that was copied
+        # instead of reordered passes a name check and still renders wrong.
+        mask_sets = [
+            ("multipurpose", (0, 0, 0, 255),
+             "Halo CE: colour change in alpha, specular in blue"),
+            ("multipurpose xbox", (0, 0, 255, 0),
+             "Xbox: colour change moved to blue, detail in alpha"),
+            ("multipurpose sp", (0, 0, 0, 0),
+             "single player: nothing masked, valid in either order"),
+        ]
+        for suffix, expected, meaning in mask_sets:
+            stem_set = "Plain Tee " + suffix
+            for ext in ("png", "tga", "tif"):
+                name = "%s.%s" % (stem_set, ext)
+                found = os.path.exists(os.path.join(out3, name))
+                print("  %s %s" % ("ok  " if found else "MISS", name))
+                if not found:
+                    print("\nFAIL: %s is missing" % name)
+                    return 1
+            got = first_pixel(os.path.join(out3, stem_set + ".png"))
+            print("    %s first pixel %s - %s" % (suffix, got, meaning))
+            if got != expected:
+                print("\nFAIL: %s carries %s, expected %s (%s)"
+                      % (suffix, got, expected, meaning))
+                return 1
+
+        for ext in ("png", "tga", "tif"):
+            name = "Plain Tee change colour.%s" % ext
+            found = os.path.exists(os.path.join(out3, name))
+            print("  %s %s" % ("ok  " if found else "MISS", name))
+            if not found:
+                print("\nFAIL: %s is missing" % name)
+                return 1
+
+        with open(os.path.join(out3, "catalogue.json"), encoding="utf-8") as handle:
+            catalogue_text = handle.read()
+        for key in ("multipurpose", "multipurpose_xbox", "multipurpose_sp",
+                    "change_colour"):
+            if ('"%s"' % key) not in catalogue_text:
+                print("\nFAIL: catalogue.json does not record %s" % key)
+                return 1
+
+        with open(os.path.join(out3, "report.txt"), encoding="utf-8") as handle:
+            report_masks = handle.read()
+        for phrase in ("multipurpose xbox.png/.tga/.tif",
+                       "multipurpose sp.png/.tga/.tif",
+                       "alpha colour change"):
+            if phrase not in report_masks:
+                print("\nFAIL: report.txt does not say %r" % phrase)
+                return 1
+
+        print("\nPASS: three mask sets in both channel orders, sp masks nothing")
+
         # Fourth case: two parts in one item, each with its own colour, and the
         # same shader id on both. They must stay two materials with two colours -
         # naming by shader id merged them, and a hardcoded Kd made every part grey.
@@ -292,6 +378,106 @@ def main():
                 return 1
 
         print("\nPASS: two parts keep two colours, two materials and two images")
+
+        # Fifth case: the one-click shape. The .bat passes --root <its own folder>
+        # and nothing else, so items are found by walking the folders under it:
+        # each item arrives in a folder named after its container, holding
+        # asset.bin or asset_v2.bin. Those file names are the format, not the
+        # item, so the folder must name the output - naming by the file left two
+        # items in one run both called "asset_v2", overwriting each other.
+        avatar_mesh.strb_blocks = lambda data: [(3, 1, 0, b"model-payload")]
+        avatar_mesh.read_model = lambda data: batches()
+        oneclick = os.path.join(work, "oneclick")
+        containers = ["00000000-0000-0000-0000-0000000000a1",
+                      "00000000-0000-0000-0000-0000000000b2"]
+        for name in containers:
+            folder = os.path.join(oneclick, name)
+            os.makedirs(folder, exist_ok=True)
+            for filename in ("asset_v2.bin", "asset.bin"):
+                with open(os.path.join(folder, filename), "wb") as handle:
+                    handle.write(b"STRB" + b"\0" * 60)
+        out5 = os.path.join(oneclick, "extracted")
+        code = extract_items.main(["--root", oneclick, "--obj", "--out", out5])
+        if code not in (0, None):
+            print("FAIL: the one-click shape returned %r" % (code,))
+            return 1
+
+        wanted = (".obj", ".mtl", "_colours.txt", " multipurpose.png",
+                  " multipurpose xbox.tif", " multipurpose sp.png",
+                  " change colour.png")
+        for name in containers:
+            for suffix in wanted:
+                want = name + suffix
+                found = os.path.exists(os.path.join(out5, want))
+                print("  %s %s" % ("ok  " if found else "MISS", want))
+                if not found:
+                    print("\nFAIL: %s was not written from its container folder"
+                          % want)
+                    return 1
+
+        with open(os.path.join(out5, "catalogue.json"), encoding="utf-8") as handle:
+            catalogue5 = json.load(handle)
+        entries5 = catalogue5.get("items") or []
+        ids5 = [entry.get("id") for entry in entries5]
+        print("  catalogue ids: %r" % (ids5,))
+        if sorted(ids5) != sorted(containers):
+            print("\nFAIL: catalogue ids are %r, expected the container names %r"
+                  % (ids5, containers))
+            return 1
+
+        print("\nPASS: each container folder names its item, and two do not collide")
+
+        # Sixth case: bins with no container name to borrow. Users can give the
+        # bins on their own - asset.bin / asset_v2.bin in a folder that says
+        # nothing about the item - so the name has to come from somewhere: the
+        # fallback is extracted1, extracted2, ... numbered across the run so two
+        # items never end up sharing a name.
+        binfolders = os.path.join(work, "bins")
+        # A non-GUID folder name is not the container's name, so it does not name
+        # the item either - otherwise one folder called "Closet Stuff" would give
+        # every item inside it the same name. A GUID folder in the same run shows
+        # the numbering only counts the items that need it.
+        named = "00000000-0000-0000-0000-0000000000c3"
+        for name in ("Loose A", "Loose B", named):
+            folder = os.path.join(binfolders, name)
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, "asset_v2.bin"), "wb") as handle:
+                handle.write(b"STRB" + b"\0" * 60)
+        out6 = os.path.join(binfolders, "extracted")
+        code = extract_items.main(["--root", binfolders, "--obj", "--out", out6])
+        if code not in (0, None):
+            print("FAIL: the bins-only extractor returned %r" % (code,))
+            return 1
+
+        fallback = ("extracted1", "extracted2")
+        for name in fallback:
+            for suffix in (".obj", ".mtl", " multipurpose.png",
+                           " multipurpose xbox.png", " multipurpose sp.tif",
+                           " change colour.tga"):
+                want = name + suffix
+                found = os.path.exists(os.path.join(out6, want))
+                print("  %s %s" % ("ok  " if found else "MISS", want))
+                if not found:
+                    print("\nFAIL: %s was not written for a nameless bin" % want)
+                    return 1
+
+        with open(os.path.join(out6, "catalogue.json"), encoding="utf-8") as handle:
+            ids6 = [entry.get("id") for entry in json.load(handle).get("items") or []]
+        print("  catalogue ids: %r" % (ids6,))
+        expected6 = sorted(list(fallback) + [named])
+        if sorted(ids6) != expected6:
+            print("\nFAIL: the run got %r, expected %r"
+                  % (sorted(ids6), expected6))
+            return 1
+        if os.path.exists(os.path.join(out6, "extracted3.obj")):
+            print("\nFAIL: the fallback numbering counted the GUID item")
+            return 1
+        for name in fallback:
+            if os.path.exists(os.path.join(out6, name + " asset_v2.obj")):
+                print("\nFAIL: an item is still named after its bin file")
+                return 1
+
+        print("\nPASS: nameless bins come out as extracted1, extracted2; the GUID keeps its name")
         print("Not covered: the rigging half (.fbx, .glb, .blend, .jms, scene.json,")
         print("skeleton.json) needs Blender and cannot run here.")
         return 0

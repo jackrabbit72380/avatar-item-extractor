@@ -1,8 +1,11 @@
 # Avatar Item Extractor
 
-Double-click `Extract-AvatarItem-v20.bat` with your Xbox 360 avatar items in the
-same folder. It extracts their models, textures and colours, and rigs them onto
-Halo CE's biped, first-person arms and the NXE avatar skeleton.
+Put your Xbox 360 avatar items beside `Extract-AvatarItem-v20.bat` - one folder
+per item, named after its container, as they arrive from a download - then
+double-click it. That is the whole procedure: it finds the items itself and
+writes everything each one needs - models, textures, masks, colours, rigs -
+named after the item, beside the `.bat`. It also rigs them onto Halo CE's biped,
+first-person arms and the NXE avatar skeleton.
 
 An item can be given however you have it: loose `asset.bin` / `asset_v2.bin`, or
 the marketplace package itself - the file named after the item's GUID, with no
@@ -14,7 +17,16 @@ A folder holding both `asset.bin` and `asset_v2.bin` gives one item, not two:
 they are the same part in two formats, so the newer revision is the item and the
 older copy is skipped before it is read.
 
-It reads only the folder the `.bat` sits in, and writes its results there too.
+It reads the folder the `.bat` sits in and the folders under it, three levels
+deep, and writes everything to `extracted\` there.
+
+You can give items as containers or as the bins inside them; both work. An
+item's name comes from, in order: the closet index if there is one, the
+package's own Title, then the folder it arrived in - which is the container's
+name. `asset.bin` and `asset_v2.bin` say what format the bytes are, not which
+item they are, so they never name the output. When the bins are on their own and
+nothing else names the item, it becomes `extracted1`, `extracted2` and so on,
+numbered across the run, so two items never share a name.
 
 Needs Python 3.8+. Blender 4.x makes the rigging files.
 
@@ -30,6 +42,10 @@ to download or place beside it. Files you put in a `rig\` folder beside the
 Test Item\
     Test Item.obj  plus .mtl
     Test Item base map.png  also .tga and .tif
+    Test Item multipurpose.png  also .tga and .tif  Halo CE channel order
+    Test Item multipurpose xbox.png  also .tga and .tif  Xbox channel order
+    Test Item multipurpose sp.png  also .tga and .tif  nothing masked
+    Test Item change colour.png  also .tga and .tif  the team-colour mask
     Test Item.png  the item's icon, when the package has one
     colour_00.png  the item's own palette, when it carries one
     Test Item_colours.txt
@@ -43,8 +59,10 @@ Test Item\
     catalogue.json
 ```
 
-"Test Item" is whatever your item is titled. Folder and file names are the
-item's title; several items at once go to `extracted\`.
+"Test Item" is whatever your item is titled: the closet's name, the package's
+Title, or the container folder it arrived in. One item gets a folder named after
+it, next to `extracted\`; several items share `extracted\`, each file carrying
+its item's name. Either way it is one double-click for the whole folder.
 
 The `NXE` files need only Blender, because that skeleton travels inside the
 `.bat`. The biped, the arms, the `.jms` and `Test Item.blend` use Halo's two
@@ -133,20 +151,31 @@ anything - and only falls back to a texture kept in its own block when the model
 has no table at all. A table of empty slots means there is no base map to write,
 and the report says so.
 
-Each item also gets a `<stem> multipurpose.png/.tga/.tif`, the packed mask bitmap
-`shader_model` wants, and a `<stem> change colour.png/.tga/.tif` holding the team
-colour mask on its own. Halo CE (the Gearbox port and the HEK that builds its
-bitmaps) keeps the channels in this order - the original Xbox order is different:
+Each item also gets the packed mask bitmap `shader_model` wants, in both channel
+orders, plus the team-colour mask on its own as
+`<stem> change colour.png/.tga/.tif`. Halo CE (the Gearbox port and the HEK that
+builds its bitmaps) keeps the channels in this order - the original Xbox order
+is different, so both are written rather than leaving you to swap channels:
 
 | | red | green | blue | alpha |
 |---|---|---|---|---|
 | Halo CE | detail mask | self-illumination | specular | colour change |
 | Xbox | specular | self-illumination | colour change | detail |
 
-The colour change mask is white for the whole item, so all of it takes the
-player's colour; a part that must keep its own colour needs painting black
-there. Specular and self-illumination are zero, because an item does not say
-which parts are shiny or glow and inventing that would be a guess.
+  * `<stem> multipurpose.*` - Halo CE order. The colour change mask is white for
+    the whole item, so all of it takes the player's colour; a part that must keep
+    its own needs painting black there. Specular and self-illumination are zero,
+    because an item does not say which parts are shiny or glow and inventing that
+    would be a guess.
+  * `<stem> multipurpose xbox.*` - the same masks in Xbox order, for H1A with the
+    shader's "og xbox channel order" flag (0x40) set. Halo CE and the legacy HEK
+    always read Gearbox order, which is why the first set is not a substitute.
+  * `<stem> multipurpose sp.*` - single player. Nothing is masked, so the item
+    keeps the colour it was drawn in. Every channel is zero, which makes the
+    image valid in either order: one set covers both, so it is written once.
+
+The masks are the same four channels either way; only which channel holds which
+mask moves, and the colour change channel is the team colour.
 
 Parts keep their own colours when the item states them: each mesh batch is its
 own material with its own `Kd`, and when the batches differ, each gets its own
@@ -164,20 +193,46 @@ Neither script is needed to run the tool.
 
 ```sh
 python3 tools/payload.py unpack Extract-AvatarItem-v20.bat src/
-# edit src/extract_items.py, then put it back:
-python3 tools/payload.py pack Extract-AvatarItem-v20.bat src/
+# edit src/extract_items.py, then put it back - --rigs is not optional:
+python3 tools/payload.py pack Extract-AvatarItem-v20.bat src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
 was given, so a half-written rebuild cannot be shipped.
+
+Leaving out `--rigs` used to pass that check, because it only compared what it
+had packed: the rebuild silently lost Halo's two `.blend` files and shrank from
+674 KB to 82 KB. `pack` now compares the rebuild against what the shipped file
+already carries and refuses to write if anything would go missing.
+
+```sh
+python3 tools/test_all.py
+```
+
+Unpacks the payload the `.bat` actually ships and runs every test against it, so
+a suite that passes proves something about the file people run. Needs no Blender
+and no build beside the repository; names any test that fails and exits non-zero.
+It does not cover the Blender passes themselves - the rigging tests use a
+stand-in `blender.exe`, so a real Blender run is still yours to do.
 
 ```sh
 python3 tools/test_pipeline.py
 ```
 
 Runs the modules the `.bat` actually ships against a synthetic container and
-checks the eight files the extractor owns: `.obj`, `.mtl`, the base map in three
-formats, `colour_00.png`, the hex list and `catalogue.json`.
+checks the files the extractor owns: `.obj`, `.mtl`, the base map or colour image
+in three formats, `colour_00.png`, the hex list, `catalogue.json`, and the three
+mask sets - including the channel each mask actually lands in, because the two
+channel orders differ in exactly two channels and a copied set passes a
+name-only check while rendering wrong in H1A.
+
+```sh
+python3 tools/test_strb.py
+```
+
+Checks the block walk: entries wider than one byte, and the zero fill a real
+container carries after its last block, which must not be read as a run of empty
+blocks.
 
 ```sh
 python3 tools/test_rigging.py

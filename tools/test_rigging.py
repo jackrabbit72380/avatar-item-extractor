@@ -15,6 +15,7 @@ only when --rig was passed, as rig_items does), and can be told to write
 nothing or only the NXE files.
 
     python3 tools/test_rigging.py
+    RIG_MODULES=/tmp/unpacked python3 tools/test_rigging.py   # any build
 """
 
 import importlib.util
@@ -27,7 +28,8 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BAT = os.path.join(ROOT, "Extract-AvatarItem-v20.bat")
-MODULES = os.path.join(os.path.dirname(ROOT), "recovered")
+MODULES = os.environ.get("RIG_MODULES") or os.path.join(
+    os.path.dirname(ROOT), "recovered")
 
 # Halo's two rig files. Without them there is no biped, so no halo set.
 RIGS = ("master chief skeleton.blend", "fp arms.blend")

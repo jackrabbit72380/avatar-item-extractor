@@ -8,7 +8,10 @@ payload and everything after it is nonsense - which shows up as a texture and a
 colour table that are simply "not there".
 
 This builds a container with entries wider than one byte and checks the walk
-finds both blocks with their payloads intact.
+finds both blocks with their payloads intact. A second container carries the
+zero fill a real file has after its last block: the walk must stop there, or
+the fill is read as a run of empty blocks and the report's evidence list fills
+with nothing at all.
 
     python3 tools/test_strb.py
     MESH_MODULES=/tmp/unpacked python3 tools/test_strb.py   # any build
@@ -38,6 +41,11 @@ def container():
     # id 7: one entry of nine bytes -> the colour table shape
     out += bytes([7]) + struct.pack("<II", 1, 9) + b"CCCCCCCCC"
     return out
+
+
+def padded():
+    """The same two blocks, then the zero fill a real container carries."""
+    return container() + b"\0" * 129
 
 
 def load():
@@ -76,6 +84,23 @@ def main():
         failures.append("the first payload does not start where it should")
     if len(blocks) > 1 and blocks[1][3] != b"CCCCCCCCC":
         failures.append("the second payload is not the colour table's bytes")
+
+    # The fill after the last block is not a block. Reading it as headers added
+    # 144 empty "id 0" entries to one shipped report, which said 148 blocks for
+    # a container that holds four.
+    try:
+        padded_blocks = mesh.strb_blocks(padded())
+    except Exception as exc:
+        print("FAIL: the padded container raised %s: %s" % (type(exc).__name__, exc))
+        return 1
+    padded_ids = [block[0] for block in padded_blocks]
+    print("  padded blocks: %r" % (padded_ids,))
+    if padded_ids != [3, 7]:
+        failures.append("zero fill became %d blocks %r, expected [3, 7]"
+                        % (len(padded_ids), padded_ids))
+    empties = sum(1 for block in padded_blocks if not block[3])
+    if empties:
+        failures.append("%d empty blocks were kept as evidence" % empties)
 
     if failures:
         print("")
