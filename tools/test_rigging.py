@@ -27,7 +27,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-BAT = os.path.join(ROOT, "Extract-AvatarItem-v20.bat")
+BAT = os.path.join(ROOT, "Extract-AvatarItem-v21.bat")
 MODULES = os.environ.get("RIG_MODULES") or os.path.join(
     os.path.dirname(ROOT), "recovered")
 

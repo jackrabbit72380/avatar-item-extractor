@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract-AvatarItem-v20.bat` - one folder
+Put your Xbox 360 avatar items beside `Extract-AvatarItem-v21.bat` - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
 writes everything each one needs - models, textures, masks, colours, rigs -
@@ -272,9 +272,9 @@ the rigging section is added underneath it when Blender is there.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack Extract-AvatarItem-v20.bat src/
+python3 tools/payload.py unpack Extract-AvatarItem-v21.bat src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack Extract-AvatarItem-v20.bat src/ --rigs src/rig
+python3 tools/payload.py pack Extract-AvatarItem-v21.bat src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it

@@ -25,7 +25,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v20.bat")
+BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v21.bat")
 PACKAGE = "000000082C0C1281C54DAE304D5307E6"
 
 

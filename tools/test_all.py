@@ -21,7 +21,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-BAT = os.path.join(ROOT, "Extract-AvatarItem-v20.bat")
+BAT = os.path.join(ROOT, "Extract-AvatarItem-v21.bat")
 
 
 def shipped(work):

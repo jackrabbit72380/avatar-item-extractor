@@ -25,7 +25,7 @@ import tempfile
 import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v20.bat")
+BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v21.bat")
 MODULES = os.environ.get("RIG_MODULES") or os.path.join(
     os.path.dirname(os.path.dirname(HERE)), "recovered")
 

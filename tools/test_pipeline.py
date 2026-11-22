@@ -24,7 +24,7 @@ import tempfile
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v20.bat")
+BAT = os.path.join(os.path.dirname(HERE), "Extract-AvatarItem-v21.bat")
 
 # Paths are the organised ones: max\ holds the model and its textures for Max,
 # blender\ holds the same textures for Blender's rigs, hek\<build>\data\ holds
