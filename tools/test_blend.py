@@ -795,6 +795,13 @@ def main():
                 fail("the thumb was left on the wriste bone: %r" % (thumb,))
             if thumb and any("thumb" not in name for name in thumb[1]):
                 fail("the thumb skin rides another finger: %r" % (thumb[1],))
+            # Where the thumb's skin meets the index's the thumb only just wins,
+            # so the weight has to fade in there: at full strength it tore the
+            # seam, a thumb-tip vertex pulling away from an index one beside it.
+            seam = module.finger_split(Vec(23.8, 9.0, 2.0), hand_rig, "l")
+            print("  finger_split seam  -> grip %.2f" % (seam[0] if seam else -1.0))
+            if seam is None or not 0.2 < seam[0] < 0.85:
+                fail("the seam with the index took full thumb weight: %r" % (seam,))
 
         # Shoulder plates are not arms. A pauldron is worn over the shoulder
         # rather than on the arm, and carried with an arm that turns about the

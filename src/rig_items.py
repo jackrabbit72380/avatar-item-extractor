@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v34"
-BUILD = "2026-11-23 fp-arms-thumb-chain"
+VERSION = "v35"
+BUILD = "2026-11-23 fp-arms-thumb-blend"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -1176,6 +1176,14 @@ def finger_split(point, armature_fp, side, influences=2, power=4.0):
     the hand bone or another finger, and it eases in from its base over the first
     part of its length so it still joins the glove's palm smoothly.
 
+    Being nearer is not the whole of it, though. The skin at the base of the
+    index finger is also a little nearer the thumb chain than anything else, and
+    taking that at full weight tore a three-times stretch across the edge where
+    it meets the index: two neighbouring vertices, one on the thumb's tip bone and
+    one on the index's. So the weight also fades in with how *clearly* a vertex is
+    the thumb's - the distance it wins by, as a share of the distance to the
+    nearest rival - which leaves the seam reading as the seam it is.
+
     Returns (grip, shares): `grip` is how much of the vertex belongs to the
     fingers at all and `shares` divides that between its finger's bones. None
     when the rig has no hand to measure.
@@ -1205,19 +1213,25 @@ def finger_split(point, armature_fp, side, influences=2, power=4.0):
         wrist = getattr(getattr(armature_fp, "data", None), "bones", None)
         wrist = wrist.get("frame %s wriste" % side) if wrist is not None else None
         others = [reach for reach, name in near_chain if name != "thumb"]
-        if wrist is not None and gap < min(
+        if wrist is not None:
+            nearest_rival = min(
                 others + [point_segment_distance(
                     point, armature_fp.matrix_world @ wrist.head_local,
-                    armature_fp.matrix_world @ wrist.tail_local)]):
-            base = entries[0][1]
-            tip = entries[-1][2]
-            reach = [tip[i] - base[i] for i in range(3)]
-            length = math.sqrt(sum(value * value for value in reach))
-            if length > 1e-6:
-                along = sum((point[i] - base[i]) * reach[i]
-                            for i in range(3)) / (length * length)
-                grip = min(1.0, max(0.0, along / 0.45))
-                return grip * grip * (3.0 - 2.0 * grip), shares
+                    armature_fp.matrix_world @ wrist.tail_local)])
+            if gap < nearest_rival:
+                base = entries[0][1]
+                tip = entries[-1][2]
+                reach = [tip[i] - base[i] for i in range(3)]
+                length = math.sqrt(sum(value * value for value in reach))
+                if length > 1e-6:
+                    along = sum((point[i] - base[i]) * reach[i]
+                                for i in range(3)) / (length * length)
+                    ease = min(1.0, max(0.0, along / 0.45))
+                    won = (nearest_rival - gap) / max(nearest_rival, 1e-6)
+                    hold = min(1.0, max(0.0, won / 0.5))
+                    grip = (ease * ease * (3.0 - 2.0 * ease)
+                            * hold * hold * (3.0 - 2.0 * hold))
+                    return grip, shares
     t = sum((point[i] - head[i]) * axis[i] for i in range(3)) / length
     start = min(max(knuckle / length, 0.15), 0.85)
     grip = min(1.0, max(0.0, (t - start) / (1.0 - start)))
