@@ -598,6 +598,93 @@ found, and each part's shader and texture bindings. The extractor writes it
 before any Blender runs, so a run without Blender still describes the file;
 the rigging section is added underneath it when Blender is there.
 
+## Building it in Halo's editing kit
+
+This tool stops at source data; `tool.exe` is the next step, and this is the whole
+path from the folder to something the engine loads. The commands and channel
+meanings below are from the H1 Editing Kit documentation - [H1-EK](https://c20.reclaimers.net/h1/h1-ek/),
+[H1 Tool](https://c20.reclaimers.net/h1/h1-ek/h1-tool), [bitmap](https://c20.reclaimers.net/h1/tags/bitmap),
+[shader_model](https://c20.reclaimers.net/h1/tags/shader/shader_model) and
+[decal](https://c20.reclaimers.net/h1/tags/decal). Microsoft's [MCC creator
+docs](https://learn.microsoft.com/en-us/halo-master-chief-collection/) cover
+Halo 2 and Halo 3 tooling; they have no Halo 1 tool reference, so the H1-EK
+pages are the ones that apply.
+
+1. **Put the build where the tool looks.** Copy `extracted for hek users\pc\data\<stem>`
+   (or the `xbox` one) into the editing kit's `data\` folder. The folder name is
+   the tag path, and it is the only thing that has to move.
+2. **Bitmaps.** `tool bitmaps "<stem>\bitmaps" 2d` - H1A Tool takes the type as an
+   argument, the legacy HEK reads it from the tag. Each `.tif` becomes
+   `tags\<stem>\bitmaps\<name>.bitmap`, named after the file, so every map a
+   shader asks for is already named the way it is referenced.
+   - `.tif` must be at least 8 bits per pixel and power-of-two; ours are 32-bit.
+   - Alpha survives only in a format that holds it: **DXT5 or 32-bit**. DXT1
+     keeps one bit, which turns the decal's soft alpha into a hard cutout and
+     blacks the colour where it is transparent.
+   - Leave **usage** at `default` for all of these. `alpha blend` fades
+     transparent pixels to black in the mips and `detail map` fades the mips to
+     grey; both are for other kinds of texture, and these are mask images.
+3. **Model.** `tool model "<stem>"` reads `data\<stem>\models\<file>.JMS` and
+   writes `tags\<stem>\<stem>.gbxmodel`. The material names inside the JMS are
+   the only link to shaders, so each one needs a shader tag that exists. Tool
+   reads the JMS **file name** as `<permutation> <lod>.JMS` (`base superhigh.JMS`;
+   the LOD word is one of `superhigh`, `high`, `medium`, `low`, `superlow`, and
+   the docs' own `rock.JMS` example leaves it off). Ours are `<stem> sp` and
+   `<stem> mp` - if your Tool build reads the trailing word as a LOD and
+   complains, rename them `<stem> sp superhigh.JMS` and `<stem> mp superhigh.JMS`.
+4. **Shader.** Make one `shader_model` per JMS material, at a tag path that
+   matches the material name, and set:
+
+   | Field | Value |
+   |---|---|
+   | base map | `<stem> base map` - the decal is already blended into it |
+   | multipurpose map | `<stem> multipurpose` for the sp build; the mp build's own, whose alpha is the team colour |
+   | detail map, reflection cube map | none |
+   | change colour source | none for sp; for mp, the source the map uses (multiplayer colours, or the object's) |
+   | flags | none; `og xbox channel order` (0x40) only for an `xbox` build in H1A |
+
+   Guerilla's own channel labels describe the **Xbox** order. Halo CE and the
+   legacy HEK read **Gearbox** order, which is what the `pc` builds are written
+   in - the `multipurpose xbox` bitmap and the 0x40 flag are the only pair that
+   belongs together.
+5. **Map.** `tool build-cache-file "<scenario>" classic`, which packs the tags
+   and the bitmap pixels into the map file.
+
+### What the engine reads, and where a decal can go
+
+A `shader_model` has four texture inputs - base map, multipurpose map, detail
+map, reflection cube map - and no decal input at all. The channels below are the
+only ones the engine reads from a model's textures:
+
+- **base map**: `rgb` diffuse colour, `a` transparency (only meaningful when the
+  shader blends).
+- **multipurpose map, Gearbox order** (Halo CE, legacy HEK): `r` auxiliary mask,
+  which masks the detail map when the detail mask is set to auxiliary (`Guerilla`
+  calls that option "multipurpose map alpha", but in this order it is red);
+  `g` self-illumination, added to diffuse light and then multiplied by diffuse
+  colour; `b` specular/cubemap strength; `a` colour change.
+- **multipurpose map, Xbox order**: `r` specular, `g` self-illumination,
+  `b` colour change, `a` auxiliary.
+- **detail map**: `rgb` only, combined by the detail function - double biased
+  multiply `saturate(base * lerp(0.5, detail, mask) * 2)`, multiply
+  `saturate(base * lerp(1.0, detail, mask))`, or double biased add
+  `saturate(base + (2 * lerp(0.5, detail, mask) - 1))` - masked by whichever
+  channel the detail mask names.
+
+So a decal has three real routes, and "a decal channel" is not one of them:
+
+1. **Bake it into the base map** - what this tool does. One shader, the tint
+   mask still works, no extra tags, no mip problems.
+2. **Detail map, masked by multipurpose red.** The decal art as the detail map
+   (usage `detail map`, DXT5 or 32-bit), red white where it shows and black
+   elsewhere, detail mask set to auxiliary. The engine multiplies or adds rather
+   than lerps, and detail maps are built to tile and fade to grey in the mips,
+   so this suits grain far better than a placed logo.
+3. **Extra geometry with its own shader** - faces a hair above the surface and
+   a `shader_model` with the `alpha blended decal` flag (0x8) and two-sided,
+   its base map carrying the real alpha. That is how overlays on objects are
+   done; the `decal` tag itself only draws on BSP surfaces.
+
 ## Recovering this project from GitHub alone
 
 Nothing here lives on a machine or in a chat: the repository is the project, and
