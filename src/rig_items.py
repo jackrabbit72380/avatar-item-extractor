@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v49"
-BUILD = "2026-11-23 thumb-seated-in-the-palm"
+VERSION = "v50"
+BUILD = "2026-11-23 thumb-seated-and-tested"
 
 # How much of the hand bone the glove's thumb guard rides, at its base and at
 # its tip. The guard sits proud of the palm and Halo's thumb bone runs outside
@@ -1528,6 +1528,50 @@ def ride_chain(per, point, armature_fp, side, key, influences=2, power=4.0):
     return per
 
 
+def seat_thumb(weights, position, base, tip, hand_bone, side=None,
+               side_of=None):
+    """Give a glove's thumb guard a share of the hand bone, falling off along it.
+
+    The guard is a plate standing proud of the glove, and Halo's thumb bone runs
+    outside it, so a guard weighted wholly to the thumb swings off the palm the
+    moment the thumb bends and opens the gap underneath. A guard weighted wholly
+    to the hand stays put and the thumb goes dead. The share of the hand bone
+    therefore falls off from THUMB_SEATED at the guard's base to THUMB_FREE at
+    its tip: the plate stays seated where it meets the glove and its tip still
+    follows the thumb bone.
+
+    `weights` maps a vertex index to {bone: weight} and is changed in place;
+    `position` gives each vertex's carried position; `base` and `tip` are the
+    thumb chain's own ends. Returns the indices it seated.
+    """
+    span = [tip[k] - base[k] for k in range(3)]
+    span_sq = sum(value * value for value in span) or 1.0
+    seated = []
+    for index in sorted(weights):
+        if side is not None and side_of is not None:
+            try:
+                owner = side_of[index]
+            except (KeyError, IndexError):
+                continue
+            if owner != side:
+                continue
+        per = weights[index]
+        held = sum(weight for name, weight in per.items()
+                   if finger_of(name) == "thumb")
+        if held <= 0.05:
+            continue
+        point = position[index]
+        along = sum((point[k] - base[k]) * span[k] for k in range(3)) / span_sq
+        along = max(0.0, min(1.0, along))
+        share = THUMB_SEATED + (THUMB_FREE - THUMB_SEATED) * along
+        for name in list(per):
+            if finger_of(name) == "thumb":
+                per[name] *= (1.0 - share)
+        per[hand_bone] = per.get(hand_bone, 0.0) + share
+        seated.append(index)
+    return seated
+
+
 def finger_split(point, armature_fp, side, influences=2, power=4.0):
     """How much of a glove vertex rides Halo's fingers, and on which of them.
 
@@ -2243,29 +2287,11 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
             entries = finger_chains(armature_fp, side).get("thumb")
             if not entries:
                 continue
-            base_point = list(entries[0][1])
-            tip_point = list(entries[-1][2])
-            span = [tip_point[k] - base_point[k] for k in range(3)]
-            span_sq = sum(value * value for value in span) or 1.0
-            hand_bone = "frame %s wriste" % side
-            for index in order:
-                if side_of[index] != side or index not in finals:
-                    continue
-                held = sum(weight for name, weight in finals[index].items()
-                           if finger_of(name) == "thumb")
-                if held <= 0.05:
-                    continue
-                point = moved_points[index]
-                along = sum((point[k] - base_point[k]) * span[k]
-                            for k in range(3)) / span_sq
-                along = max(0.0, min(1.0, along))
-                share = THUMB_SEATED + (THUMB_FREE - THUMB_SEATED) * along
-                seated.setdefault(side, []).append(index)
-                for name in list(finals[index]):
-                    if finger_of(name) == "thumb":
-                        finals[index][name] *= (1.0 - share)
-                finals[index][hand_bone] = (finals[index].get(hand_bone, 0.0)
-                                            + share)
+            seated[side] = seat_thumb(finals, moved_points,
+                                      list(entries[0][1]),
+                                      list(entries[-1][2]),
+                                      "frame %s wriste" % side,
+                                      side=side, side_of=side_of)
 
     for index in order:
         per = finals.get(index)

@@ -250,6 +250,10 @@ from the body and the player sees the arms, not the body's:
   tip - which keeps the plate seated while its tip still follows the
   thumb. Posed at 30/25/20 that takes the worst edge from x2.49 to x2.04,
   and a full grip from x2.49 to x2.29, with no edge past x3 either way.
+  `tools/test_thumb_seated.py` pins it: it builds a plate the way the guard
+  is built, seats it, and checks the guard's base moves by (1 - share) of
+  what it moved before when the thumb bone turns - and it fails when the
+  seating is removed or stops falling off along the thumb.
 
   Its vertex groups are renamed to Halo's (`frame l upperarm`,
   `frame l forearm`, `frame l wriste`), and a glove the item weighted to its
