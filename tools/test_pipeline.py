@@ -626,6 +626,41 @@ def main():
                 print("\nFAIL: an item is still named after its bin file")
                 return 1
 
+        # The HEK tree is named once, by the item's own stem: data\<stem>\ with
+        # bitmaps, models and animations inside it. Naming the bitmap folders
+        # from the item's id instead left a second data\<GUID>\ folder beside
+        # the named one - the rigging pass names its folders by the stem - so
+        # one item arrived split across two folders, one called after a hex id.
+        guid = "00000FFC39723261C09A3B1E4D530877"
+        split = os.path.join(work, "split")
+        os.makedirs(split)
+        with open(os.path.join(split, guid + ".bin"), "wb") as handle:
+            handle.write(b"STRB" + b"\0" * 60)
+        real_title = extract_items.item_title
+        extract_items.item_title = lambda name, path, item_id: ("UNSC Armor", "test")
+        try:
+            out7 = os.path.join(work, "split-out")
+            code = extract_items.main(["--root", split, "--obj", "--out", out7])
+        finally:
+            extract_items.item_title = real_title
+        if code not in (0, None):
+            print("FAIL: the titled run returned %r" % (code,))
+            return 1
+        # A single item's output folder is renamed to its title, so look there.
+        folder = os.path.join(work, "UNSC Armor")
+        if not os.path.isdir(folder):
+            folder = out7
+        data7 = os.path.join(folder, "extracted for hek users", "xbox", "data")
+        folders = sorted(os.listdir(data7)) if os.path.isdir(data7) else []
+        print("  hek data folders   -> %r" % (folders,))
+        if folders != ["UNSC Armor"]:
+            print("\nFAIL: one item's HEK tree was split into %r" % (folders,))
+            return 1
+        for kind in ("bitmaps", "models", "animations"):
+            if not os.path.isdir(os.path.join(data7, "UNSC Armor", kind)):
+                print("\nFAIL: data\\UNSC Armor\\%s was not made" % kind)
+                return 1
+
         print("\nPASS: nameless bins come out as extracted1, extracted2; the GUID keeps its name")
         print("Not covered: the rigging half (.fbx, .glb, .blend, .jms, the")
         print("report's scene section) needs Blender and cannot run here.")

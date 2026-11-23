@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v31"
-BUILD = "2026-11-23 fp-arms-glove-report"
+VERSION = "v32"
+BUILD = "2026-11-23 hek-one-folder"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -2532,7 +2532,12 @@ def main():
     os.makedirs(hek_data, exist_ok=True)
     stems = []
     for record, merged, nxe, arms_item, arms_rig in rigged:
-        stem = os.path.splitext(os.path.basename(record.get("obj") or record["id"]))[0]
+        # The one name extraction gave the item - its title, or its id when
+        # nothing names it - so this pass writes into the same data\<item>\
+        # that holds the bitmaps. The .obj's own name is the fallback for a
+        # catalogue written by a build that did not record it.
+        stem = record.get("stem") or os.path.splitext(
+            os.path.basename(record.get("obj") or record["id"]))[0]
         stems.append(stem)
         # data\<item>\ is what tool.exe takes as its source directory, and it
         # looks inside models\ for the .jms and animations\ for animation data.

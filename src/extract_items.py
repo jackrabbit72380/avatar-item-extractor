@@ -1579,6 +1579,9 @@ def main(argv=None):
                 "name": name or "",
                 "title": title,
                 "title_source": title_source,
+                # The one name every file and folder for this item uses: its
+                # title, or its id when nothing names it.
+                "stem": stem,
                 "categories": categories,
                 "bodies": bodies,
                 "file": os.path.basename(path),
@@ -1947,7 +1950,12 @@ def main(argv=None):
     # One pass at the end: every file exists by now, so the item's folder can be
     # sorted for the program the person opening it uses, and the catalogue can
     # say where each file actually is.
-    organise(out, [record["id"] for record in records if record.get("id")])
+    # data\<item>\ is named from the item's stem, the same name its .obj, its
+    # bitmaps and the rigging pass's models\ and animations\ folders use. It is
+    # not the id: an item whose title comes from its package has a hex GUID for
+    # an id, and naming the bitmap folders by that put a second data\<GUID>\
+    # beside the item's own, splitting one item across two folders.
+    organise(out, [record["stem"] for record in records if record.get("stem")])
     for record in records:
         for key in ("obj", "mtl"):
             if record.get(key):
