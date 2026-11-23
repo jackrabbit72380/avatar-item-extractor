@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v42"
-BUILD = "2026-11-23 fp-arms-angle-cross-checked"
+VERSION = "v43"
+BUILD = "2026-11-23 hand-items-and-tee-fixed"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -542,6 +542,19 @@ def hand_bone(binding):
         if binding == name or binding.startswith(name + " "):
             return name
     return None
+
+
+def hand_item(prop, binding):
+    """The biped bone a hand item rides, or None when it is not a hand item.
+
+    Only a prop rides one bone. Deciding this from the binding line alone takes
+    any garment whose top-weighted bone happens to be an arm - a tee's shoulders
+    are on the upper arms - and puts the whole shirt on the first-person hand,
+    rigid, as if it were a ring.
+    """
+    if not prop:
+        return None
+    return hand_bone(binding or "")
 
 
 def place_on_arms(item, biped, arms, bone_name):
@@ -1137,7 +1150,7 @@ def carry_onto(place, points, want, rebuild, rounds=3, most=12.0):
         return None
 
     def angle_of(candidate):
-        own = arm_direction(points)
+        own = arm_axis(points)[0]
         if own is None:
             return None
         held = turn_point(candidate["turn"], own)
@@ -1153,7 +1166,7 @@ def carry_onto(place, points, want, rebuild, rounds=3, most=12.0):
     for _round in range(rounds):
         if best_angle < 0.05:
             break
-        own = arm_direction(points)
+        own, _centre = arm_axis(points)
         if own is None:
             break
         held = turn_point(best["turn"], own)
@@ -1188,7 +1201,7 @@ def sleeve_points(object_data, side):
     return points
 
 
-def sleeve_angle(arms, armature_fp):
+def sleeve_angle(arms, armature_fp, rule="wide"):
     """How far the carried sleeves sit from Halo's, judged a different way.
 
     The fit turns each side until the line between the middles of its two ends
@@ -1212,8 +1225,11 @@ def sleeve_angle(arms, armature_fp):
         theirs = halo.get(side) or []
         if len(mine) < 12 or len(theirs) < 12:
             continue
-        here, _centre = arm_axis(mine)
-        there, _centre = arm_axis(theirs)
+        if rule == "ends":
+            here, there = arm_direction(mine), arm_direction(theirs)
+        else:
+            here, _centre = arm_axis(mine)
+            there, _centre = arm_axis(theirs)
         if here is None or there is None:
             continue
         cosine = abs(sum(here[i] * there[i] for i in range(3)))
@@ -2298,6 +2314,12 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         arms["sleeve_angle_worst"] = max(angles.values())
         log("sleeve angle vs Halo's own arm (widest direction, not the fit's "
             "rule): %s deg" % arms["sleeve_angles"])
+    ends = sleeve_angle(arms, armature_fp, rule="ends")
+    if ends:
+        arms["sleeve_ends"] = ", ".join(
+            "%s %.2f" % (side, value) for side, value in sorted(ends.items()))
+        log("sleeve angle vs Halo's own arm (line between the ends): %s deg"
+            % arms["sleeve_ends"])
     # The glove's fingers ride Halo's finger bones, so those bones have to be
     # inside the glove. This is the check a person makes in the viewport: bones
     # standing out of the fingertips mean the arm stopped short of the hand.
@@ -2387,6 +2409,14 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
             arms.data.name = arms.name
             bpy.context.scene.collection.objects.link(arms)
             place_on_arms(arms, armature, armature_fp, bone_name)
+            # The copy came off the body, so it carries the body's biped
+            # groups. Those bones are not on the first-person rig: left in
+            # place every vertex keeps a second weight on a node the arms'
+            # .jms does not have, and tool.exe is handed a model with every
+            # one of its weights on no node. A rigid bind is one bone, so the
+            # slate is cleared first.
+            for group in list(arms.vertex_groups):
+                arms.vertex_groups.remove(group)
             record["arms_binding"] = skin(arms, armature_fp, rigid=True)
             return arms, armature_fp
         arms, rig = arm_region(merged, armature, armature_fp)
@@ -3292,7 +3322,11 @@ def main():
                 record["placement"] = "body height, grown from the floor"
             to_halo_space(merged, fit, keep_position=prop, anchor=anchor)
             record["binding"] = skin(merged, armature, rigid=prop)
-            bone_name = hand_bone(record.get("binding") or "")
+            # Only a prop rides one bone. Reading the binding line instead
+            # takes any garment whose top-weighted bone happens to be an arm -
+            # a tee's shoulders are on the upper arms - and puts the whole
+            # shirt on the first-person hand, rigid, as if it were a ring.
+            bone_name = hand_item(prop, record.get("binding") or "")
             if armature_fp:
                 arms_item, arms_rig = arms_for(merged, armature, armature_fp,
                                                bone_name, record)
