@@ -159,9 +159,12 @@ from the body and the player sees the arms, not the body's:
   knuckles each glove vertex is weighted onto the two nearest bones of **its own
   finger's chain** - `frame l index`, `middle`, `ring`, `pinky` or `thumb`, each in
   its low/mid/tip bones - so the glove closes round a rifle the way the game's
-  hand does, and no weight reaches across to the finger next door. The hand-over
-  is smooth along the finger, and it is eased out again at the knuckles, which
-  leaves the palm and any knuckle plate on `frame l wriste`.
+  hand does, and no weight reaches across to the finger next door. The weight is
+  measured along that finger, not along Halo's hand: a glove's fingers stop short
+  of Halo's, and measured from the wrist the half of every glove finger nearest
+  the knuckle stayed on the hand bone while the rest curled - the bend collected
+  in one loop and creased the knuckle. It fades out where the finger is no nearer
+  than the hand bone, which leaves the palm on `frame l wriste`.
 
   A glove is often one surface across two fingers rather than separate fingers:
   the Marine's is a single 226-vertex skin, and the skin between its index and

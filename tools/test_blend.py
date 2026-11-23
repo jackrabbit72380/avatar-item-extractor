@@ -799,10 +799,17 @@ def main():
             # Where the thumb's skin meets the index's the thumb only just wins,
             # so the weight has to fade in there: at full strength it tore the
             # seam, a thumb-tip vertex pulling away from an index one beside it.
-            seam = module.finger_split(Vec(23.8, 9.0, 2.0), hand_rig, "l")
-            print("  finger_split seam  -> grip %.2f" % (seam[0] if seam else -1.0))
-            if seam is None or not 0.2 < seam[0] < 0.85:
-                fail("the seam with the index took full thumb weight: %r" % (seam,))
+            # The measure is the finger's own length: a vertex just past the
+            # knuckle must already be taking some of the finger, or the bend
+            # collects in the one loop at the knuckle and creases it.
+            knuckle_side = module.finger_split(Vec(25.6, 9.9, 1.5), hand_rig, "l")
+            print("  finger_split near  -> grip %.2f on %r"
+                  % (knuckle_side[0] if knuckle_side else -1.0,
+                     max(knuckle_side[1], key=knuckle_side[1].get)
+                     if knuckle_side else None))
+            if knuckle_side is None or not 0.4 < knuckle_side[0] < 0.95:
+                fail("the glove finger nearest its knuckle was left on the hand: %r"
+                     % (knuckle_side,))
             # A glove finger is often one piece with the one beside it, and a
             # piece split between two fingers tears itself in two when they curl
             # apart. A shared piece rides the one finger it mostly is.

@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v38"
-BUILD = "2026-11-23 fp-arms-shared-skin"
+VERSION = "v39"
+BUILD = "2026-11-23 fp-arms-own-finger-measure"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -1205,27 +1205,26 @@ def finger_split(point, armature_fp, side, influences=2, power=4.0):
 
     Halo's own first-person hands close with their finger bones, so a glove that
     rides the hand bone alone cannot hold anything the way the game does: its
-    fingers go wherever a wrist goes and never close round a weapon. Past the
-    knuckles a glove vertex is given to the two nearest bones of *its own*
-    finger, so the weight changes smoothly along the finger instead of reaching
-    across to the one beside it, and it is eased out at the knuckles again so the
-    palm - and a knuckle plate - stay on Halo's hand bone.
+    fingers go wherever a wrist goes and never close round a weapon. A glove
+    vertex is given to the two nearest bones of *its own* finger, so the weight
+    changes smoothly along that finger instead of reaching across to the one
+    beside it.
 
-    The thumb is found by its own chain rather than by how far along the hand it
-    lies. It sits beside the wrist and never crosses the knuckle line the other
-    fingers do, so the hand's own measure put it *behind* that line: its whole
-    guard stayed on the wriste bone and did not move with the thumb at all. It
-    is its own piece of the hand, recognised by being nearer the thumb chain than
-    the hand bone or another finger, and it eases in from its base over the first
-    part of its length so it still joins the glove's palm smoothly.
+    The measure is the vertex's own finger, not Halo's hand. A glove's fingers do
+    not reach as far along Halo's arm as Halo's own do, so a measure taken from
+    the wrist left the half of every glove finger nearest the knuckle on the hand
+    bone while the rest curled: the bend collected in a single loop and the
+    knuckles creased. Measured along the finger itself, the weight rises from the
+    knuckle outwards over the first part of the finger, and the palm - which lies
+    behind the knuckle - stays on the hand bone. That is also how the thumb is
+    found, which is why it no longer needs a rule of its own: it sits beside the
+    wrist and never crosses the knuckle line, so a hand-long measure put its whole
+    guard behind that line and it did not move with the thumb at all.
 
-    Being nearer is not the whole of it, though. The skin at the base of the
-    index finger is also a little nearer the thumb chain than anything else, and
-    taking that at full weight tore a three-times stretch across the edge where
-    it meets the index: two neighbouring vertices, one on the thumb's tip bone and
-    one on the index's. So the weight also fades in with how *clearly* a vertex is
-    the thumb's - the distance it wins by, as a share of the distance to the
-    nearest rival - which leaves the seam reading as the seam it is.
+    The weight fades out where the finger is no nearer than the hand bone, which
+    keeps the palm and a knuckle plate where they belong, and a glove that is one
+    surface across two fingers shares the weight between both there instead of
+    picking one and tearing the joining skin.
 
     Returns (grip, shares): `grip` is how much of the vertex belongs to the
     fingers at all and `shares` divides that between its finger's bones. None
@@ -1235,7 +1234,6 @@ def finger_split(point, armature_fp, side, influences=2, power=4.0):
     chains = finger_chains(armature_fp, side)
     if span is None or not chains:
         return None
-    head, axis, length, knuckle = span
     near_chain = []
     for key, entries in chains.items():
         gap = min(point_segment_distance(point, first, second)
@@ -1262,6 +1260,9 @@ def finger_split(point, armature_fp, side, influences=2, power=4.0):
         total = sum(weight for weight, _name in weights)
         if total <= 0.0:
             continue
+        # No cutoff between fingers, only a fall-off: a switch at a distance
+        # would itself be a step in the weight, and the skin joining two
+        # fingers has to pass smoothly from one to the other.
         pull = 1.0 / ((chain_gap + 0.3) ** power)
         for weight, name in weights:
             shares[name] = shares.get(name, 0.0) + pull * weight / total
@@ -1276,33 +1277,28 @@ def finger_split(point, armature_fp, side, influences=2, power=4.0):
     if kept:
         total = sum(kept.values())
         shares = {name: weight / total for name, weight in kept.items()}
-    if key == "thumb":
-        wrist = getattr(getattr(armature_fp, "data", None), "bones", None)
-        wrist = wrist.get("frame %s wriste" % side) if wrist is not None else None
-        others = [reach for reach, name in near_chain if name != "thumb"]
-        if wrist is not None:
-            nearest_rival = min(
-                others + [point_segment_distance(
-                    point, armature_fp.matrix_world @ wrist.head_local,
-                    armature_fp.matrix_world @ wrist.tail_local)])
-            if gap < nearest_rival:
-                base = entries[0][1]
-                tip = entries[-1][2]
-                reach = [tip[i] - base[i] for i in range(3)]
-                length = math.sqrt(sum(value * value for value in reach))
-                if length > 1e-6:
-                    along = sum((point[i] - base[i]) * reach[i]
-                                for i in range(3)) / (length * length)
-                    ease = min(1.0, max(0.0, along / 0.45))
-                    won = (nearest_rival - gap) / max(nearest_rival, 1e-6)
-                    hold = min(1.0, max(0.0, won / 0.5))
-                    grip = (ease * ease * (3.0 - 2.0 * ease)
-                            * hold * hold * (3.0 - 2.0 * hold))
-                    return grip, shares
-    t = sum((point[i] - head[i]) * axis[i] for i in range(3)) / length
-    start = min(max(knuckle / length, 0.15), 0.85)
-    grip = min(1.0, max(0.0, (t - start) / (1.0 - start)))
-    grip = grip * grip * (3.0 - 2.0 * grip)
+    wrist = getattr(getattr(armature_fp, "data", None), "bones", None)
+    wrist = wrist.get("frame %s wriste" % side) if wrist is not None else None
+    if wrist is None:
+        return None
+    hand_gap = point_segment_distance(
+        point, armature_fp.matrix_world @ wrist.head_local,
+        armature_fp.matrix_world @ wrist.tail_local)
+    if gap >= hand_gap:
+        return 0.0, shares
+    base = entries[0][1]
+    tip = entries[-1][2]
+    stretch = [tip[i] - base[i] for i in range(3)]
+    reach = math.sqrt(sum(value * value for value in stretch))
+    if reach <= 1e-6:
+        return None
+    along = sum((point[i] - base[i]) * stretch[i]
+                for i in range(3)) / (reach * reach)
+    ease = min(1.0, max(0.0, along / 0.45))
+    won = (hand_gap - gap) / max(hand_gap, 1e-6)
+    hold = min(1.0, max(0.0, won / 0.5))
+    grip = (ease * ease * (3.0 - 2.0 * ease)
+            * hold * hold * (3.0 - 2.0 * hold))
     return grip, shares
 
 
