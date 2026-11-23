@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v47"
-BUILD = "2026-11-23 thumb-onto-halos-thumb"
+VERSION = "v48"
+BUILD = "2026-11-23 thumb-weighed-not-moved"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -2258,22 +2258,18 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                 log("%s arm: its glove is too round to say which way round it "
                     "goes, so it keeps the roll the item gave it" % side)
 
-    # Edges the thumb pass moves itself. It checks them against where it found
-    # them, so the carry check below must not count its deliberate move against
-    # the item's authored mesh - that baseline reports a tear for an edge the
-    # carry had already taken to 2.99x, which the player cannot see.
-    thumb_edges = set()
-    # The glove's thumb is the item's own guard, and where it sits is geometry,
-    # not weights: weights only decide how a vertex moves when a bone does, so
-    # no weighting can change the shape the bind pose shows. Measured on the
-    # Marine, the guard's middle sits 1.6 units from Halo's own thumb's - 1.5 of
-    # that straight out of the back of the hand - and it runs 31-36 degrees off
-    # the thumb's chain, which is why it reads as a fat finger lying along the
-    # index. So it is moved onto Halo's own thumb: the rig file ships the arms
-    # the game draws, bound to the same bones, so its thumb is the shape the
-    # glove has to cover. The move is rigid and takes hold at the seam where the
-    # guard joins the glove, so the guard keeps its shape and the glove keeps
-    # its own; it is put back if it stretches an edge or does not close the gap.
+    # The glove's thumb is the item's own guard, and it does not sit where
+    # Halo's thumb does: measured on the Marine it runs 31-36 degrees off
+    # Halo's thumb chain and its middle stands 1.5 units past the chain's end,
+    # which is why it reads as a fat finger lying along the index. That is the
+    # item's shape, and it is reported rather than moved. Turning the guard onto
+    # the chain was tried both ways and is worse both times: about the chain's
+    # joint it swung the whole guard off the bones (all three thumb bones 1.5
+    # units outside it), and about its own base, re-centred on the chain, it tore
+    # the glove where the guard joins it (24 edges past x3) and still left the
+    # base bones outside. What makes a thumb read wrong in game is the weight it
+    # deforms with, and that is fixed above: it is weighted along its own chain,
+    # so its base moves with its base bone, and none of it rides the forearm.
     if armature_fp is not None:
         for side in ("l", "r"):
             entries = finger_chains(armature_fp, side).get("thumb")
@@ -2298,15 +2294,6 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
             gaps = [min(math.dist(point, coords[slot[index]])
                         for index, _weight in mine) for point in points]
             solid = [index for index, weight in mine if weight >= 0.5]
-            # The guard is a shell - a piece that is mostly thumb - so the whole
-            # piece moves. Moving only the vertices that are mostly thumb leaves
-            # the rest of its own skin behind and stretches it (x4.3 measured).
-            guard = {index for index, _weight in mine}
-            for piece in pieces:
-                indices = piece["indices"]
-                if indices and sum(1 for index in indices if index in solid) \
-                        >= 0.5 * len(indices):
-                    guard.update(index for index in indices if index in slot)
             lying = (arm_direction([tuple(coords[slot[index]]) for index in solid])
                      if len(solid) >= 12 else None)
             base = points[0]
@@ -2317,125 +2304,10 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                 want = [value / reach for value in want]
                 off = math.degrees(math.acos(max(-1.0, min(1.0, sum(
                     lying[k] * want[k] for k in range(3))))))
-
-            target = halo_thumb(armature_fp, side)
-            apart = 0.0
-            closed = 0.0
-            worst_edge = 1.0
-            if len(target) >= 12 and len(guard) >= 12:
-                theirs = [Vector(point) for point in target]
-                there = sum(theirs, Vector()) / len(theirs)
-                cloud = [Vector(coords[slot[index]]) for index in guard]
-                centre = sum(cloud, Vector()) / len(cloud)
-                apart = (centre - there).length
-                own = arm_direction([tuple(point) for point in cloud])
-                aim = arm_direction([tuple(point) for point in theirs])
-                if own is not None and aim is not None:
-                    cosine = max(-1.0, min(1.0, sum(own[k] * aim[k]
-                                                  for k in range(3))))
-                    angle = math.acos(cosine)
-                    across = [own[1] * aim[2] - own[2] * aim[1],
-                              own[2] * aim[0] - own[0] * aim[2],
-                              own[0] * aim[1] - own[1] * aim[0]]
-                    span = math.sqrt(sum(value * value for value in across))
-                    if span > 1e-6 and apart > 0.2:
-                        across = [value / span for value in across]
-                        # Hinged where the guard joins the glove: those vertices
-                        # barely move, so the seam is not pulled apart, and the
-                        # guard itself is rigid past a short band.
-                        seam = set()
-                        for piece in pieces:
-                            for polygon in piece["faces"]:
-                                loop = list(polygon.vertices)
-                                for first, second in zip(loop,
-                                                         loop[1:] + loop[:1]):
-                                    if first in guard and second not in guard:
-                                        seam.add(first)
-                                    elif second in guard and first not in guard:
-                                        seam.add(second)
-                        hinge = [Vector(coords[slot[index]]) for index in seam]
-                        pivot = (sum(hinge, Vector()) / len(hinge) if hinge
-                                 else centre)
-
-                        def hold(index):
-                            """How much of the move a vertex takes: none at the
-                            seam, all of it a little way in.
-
-                            Feathered from the seam's middle rather than by
-                            pinning the seam's own ring: pinning the ring makes
-                            the ramp steep and stretches the guard's own skin
-                            (x2.6 measured), where a band from the middle leaves
-                            the guard rigid past 0.8 units and the join to flex.
-                            """
-                            part = (Vector(coords[slot[index]]) - pivot).length
-                            part = min(1.0, max(0.0, part / 0.8))
-                            return part * part * (3.0 - 2.0 * part)
-
-                        moved = guard
-                        kept_before = {index: Vector(coords[slot[index]])
-                                       for index in moved}
-                        for piece in pieces:
-                            for polygon in piece["faces"]:
-                                loop = list(polygon.vertices)
-                                for first, second in zip(loop,
-                                                         loop[1:] + loop[:1]):
-                                    if first in guard and second in guard:
-                                        thumb_edges.add((min(first, second),
-                                                         max(first, second)))
-                        for index in moved:
-                            part = hold(index)
-                            turn = turn_about(across, angle * part)
-                            coords[slot[index]] = place_point(
-                                turn, tuple(pivot), tuple(pivot),
-                                coords[slot[index]])
-                        settled = sum((Vector(coords[slot[index]])
-                                       for index in guard), Vector()) / len(guard)
-                        shift = there - settled
-                        for index in moved:
-                            part = hold(index)
-                            coords[slot[index]] = tuple(
-                                coords[slot[index]][k] + shift[k] * part
-                                for k in range(3))
-                        closed = (sum((Vector(coords[slot[index]])
-                                       for index in guard), Vector()) / len(guard)
-                                  - there).length
-                        # Measured against where the carry had put the guard,
-                        # so the carry's own scale is not counted as a stretch.
-                        was_at = kept_before
-                        for piece in pieces:
-                            for polygon in piece["faces"]:
-                                loop = list(polygon.vertices)
-                                for first, second in zip(loop,
-                                                         loop[1:] + loop[:1]):
-                                    if first not in was_at or second not in was_at:
-                                        continue
-                                    was = (was_at[first] - was_at[second]).length
-                                    if was <= 1e-6:
-                                        continue
-                                    now = (Vector(coords[slot[first]])
-                                           - Vector(coords[slot[second]])).length
-                                    worst_edge = max(worst_edge,
-                                                     max(now / was, was / now))
-                        if closed > 0.35 or worst_edge > 1.6:
-                            for index, point in kept_before.items():
-                                coords[slot[index]] = point
-                            closed = apart
-                            log("%s thumb: kept where the item put it - moving "
-                                "it onto Halo's own thumb left %.2f units and "
-                                "stretched edges x%.2f"
-                                % (side, closed, worst_edge))
-                        else:
-                            log("%s thumb: moved %.2f units onto Halo's own "
-                                "thumb (%.1f degrees about its seam), %d "
-                                "vert(s), edges x%.2f, guard %.1f degrees off "
-                                "the chain, worst bone gap %.2f units"
-                                % (side, apart, math.degrees(angle), len(guard),
-                                   worst_edge, off, max(gaps)))
-            if not (len(target) >= 12 and len(guard) >= 12):
-                log("%s thumb: %d vert(s) weighted along its own chain, guard "
-                    "%.1f degrees off Halo's thumb chain, worst bone gap %.2f "
-                    "units - left where the item put it, with no Halo thumb to "
-                    "measure it against" % (side, len(mine), off, max(gaps)))
+            log("%s thumb: %d vert(s) weighted along its own chain, guard %.1f "
+                "degrees off Halo's thumb chain, worst bone gap %.2f units - "
+                "left where the item put it"
+                % (side, len(mine), off, max(gaps)))
 
     faces, flips = [], []
     turned_out = 0
@@ -2504,8 +2376,6 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
             loop = list(polygon.vertices)
             for first, second in zip(loop, loop[1:] + loop[:1]):
                 if first not in slot or second not in slot:
-                    continue
-                if (min(first, second), max(first, second)) in thumb_edges:
                     continue
                 was = (object_data.matrix_world @ mesh.vertices[first].co
                        - object_data.matrix_world @ mesh.vertices[second].co).length
@@ -3079,28 +2949,6 @@ def halo_arms(armature_fp):
         return own
     return [item for item in meshes
             if not item.name.lower().endswith("arms")]
-
-
-def halo_thumb(armature_fp, side):
-    """Halo's own thumb, as points in world space.
-
-    The rig file ships the arms the game draws, and that mesh is bound to the
-    same bones, so its thumb is the one thing that can say where a thumb belongs
-    on Halo's hand and which way it runs. A glove's own guard can be modelled
-    anywhere; this is the shape it has to cover.
-    """
-    prefix = "frame %s thumb" % side
-    found = []
-    for item in halo_arms(armature_fp):
-        groups = {group.index: group.name for group in item.vertex_groups}
-        matrix = item.matrix_world
-        for vertex in getattr(item.data, "vertices", []) or []:
-            for entry in getattr(vertex, "groups", []) or []:
-                name = groups.get(entry.group, "")
-                if name.startswith(prefix) and entry.weight > 0.05:
-                    found.append(matrix @ vertex.co)
-                    break
-    return found
 
 
 def halo_hand(armature_fp, side, reach=3.6, limit=400):

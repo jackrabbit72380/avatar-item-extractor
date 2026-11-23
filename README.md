@@ -214,20 +214,24 @@ from the body and the player sees the arms, not the body's:
   and upper arm is handed over with the hand's, by the same grip fade. The thumb
   tip now carries none.
 
-  Where the guard sits is geometry, not weights: weights only decide how a
-  vertex moves when a bone does, so no weighting can change the shape the bind
-  pose shows. On the Marine the guard's middle stood 1.6 units from Halo's own
-  thumb's - 1.5 of that straight out of the back of the hand - and ran 31-36
-  degrees off the thumb's chain, which is why it read as a fat finger lying along
-  the index. It is therefore moved onto Halo's own thumb: the rig file ships the
-  arms the game draws, bound to the same bones, so its thumb is the shape the
-  glove has to cover. The guard turns about the seam where it joins the glove,
-  and its middle lands on Halo's - 1.4 units on the left, 1.1 on the right - and
-  it is put back if the move stretches its skin past 1.6x or leaves it more than
-  0.35 units out. Measured: x1.46 and x1.59 on its own edges, and no edge differs
-  by more than 3x between the moved and the unmoved build. The two edges the
-  report still flags at 3.0x are the join's, which the carry had already taken to
-  2.99x before the thumb moved at all.
+  The guard itself is left where the item put it, and the report says where that
+  is: on the Marine it runs 31-36 degrees off Halo's thumb chain and its middle
+  stands 1.5 units past the chain's end, which is why it reads as a fat finger
+  lying along the index rather than a thumb set apart from the fingers. Moving it
+  onto the chain was tried both ways and is worse both times. Turned about the
+  chain's joint it swung the whole guard off the bones (all three thumb bones 1.5
+  units outside it); turned about its own base and re-centred on the chain it tore
+  the glove where the guard joins it (24 edges past x3) and still left the base
+  bones outside. A guard that does not fit the thumb it was given is the item's
+  shape, and the one thing that cannot be fixed without re-modelling it.
+
+  A turntable of the glove from ten angles, both hands, is what settled that.
+  The guard is an open shell: it closes against the palm only in the place it
+  was modelled, so every move that changes its tilt opens its base to the
+  camera - a black cavity at the thumb's root from a00, a135 and a180, and a
+  dark wedge at a225 to a315, where the unmoved glove shows none. Moving it
+  made the one view better and the other nine worse, so it stays where the
+  item put it and the weights carry the fix.
 
   Its vertex groups are renamed to Halo's (`frame l upperarm`,
   `frame l forearm`, `frame l wriste`), and a glove the item weighted to its
