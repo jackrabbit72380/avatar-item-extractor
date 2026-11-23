@@ -437,13 +437,13 @@ flat 64x64 image, `<stem> colour.*`. The `.mtl` names it with `map_Kd`, so the
 colour survives import in Max and Blender rather than being dropped along with
 `Kd`, and the `.tif` is a bitmap source for Halo CE's tool.
 
-When the file states no colour at all - which is every garment: no colour table,
-no batch colour and no pixels - the colour is taken from the item's own icon, the
-closet thumbnail it ships with: the page the item sits on and its near-black
-outline do not vote, and what is drawn is averaged. That is the only colour such
-an item carries, and it is what paints the base map, the multipurpose maps and
-the `.mtl`. `report.txt` says where the colour came from, and only an item with
-no icon at all falls back to clay `#CCCCCC`.
+When an item states no colour at all - no colour table, no batch colour and no
+texture of its own - the colour is taken from its own icon, the closet thumbnail
+it ships with: the page the item sits on and its near-black outline do not vote,
+and what is drawn is averaged. `report.txt` says where the colour came from, and
+only an item with no icon either falls back to clay `#CCCCCC`. An item that
+carries a base map never needs it: its own pixels paint the base map, the `.mtl`
+and the blend.
 
 Every block the container held is named in `catalogue.json` and in `report.txt` -
 its id, its name and its size - and the two that say what an item *is* are read,
@@ -459,6 +459,20 @@ names its slots there and each slot states its size, format and whether it holds
 anything - and only falls back to a texture kept in its own block when the model
 has no table at all. A table of empty slots means there is no base map to write,
 and the report says so.
+
+That table is where an item's colours actually are, and reading it is not
+optional: a garment ships its whole look as three slots - a base colour map, a
+tint mask and a decal - and every material names which slot each one comes from
+(id 1 base, 2 mask, 3 decal). The Marine armour's base map is a 256x128 DXT1
+sheet of olive plates, khaki fatigues and dark straps, and its tint mask is a
+32x32 DXT5 that becomes the multipurpose map's colour-change channel. Two things
+had to be right to read them: the pixels are the *compressed* size the slot's
+format implies (half a byte a texel for DXT1, one for DXT5), not the padded
+`bytes a frame` in the header - a 32x32 mask says 4,096 there and stores 1,024 -
+and they are tens of kilobytes, so they cannot be read through the bit reader the
+meshes use. Reading the padded size walked off the table and lost every slot after
+the first; `tools/test_model_texture.py` pins both, and the third slot is read
+after an empty one to prove the walk keeps its place.
 
 Each item also gets the packed mask bitmap `shader_model` wants, in both channel
 orders, plus the team-colour mask on its own as

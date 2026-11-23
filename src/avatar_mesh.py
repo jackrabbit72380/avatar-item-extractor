@@ -98,6 +98,20 @@ class BitStream:
     def read_u32(self):
         return self.read(32)
 
+    def read_bytes(self, count):
+        """Whole bytes as they sit, for data the stream does not bit-pack.
+
+        Textures are byte-aligned and can be tens of kilobytes, so they cannot
+        go through read(), which is a 64-bit field reader.
+        """
+        if self.offset % 8:
+            raise Malformed("read_bytes at a bit offset")
+        at = self.offset // 8
+        if at + count > len(self.data):
+            raise Malformed("read past the end of the block")
+        self.offset += 8 * count
+        return self.data[at:at + count]
+
     def read_i32(self):
         v = self.read(32)
         return v - (1 << 32) if v & (1 << 31) else v
@@ -290,6 +304,32 @@ def half_to_float(bits):
     return sign * (1.0 + mantissa / 1024.0) * 2.0 ** (exponent - 15)
 
 
+def texture_header_ok(header):
+    """A 33-byte texture header, recognised by the 0x1A20 that follows the format.
+
+    A magic found by chance in vertex data is not a header, so the walk stops on
+    the first 33 bytes that do not carry it rather than reading garbage as a
+    size.
+    """
+    return len(header) == 33 and header[2:4] == b"\x20\x1A"
+
+
+def texture_size(fmt, width, height):
+    """The bytes a texture's pixels take: DXT1 half a byte a texel, DXT5 one.
+
+    This is the size stored in the table - 16,384 for a 256x128 DXT1, 1,024 for
+    a 32x32 DXT5 - and it is not the `bytes a frame` in the header, which is the
+    padded GPU size (4,096 for that 32x32 mask). Reading the padded size walks
+    off the end of the table and loses every slot after the first.
+    """
+    blocks = max(1, width // 4) * max(1, height // 4)
+    if fmt == 0x12:
+        return blocks * 8
+    if fmt == 0x14:
+        return blocks * 16
+    return 0
+
+
 def read_texture_header(header, stream):
     """One texture entry: 33-byte header (xenos fetch constant style) and pixels.
 
@@ -304,10 +344,36 @@ def read_texture_header(header, stream):
     _, per_frame, frames, flags, _ = struct.unpack_from("<IIIII", header, 12)
     empty = bool(flags & 1)
     data = b""
-    if not empty and per_frame and width and height:
-        data = bytes(stream.read(8 * per_frame))
+    size = texture_size(fmt, width, height)
+    if not empty and size:
+        data = stream.read_bytes(size)
     return {"format": fmt, "width": width, "height": height, "frames": frames,
-            "per_frame": per_frame, "empty": empty, "endian": endian, "data": data}
+            "per_frame": per_frame, "size": size, "empty": empty,
+            "endian": endian, "data": data}
+
+
+def read_texture_table(stream, count):
+    """A model's texture table: offset, allocated size, header, then the pixels.
+
+    This is where an item's colours actually live - the base map, the tint mask
+    that says which parts take a custom colour, and a decal - so a table that is
+    not read is an item reported as having no texture at all. The walk stops on
+    the first header that is not one, so a truncated table loses only what is
+    missing.
+    """
+    textures = []
+    for _ in range(count or 0):
+        stream.align_to_next_byte()
+        try:
+            stream.read_u32()      # offset into the model's texture memory
+            stream.read_u32()      # allocated size
+            header = stream.read_bytes(33)
+            if not texture_header_ok(header):
+                break
+            textures.append(read_texture_header(header, stream))
+        except Malformed:
+            break
+    return textures
 
 
 def _rgb565(v):
@@ -614,16 +680,7 @@ def read_model(data):
 
     # After the last mesh, texture_count entries of (offset, allocated size,
     # 33-byte header, pixels) into the model's texture memory.
-    textures = []
-    for _ in range(texture_count):
-        try:
-            s.align_to_next_byte()
-            s.read_u32()  # offset into texture memory
-            s.read_u32()  # allocated size
-            header = bytes(s.read(8) for _ in range(33))
-            textures.append(read_texture_header(header, s))
-        except Exception:
-            break
+    textures = read_texture_table(s, texture_count)
     if batches:
         batches[0]["textures"] = textures
     return batches

@@ -1497,7 +1497,10 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
     else:
         lines.append("colour table: none in this file (no block 7)")
         icon = facts.get("icon_colour")
-        if icon:
+        if texture:
+            lines.append("item colour:  its own base map, above - no colour table to")
+            lines.append("              pick a colour from")
+        elif icon:
             lines.append("item colour:  #%02X%02X%02X, the colour its own icon is"
                          % tuple(icon))
             lines.append("              drawn in (the file states no colour)")
