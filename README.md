@@ -197,8 +197,15 @@ from the body and the player sees the arms, not the body's:
   weapon grip would have pulled the thumb from beside it. The plate keeps its
   shape and is walked onto Halo's thumb bones by the gap measured between them,
   feathered by how much of the thumb each vertex is so the base still belongs to
-  the hand, and capped at 2.6 units so a plate that does not fit is not dragged
-  off the hand it belongs to.
+  the hand, and capped so a plate that does not fit is not dragged off the hand
+  it belongs to. The offset is one offset for the plate, averaged over the
+  vertices that are mostly thumb: averaged over all of them the drifts point
+  opposite ways round the bone and cancel out (2.13 units asked for, 0.07 of gap
+  closed), and stepping each vertex its own way tore the glove - 136 edges
+  stretched, worst x20. On the Marine the walk does not improve the gap, so it
+  puts the plate back and the report says so; that is the version whose worst
+  thumb bone sits 0.93 units outside the glove with no stretched edges, against
+  1.55 units and 8 stretched edges when the plate was moved.
 
   Its vertex groups are renamed to Halo's (`frame l upperarm`,
   `frame l forearm`, `frame l wriste`), and a glove the item weighted to its

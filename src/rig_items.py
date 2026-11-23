@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v44"
-BUILD = "2026-11-23 fit-reaches-the-angle"
+VERSION = "v45"
+BUILD = "2026-11-23 marine-measured-thumb-kept"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -2193,11 +2193,20 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
 
             before = spread()
             kept_at = [coords[slot[index]] for index, _weight in mine]
+            # One offset for the plate, averaged over the vertices that are
+            # mostly thumb, then feathered by how much thumb each vertex is so
+            # the base still belongs to the hand. Averaging over every vertex
+            # cancelled itself out - the drifts point opposite ways round a
+            # bone - and stepping each vertex its own way tore the glove (136
+            # edges stretched, worst x20). One coherent offset closes the gap
+            # at the tip without pulling the plate apart.
             walked = 0.0
-            for _pass in range(4):
+            for _pass in range(6):
                 drift = [0.0, 0.0, 0.0]
                 total = 0.0
                 for index, weight in mine:
+                    if weight < 0.5:
+                        continue
                     point = coords[slot[index]]
                     near = min(points, key=lambda place: sum(
                         (place[k] - point[k]) ** 2 for k in range(3)))
@@ -2208,11 +2217,7 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                     break
                 drift = [value / total for value in drift]
                 reach = math.sqrt(sum(value * value for value in drift))
-                # The thumb is never walked further than the gap it was
-                # measured at: a plate that keeps asking to go further is one
-                # that does not fit, and dragging it on would tear it off the
-                # hand it belongs to.
-                if reach < 0.05 or walked + reach > 2.6:
+                if reach < 0.02 or walked + reach > 3.5:
                     break
                 walked += reach
                 for index, weight in mine:
