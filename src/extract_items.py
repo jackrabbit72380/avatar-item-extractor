@@ -722,6 +722,26 @@ def icon_candidates(path, item_id):
             os.path.join(folder, "icon.png")]
 
 
+def item_icon(path, item_id, package, data):
+    """The item's own picture, wherever it is kept.
+
+    A closet item keeps it as a file beside the .bin, a package keeps it as an
+    entry, and a package with no readable file table keeps it as a PNG in its
+    bytes. Whichever is found first is the item's icon - and, for an item that
+    states no colour, the only colour it has.
+    """
+    for icon_source in icon_candidates(path, item_id):
+        if os.path.exists(icon_source):
+            with open(icon_source, "rb") as handle:
+                return handle.read()
+    for name in sorted(package or {}):
+        if name.lower().endswith(".png"):
+            return package[name]
+    if data[:4] in STFS_MAGIC:
+        return package_png(data)
+    return None
+
+
 def model_facts(batches):
     """The geometry summary written into the catalogue."""
     points = [point for batch in batches for point in batch["vertices"]]
@@ -1093,6 +1113,137 @@ def write_png(path, rgba, width, height):
         handle.write(data)
 
 
+# The colour of an item that states none, and a picture reader for the one colour
+# every item does ship: its own icon.
+
+CLAY = (204, 204, 204)
+
+
+def read_png(data):
+    """A PNG's pixels as 8-bit RGBA, for the item's own icon.
+
+    Icons are 8-bit PNGs, but not all of them are RGBA: a palette icon or a grey
+    one is widened here so a caller only ever sees one layout. Returns
+    (rgba, width, height), or None for bytes that are not a PNG this reader
+    understands - a broken icon is not worth failing an item over.
+    """
+    if not data or data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    pos, idat, palette, transparency = 8, bytearray(), b"", b""
+    width = height = depth = colour = None
+    while pos + 8 <= len(data):
+        size = struct.unpack_from(">I", data, pos)[0]
+        tag = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + size]
+        if tag == b"IHDR":
+            width, height = struct.unpack_from(">II", body, 0)
+            depth, colour = body[8], body[9]
+            if body[12]:          # interlaced
+                return None
+        elif tag == b"PLTE":
+            palette = body
+        elif tag == b"tRNS":
+            transparency = body
+        elif tag == b"IDAT":
+            idat += body
+        elif tag == b"IEND":
+            break
+        pos += 12 + size
+    if not width or not height or depth != 8 or colour not in (0, 2, 3, 4, 6):
+        return None
+    try:
+        raw = zlib.decompress(bytes(idat))
+    except zlib.error:
+        return None
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[colour]
+    stride = width * channels
+    if len(raw) < (stride + 1) * height:
+        return None
+    out = bytearray(width * height * 4)
+    previous = bytearray(stride)
+    at = 0
+    for row in range(height):
+        kind = raw[at]
+        at += 1
+        line = bytearray(raw[at:at + stride])
+        at += stride
+        if kind == 1:
+            for x in range(channels, stride):
+                line[x] = (line[x] + line[x - channels]) & 0xFF
+        elif kind == 2:
+            for x in range(stride):
+                line[x] = (line[x] + previous[x]) & 0xFF
+        elif kind == 3:
+            for x in range(stride):
+                left = line[x - channels] if x >= channels else 0
+                line[x] = (line[x] + ((left + previous[x]) >> 1)) & 0xFF
+        elif kind == 4:
+            for x in range(stride):
+                left = line[x - channels] if x >= channels else 0
+                up = previous[x]
+                corner = previous[x - channels] if x >= channels else 0
+                guess = left + up - corner
+                pa, pb, pc = abs(guess - left), abs(guess - up), abs(guess - corner)
+                best = left if (pa <= pb and pa <= pc) else (up if pb <= pc else corner)
+                line[x] = (line[x] + best) & 0xFF
+        elif kind != 0:
+            return None
+        previous = line
+        base = row * width * 4
+        for x in range(width):
+            if colour == 6:
+                r, g, b, a = line[x * 4:x * 4 + 4]
+            elif colour == 2:
+                r, g, b = line[x * 3:x * 3 + 3]
+                a = 255
+            elif colour == 0:
+                r = g = b = line[x]
+                a = 255
+            elif colour == 4:
+                r = g = b = line[x * 2]
+                a = line[x * 2 + 1]
+            else:
+                index = line[x]
+                if palette is None or index * 3 + 2 >= len(palette):
+                    return None
+                r, g, b = palette[index * 3:index * 3 + 3]
+                a = transparency[index] if index < len(transparency) else 255
+            out[base + x * 4:base + x * 4 + 4] = bytes((r, g, b, a))
+    return bytes(out), width, height
+
+
+def icon_colour(pixels):
+    """The colour the item's own icon is drawn in.
+
+    An item that states no colour still ships a picture of itself - the closet
+    thumbnail it was chosen by - and that picture is the only colour it has. The
+    page it sits on is transparent or white and its outline is near-black, and
+    neither says what the item looks like, so those do not vote; what is left is
+    averaged. None when nothing is left, or when the picture is too small to
+    average anything sensible.
+    """
+    if not pixels:
+        return None
+    rgba = pixels[0]
+    total = [0, 0, 0]
+    count = 0
+    for at in range(0, len(rgba), 4):
+        r, g, b, a = rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]
+        if a < 128:
+            continue
+        if r > 240 and g > 240 and b > 240:
+            continue
+        if r < 24 and g < 24 and b < 24:
+            continue
+        total[0] += r
+        total[1] += g
+        total[2] += b
+        count += 1
+    if count < 16:
+        return None
+    return tuple(int(round(channel / float(count))) for channel in total)
+
+
 def write_swatches(path, colours, cell=40, gap=5):
     """The palette as chips, three across: the page the editor itself draws."""
     columns = min(3, len(colours)) or 1
@@ -1184,12 +1335,14 @@ def batch_colour(batch):
     return None
 
 
-def item_colour(tables):
-    """The item's own colour, or clay when the file states none.
+def item_colour(tables, fallback=None):
+    """The item's own colour: its table, else its icon, else clay.
 
-    The base entry of a colour table is what the item is drawn in; without a
-    table the item has no colour at all, and #CCCCCC says that plainly rather
-    than inventing one.
+    The base entry of a colour table is what the item is drawn in. Failing a
+    table, the item still ships a picture of itself, and that picture's own
+    colour is the next best thing to the colour it was drawn in - it is the only
+    colour the file carries. Failing both, #CCCCCC says plainly that nothing is
+    stated rather than inventing a colour.
     """
     for table in tables or []:
         for rgb, _alpha in table.get("bases") or []:
@@ -1197,7 +1350,9 @@ def item_colour(tables):
         colours = table_colours(table)
         if colours:
             return tuple(colours[0])
-    return (204, 204, 204)
+    if fallback:
+        return tuple(fallback)
+    return CLAY
 
 
 def write_report(path, stem, source, size, facts, batches, texture, tables):
@@ -1341,7 +1496,13 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                             if swatches else ""))
     else:
         lines.append("colour table: none in this file (no block 7)")
-        lines.append("item colour:  clay (no colour in the file)")
+        icon = facts.get("icon_colour")
+        if icon:
+            lines.append("item colour:  #%02X%02X%02X, the colour its own icon is"
+                         % tuple(icon))
+            lines.append("              drawn in (the file states no colour)")
+        else:
+            lines.append("item colour:  clay (no colour in the file)")
 
     for index, batch in enumerate(batches or []):
         lines.append("")
@@ -1599,6 +1760,13 @@ def main(argv=None):
                 "texture": None,
             }
 
+            # The icon is read before anything is written: a textureless item's
+            # own picture is the only colour it has, and the base map further
+            # down is painted from it.
+            icon_png = None if args.no_icons else item_icon(
+                path, item_id, package, data)
+            facts["icon_colour"] = icon_colour(read_png(icon_png))
+
             if batches:
                 parsed += 1
                 if args.obj:
@@ -1618,7 +1786,8 @@ def main(argv=None):
                     # One colour per batch. Armour, skin and gear are separate
                     # batches, so a model whose parts differ keeps them apart
                     # instead of arriving as a single flat colour.
-                    fallback = item_colour(facts.get("colours") or [])
+                    fallback = item_colour(facts.get("colours") or [],
+                                           facts.get("icon_colour"))
                     batch_colours = []
                     for batch in batches:
                         own = batch_colour(batch)
@@ -1668,29 +1837,11 @@ def main(argv=None):
                     print("  %s: package read, its asset starts %s"
                           % (item_id, facts["package_head"]))
 
-            if not args.no_icons:
-                for icon_source in icon_candidates(path, item_id):
-                    if os.path.exists(icon_source):
-                        shutil.copyfile(icon_source, os.path.join(icons_dir, stem + ".png"))
-                        record["icon"] = "%s.png" % stem
-                        icons += 1
-                        break
-                if not record["icon"] and package:
-                    for name in sorted(package):
-                        if name.lower().endswith(".png"):
-                            with open(os.path.join(icons_dir, stem + ".png"), "wb") as handle:
-                                handle.write(package[name])
-                            record["icon"] = "%s.png" % stem
-                            icons += 1
-                            break
-                if not record["icon"] and data[:4] in STFS_MAGIC:
-                    # No file table, but the icon is a PNG in there regardless.
-                    png = package_png(data)
-                    if png:
-                        with open(os.path.join(icons_dir, stem + ".png"), "wb") as handle:
-                            handle.write(png)
-                        record["icon"] = "%s.png" % stem
-                        icons += 1
+            if icon_png:
+                with open(os.path.join(icons_dir, stem + ".png"), "wb") as handle:
+                    handle.write(icon_png)
+                record["icon"] = "%s.png" % stem
+                icons += 1
 
             texture = facts.get("texture")
             if texture:
@@ -1722,7 +1873,8 @@ def main(argv=None):
                 # as a real image so the material survives import, and so Halo CE
                 # has a .tif to build a bitmap from. Flat, 64x64, the same colour
                 # in all three formats.
-                rgb = item_colour(facts.get("colours") or [])
+                rgb = item_colour(facts.get("colours") or [],
+                                  facts.get("icon_colour"))
                 rgba = (bytes(rgb) + b"\xff") * (64 * 64)
                 flat = os.path.join(out, "%s colour" % stem)
                 write_png(flat + ".png", rgba, 64, 64)
@@ -1733,6 +1885,10 @@ def main(argv=None):
                     "tga": "%s colour.tga" % stem,
                     "tif": "%s colour.tif" % stem,
                     "hex": "#%02X%02X%02X" % tuple(rgb),
+                    "source": ("the item's own icon" if facts.get("icon_colour")
+                               and not (facts.get("colours") or [])
+                               else "the item's colour table"
+                               if facts.get("colours") else "no colour in the file"),
                 }
 
             # Halo's model shader packs four greyscale masks into one bitmap.

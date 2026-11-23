@@ -437,6 +437,14 @@ flat 64x64 image, `<stem> colour.*`. The `.mtl` names it with `map_Kd`, so the
 colour survives import in Max and Blender rather than being dropped along with
 `Kd`, and the `.tif` is a bitmap source for Halo CE's tool.
 
+When the file states no colour at all - which is every garment: no colour table,
+no batch colour and no pixels - the colour is taken from the item's own icon, the
+closet thumbnail it ships with: the page the item sits on and its near-black
+outline do not vote, and what is drawn is averaged. That is the only colour such
+an item carries, and it is what paints the base map, the multipurpose maps and
+the `.mtl`. `report.txt` says where the colour came from, and only an item with
+no icon at all falls back to clay `#CCCCCC`.
+
 Every block the container held is named in `catalogue.json` and in `report.txt` -
 its id, its name and its size - and the two that say what an item *is* are read,
 not just listed: the metadata block gives its gender, asset type, component and
