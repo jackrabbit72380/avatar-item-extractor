@@ -1134,46 +1134,67 @@ def mask_from_coverage(texture, size):
     return bytes(out)
 
 
-def derived_amount(texture, size, armour=1.0, cloth=0.32, dark=0.42, bright=0.62):
+def derived_amount(texture, size, armour=1.0, cloth=0.32,
+                   warm_gap=8.0, warm_span=22.0, dark=0.22, bright=0.40,
+                   radius=2):
     """How much of the team colour each texel takes, when the item states none.
 
     An avatar colours an item's armour plates with the player's colour and
     leaves cloth close to what it was drawn as. The Marine armour has no tint
-    mask to say where, so the base map's own shading is the only evidence left:
-    the dark olive plates take the colour, the bright tan suit keeps most of its
-    own and takes a share of it. Luminance separates them, so the rule is about
-    how light a texel is rather than which hue it happens to be - and it is
-    *derived*, not stated by the item, which is why report.txt says so.
+    mask to say where, so the base map itself is the only evidence left - and
+    brightness alone does not separate the two: the tan suit is stored at
+    (123, 109, 88), lighter than the plates but not light, so a threshold on
+    luminance tints the suit almost as hard as the armour. What does separate
+    them is hue as well: cloth is warm, with red well above blue (35 there
+    against 11 on the plates), and the plates are dark near-neutral olive.
+    warmth x brightness is the cloth share, and a small blur keeps the weave's
+    own shadows from being read as plate. All of it is *derived*, not stated by
+    the item, which is why report.txt says so.
 
-    `armour` and `cloth` are the two amounts, `dark` and `bright` the luminances
-    they apply at, and texels between them are lerped. A colour change is
-    `lerp(base, base * colour, amount)`, so 1.0 is the team colour fully and
-    0.32 is a tint of it.
+    `armour` and `cloth` are the two amounts, `warm_gap` and `warm_span` the
+    red-minus-blue range the warmth ramps over, `dark` and `bright` the
+    luminance range it multiplies, and `radius` the blur in source texels. A
+    colour change is `lerp(base, base * colour, amount)`, so 1.0 is the team
+    colour fully and 0.32 is a tint of it.
     """
     width = texture.get("width") or 0
     height = texture.get("height") or 0
     rgba = texture.get("rgba") or b""
     if width <= 0 or height <= 0 or len(rgba) < width * height * 4:
         return None
-    table = []
-    for value in range(256):
-        lit = value / 255.0
-        if lit <= dark:
-            amount = armour
-        elif lit >= bright:
-            amount = cloth
-        else:
-            share = (lit - dark) / (bright - dark)
-            amount = armour + (cloth - armour) * share
-        table.append(max(0, min(255, int(round(amount * 255)))))
+
+    def clamp01(value):
+        return 0.0 if value < 0.0 else 1.0 if value > 1.0 else value
+
+    share = [0.0] * (width * height)
+    for i in range(width * height):
+        at = i * 4
+        warm = clamp01((rgba[at] - rgba[at + 2] - warm_gap) / warm_span)
+        lit = (rgba[at] * 299 + rgba[at + 1] * 587 + rgba[at + 2] * 114) / 255000.0
+        share[i] = warm * clamp01((lit - dark) / (bright - dark))
+
+    for horizontal in (True, False):
+        if radius <= 0:
+            break
+        blurred = [0.0] * (width * height)
+        for y in range(height):
+            for x in range(width):
+                total, count = 0.0, 0
+                for step in range(-radius, radius + 1):
+                    nx, ny = (x + step, y) if horizontal else (x, y + step)
+                    if 0 <= nx < width and 0 <= ny < height:
+                        total += share[ny * width + nx]
+                        count += 1
+                blurred[y * width + x] = total / count
+        share = blurred
+
     out = bytearray(size * size)
     for y in range(size):
-        source_row = min(height - 1, y * height // size) * width * 4
+        row = min(height - 1, y * height // size) * width
         target = y * size
         for x in range(size):
-            at = source_row + min(width - 1, x * width // size) * 4
-            lit = (rgba[at] * 299 + rgba[at + 1] * 587 + rgba[at + 2] * 114) // 1000
-            out[target + x] = table[lit]
+            amount = armour + (cloth - armour) * share[row + min(width - 1, x * width // size)]
+            out[target + x] = max(0, min(255, int(round(amount * 255))))
     return bytes(out)
 
 

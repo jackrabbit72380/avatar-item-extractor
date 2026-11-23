@@ -522,16 +522,22 @@ is different, so both are written rather than leaving you to swap channels:
     leaves alpha flat tints everywhere a weight is set. A blank tint slot is not
     a mask: the item states no team colour at all, and at run time its colours
     come from the player's description, which a Halo CE bitmap cannot hold. The
-    multiplayer build then needs an amount from somewhere, and the base map's own
-    shading is the only evidence left: the **dark** texels are the armour plates
-    and take the team colour fully, the **bright** tan cloth keeps most of its own
-    colour and takes about a third of the player's (`derived_amount()` in
-    `extract_items.py`, 1.0 below luminance 0.42, 0.32 above 0.62, lerped
-    between). A whole-white mask would recolour the suit as hard as the plates,
-    which is not how these items look. The single-player build's map masks
-    nothing, so the item can be built either way. `report.txt`'s `mask source:`
-    line says which of the three it is, and says when the amount is derived
-    rather than stated by the item.
+    multiplayer build then needs an amount from somewhere, and the base map's
+    own colour is the only evidence left. Brightness alone does not separate the
+    two: the Marine's tan suit is stored at (123, 109, 88) - darker than the
+    bright tan it looks like in a lit render, and a luminance threshold tints it
+    almost as hard as the plates (measured: the first rule did exactly that).
+    What does separate them is hue as well, so the derived amount is warmth
+    (red above blue) times brightness: the plates are dark near-neutral olive at
+    (60, 56, 49), red-minus-blue 11, and take 1.0; the cloth is warm at
+    red-minus-blue 35 and takes 0.32. A two-texel blur keeps the weave's own
+    shadows from reading as plate. On this item that is 86/255 across the cloth
+    islands and 255 on the plates (`derived_amount()` in `extract_items.py`).
+    `tools/tint_preview.py` writes the base map out under a few team colours and
+    beside the mask, so a wrong amount is visible before anything is compiled.
+    The single-player build's map masks nothing, so the item can be built either
+    way. `report.txt`'s `mask source:` line says which of the three it is, and
+    says when the amount is derived rather than stated by the item.
 
     The slot beside the tint mask (parameter id 3) is a **decal**: artwork blended
     over the base map by its own alpha, a tee's logo. It is never read as a mask.

@@ -740,21 +740,26 @@ def main():
 
         # A derived amount: the item states no tint mask, so the multiplayer
         # build's amount comes from the base map's own shading - dark armour
-        # takes the team colour, bright cloth takes a share. A whole-white mask
-        # recoloured the tan suit as hard as the plates.
+        # takes the team colour, warm cloth takes a share. A whole-white mask
+        # recoloured the tan suit as hard as the plates, and luminance alone did
+        # the same: the suit is stored at (123, 109, 88), which is not bright.
+        # So the two cases that pin it are the measured cloth and a *light
+        # neutral* texel, which has to stay armour-full.
         def solid(rgb, size=4):
             return {"width": size, "height": size,
                     "rgba": bytes(list(rgb) + [255]) * (size * size)}
 
         dark = extract_items.derived_amount(solid((40, 50, 30)), 4)
-        bright = extract_items.derived_amount(solid((205, 195, 170)), 4)
+        cloth = extract_items.derived_amount(solid((123, 109, 88)), 4)
+        grey = extract_items.derived_amount(solid((180, 180, 180)), 4)
         middle = extract_items.derived_amount(solid((150, 145, 130)), 4)
-        print("  derived amount armour %r cloth %r between %r"
-              % (dark[0], bright[0], middle[0]))
-        if not (dark[0] == 255 and bright[0] == 82
+        print("  derived amount armour %r tan cloth %r light grey %r between %r"
+              % (dark[0], cloth[0], grey[0], middle[0]))
+        if not (dark[0] == 255 and cloth[0] == 82 and grey[0] == 255
                 and 82 < middle[0] < 255):
             print("\nFAIL: the derived team-colour amount is not armour-full,"
-                  " cloth-a-share")
+                  " cloth-a-share (the tan cloth reads as plate, or a light grey"
+                  " reads as cloth)")
             return 1
 
         print("\nPASS: a blank tint mask gives mp a derived amount (armour full,"
