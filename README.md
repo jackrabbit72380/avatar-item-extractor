@@ -166,17 +166,31 @@ from the body and the player sees the arms, not the body's:
   how it actually leans - Halo's own sleeve sits a couple of degrees off its
   bone line, and an item's sleeve can lean the other way by ten, which is the
   arm a player sees at the wrong angle. So once a side is placed, its sleeve is
-  turned onto Halo's: both axes measured the same way, from the skin the upper
-  arm and forearm bones hold and never the hand - the glove is weighted onto
-  the finger bones once it is carried, so a hand counted on one side and not
-  the other left the two axes measuring different things and the fit stopping
-  a degree short. Only the turn is fitted, never the size, because the size is
-  what puts the glove past Halo's fingertips; each pass is capped at twelve
-  degrees so the arm settles instead of swinging past, and the shift is worked
-  out again after each pass, so the glove stays on Halo's hand while the sleeve
-  finds the angle the game wears. Fitting the whole arm cloud by nearest point
-  was tried first and was worse at this: it closes the distance by rolling a
-  fat sleeve without ever pointing it the right way.
+  turned onto Halo's. Both sides are measured the same way, from the skin the
+  upper arm and forearm bones hold and never the hand - the glove is weighted
+  onto the finger bones once it is carried, so a hand counted on one side and
+  not the other left the two measurements describing different things. What is
+  fitted is the line between the middle of the sleeve's shoulder end and the
+  middle of its cuff, not the cloud's widest direction: a flared cuff or a
+  shoulder pad pulls that widest direction a degree or two off the line the arm
+  runs, and a fit onto it stops short while reporting nothing left to do. Only
+  the turn is fitted, never the size, because the size is what puts the glove
+  past Halo's fingertips; each pass is capped at twelve degrees so the arm
+  settles instead of swinging past, and the shift is worked out again after each
+  pass, so the glove stays on Halo's hand while the sleeve finds the angle the
+  game wears. Fitting the whole arm cloud by nearest point was tried first and
+  was worse at this: it closes the distance by rolling a fat sleeve without ever
+  pointing it the right way. Bands ordered by distance from Halo's shoulder
+  instead of along the sleeve were tried too, and are not stable - an item's arm
+  does not sit where Halo's does, so "furthest from the joint" is not the cuff,
+  and one side came out a quarter turn wrong and inside out.
+
+  Every run therefore prints the angle twice, and the second number is the one
+  to trust: `report.txt` gives the sleeve angle against Halo's own arm measured
+  by the cloud's widest direction, an estimator the fit never uses, beside the
+  fit's own distance. A fit graded by the measurement it optimises always
+  reports success, so the two are reported together and the check beside them
+  (`tools/test_arms_fit.py`) measures against a direction it chooses itself.
 
   The glove's thumb is a plate that stands off the thumb it was modelled on,
   which on Halo's hand left its thumb bones two units outside the glove - a

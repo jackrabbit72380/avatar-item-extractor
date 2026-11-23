@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v41"
-BUILD = "2026-11-23 fp-arms-sleeve-angle"
+VERSION = "v42"
+BUILD = "2026-11-23 fp-arms-angle-cross-checked"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -657,6 +657,44 @@ def arm_axis(points):
     return axes[0][1], centre
 
 
+def arm_direction(points):
+    """Which way a sleeve points, from the middles of its two ends.
+
+    The cloud's widest direction (arm_axis) is a sleeve's lean, but it is pulled
+    by wherever the geometry is thickest: a flared cuff, a rolled sleeve or a
+    shoulder pad swings it a degree or two off the line the arm runs, and a fit
+    onto it stops that far short of Halo's arm - measured, 2.5 degrees, while
+    reporting nothing left to do. The line from the middle of one end to the
+    middle of the other is the arm's direction as a player sees it, and it does
+    not care how the sleeve is shaped along the way, so that is what is fitted.
+    """
+    if len(points) < 12:
+        return None
+    # Bands taken along the sleeve's own length. Ordering them by distance from
+    # the joint instead was tried and is not stable: an item's arm does not sit
+    # where Halo's does, so "furthest from Halo's shoulder" is not the cuff, and
+    # the direction it gave turned one side a quarter turn and left the sleeve
+    # inside out.
+    axis, _centre = arm_axis(points)
+    if axis is None:
+        return None
+    along = [sum(point[i] * axis[i] for i in range(3)) for point in points]
+    order = sorted(range(len(points)), key=lambda index: along[index])
+    band = max(3, len(points) // 5)
+
+    def middle(group):
+        return [sum(points[index][axis_] for index in group) / len(group)
+                for axis_ in range(3)]
+
+    near = middle(order[:band])
+    far = middle(order[-band:])
+    direction = [far[i] - near[i] for i in range(3)]
+    size = math.sqrt(sum(value * value for value in direction))
+    if size < 1e-9:
+        return None
+    return [value / size for value in direction]
+
+
 def hand_plane(points, axis):
     """Which way round a hand's flat lies: its palm's normal, across its arm.
 
@@ -1099,7 +1137,7 @@ def carry_onto(place, points, want, rebuild, rounds=3, most=12.0):
         return None
 
     def angle_of(candidate):
-        own, _centre = arm_axis(points)
+        own = arm_direction(points)
         if own is None:
             return None
         held = turn_point(candidate["turn"], own)
@@ -1115,7 +1153,9 @@ def carry_onto(place, points, want, rebuild, rounds=3, most=12.0):
     for _round in range(rounds):
         if best_angle < 0.05:
             break
-        own, _centre = arm_axis(points)
+        own = arm_direction(points)
+        if own is None:
+            break
         held = turn_point(best["turn"], own)
         if sum(held[i] * want[i] for i in range(3)) < 0.0:
             held = [-value for value in held]
@@ -1131,11 +1171,61 @@ def carry_onto(place, points, want, rebuild, rounds=3, most=12.0):
     return best
 
 
+def sleeve_points(object_data, side):
+    """The skin one side's upper arm and forearm hold at full weight."""
+    names = {"frame %s upperarm" % side, "frame %s forearm" % side}
+    groups = {group.name: group.index
+              for group in getattr(object_data, "vertex_groups", []) or []}
+    keep = {groups[name] for name in names if name in groups}
+    if not keep:
+        return []
+    points = []
+    for vertex in getattr(object_data.data, "vertices", []) or []:
+        for weight in vertex.groups:
+            if weight.group in keep and weight.weight > 0.5:
+                points.append(object_data.matrix_world @ vertex.co)
+                break
+    return points
+
+
+def sleeve_angle(arms, armature_fp):
+    """How far the carried sleeves sit from Halo's, judged a different way.
+
+    The fit turns each side until the line between the middles of its two ends
+    points where Halo's does. A fit graded by the measurement it optimises
+    always reports success - it was asked for an angle and then asked how close
+    it got - so this asks the same question with an estimator the fit never
+    uses: the widest direction of the carried sleeve's skin against the widest
+    direction of Halo's own. Two estimators agreeing is evidence; one agreeing
+    with itself is not. Both sides are reported, because a side can be left
+    alone and the other fitted.
+    """
+    if arms is None or armature_fp is None:
+        return None
+    halo = {}
+    for item in halo_arms(armature_fp):
+        for side in ("l", "r"):
+            halo.setdefault(side, []).extend(sleeve_points(item, side))
+    angles = {}
+    for side in ("l", "r"):
+        mine = sleeve_points(arms, side)
+        theirs = halo.get(side) or []
+        if len(mine) < 12 or len(theirs) < 12:
+            continue
+        here, _centre = arm_axis(mine)
+        there, _centre = arm_axis(theirs)
+        if here is None or there is None:
+            continue
+        cosine = abs(sum(here[i] * there[i] for i in range(3)))
+        angles[side] = math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
+    return angles or None
+
+
 def halo_arm_axis(armature_fp, side):
     """Which way Halo's own sleeve runs, measured the way the item's is.
 
     From the arm mesh the rig file ships: the vertices weighted to that side's
-    upper arm, forearm and wrist, and their long axis. That is the arm the game
+    upper arm and forearm, and the line through them. That is the arm the game
     draws, so it is the angle an item's arm has to match to look worn rather
     than pinned on - and it is not quite the bone line, which is why lining up
     with the bones alone left the arms visibly tilted.
@@ -1144,23 +1234,16 @@ def halo_arm_axis(armature_fp, side):
     # finger bones once it is carried, so a hand counted here would be in
     # Halo's measure and out of the item's, and the two axes would never be the
     # same measurement. The sleeve is what leans, and it is what a player sees.
-    names = {"frame %s upperarm" % side, "frame %s forearm" % side}
     points = []
     for item in halo_arms(armature_fp):
-        groups = {group.name: group.index
-                  for group in getattr(item, "vertex_groups", []) or []}
-        keep = {groups[name] for name in names if name in groups}
-        if not keep:
-            continue
-        for vertex in getattr(item.data, "vertices", []) or []:
-            for weight in vertex.groups:
-                if weight.group in keep and weight.weight > 0.5:
-                    points.append(item.matrix_world @ vertex.co)
-                    break
+        points.extend(sleeve_points(item, side))
     if len(points) < 12:
         return None
-    axis, _centre = arm_axis(points)
-    return axis
+    # The same rule the item's sleeve is measured by: the line between the
+    # middles of its two ends. One rule on both sides is what makes the angle
+    # between them the angle a player sees, instead of two numbers that nearly
+    # agree.
+    return arm_direction(points)
 
 
 def place_arm(place, point):
@@ -2206,6 +2289,15 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         arms["fit_mean"] = fit[0]
         arms["fit_worst"] = fit[1]
         log("fit to Halo's own arms: mean %.2f, worst %.2f units" % fit)
+    # The angle, measured by a rule the fit does not use, so a run says what
+    # the arm actually looks like instead of what the fit aimed at.
+    angles = sleeve_angle(arms, armature_fp)
+    if angles:
+        arms["sleeve_angles"] = ", ".join(
+            "%s %.2f" % (side, value) for side, value in sorted(angles.items()))
+        arms["sleeve_angle_worst"] = max(angles.values())
+        log("sleeve angle vs Halo's own arm (widest direction, not the fit's "
+            "rule): %s deg" % arms["sleeve_angles"])
     # The glove's fingers ride Halo's finger bones, so those bones have to be
     # inside the glove. This is the check a person makes in the viewport: bones
     # standing out of the fingertips mean the arm stopped short of the hand.
@@ -2305,6 +2397,16 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
                     "%d edge(s) stretched more than 3x (worst x%.1f) - the shell "
                     "was torn by the carry"
                     % (meta(arms, "torn_edges"), meta(arms, "torn_worst")))
+            if meta(arms, "sleeve_angles"):
+                record["arms_angle"] = (
+                    "sleeve angle vs Halo's own arm: %s deg (widest direction, "
+                    "not the rule the fit optimised)" % meta(arms, "sleeve_angles"))
+            else:
+                # Better a line that says nothing could be measured than a
+                # report that is silent about the angle it was asked for.
+                record["arms_angle"] = (
+                    "sleeve angle vs Halo's own arm: not measured - the arms do "
+                    "not carry the upper arm and forearm skin Halo's arm does")
             if meta(arms, "fit_worst") is not None:
                 record["arms_fit"] = ("stands in Halo's own arms to within "
                                       "%.2f units (mean %.2f)"
@@ -2931,6 +3033,8 @@ def report_text(options, records, stems, armature, nxe=None):
                                                or "not skinned"))
             if record.get("arms_carried"):
                 lines.append("              %s" % record["arms_carried"])
+            if record.get("arms_angle"):
+                lines.append("              %s" % record["arms_angle"])
             if record.get("arms_fit"):
                 lines.append("              %s" % record["arms_fit"])
             if record.get("arms_fingers"):
@@ -2953,6 +3057,40 @@ def report_text(options, records, stems, armature, nxe=None):
 MAX_DIR = "extracted for max users"
 BLENDER_DIR = "extracted for blender users"
 HEK_DIR = "extracted for hek users"
+
+
+def hek_folders(out, stem):
+    r"""Make data\<item>\ for both channel orders and say where each part goes.
+
+    tool.exe takes data\<item>\ as its source directory and looks inside it by
+    name: models\ for the .jms it compiles, animations\ for animation data, and
+    bitmaps\ for the textures. The first-person arms are a model of their own,
+    so they get the same three under fp\ - fp\models\, fp\bitmaps\ and
+    fp\source\ - rather than being left in with the body's. Each of those and
+    the item's own folder carries a source\ holding the file the model was
+    exported from, which is where a HEK user looks for the thing to re-export.
+
+    Both orders are made here, by the same code, so pc\ and xbox\ cannot come
+    out with different folders - and each order's arms take that order's own
+    maps, because the pc and xbox masks are not the same bytes.
+    """
+    made = {}
+    for order in ("pc", "xbox"):
+        item_dir = os.path.join(out, HEK_DIR, order, "data", stem)
+        tree = {"item": item_dir,
+                "bitmaps": os.path.join(item_dir, "bitmaps"),
+                "models": os.path.join(item_dir, "models"),
+                "animations": os.path.join(item_dir, "animations"),
+                "source": os.path.join(item_dir, "source"),
+                "fp": os.path.join(item_dir, "fp"),
+                "fp_models": os.path.join(item_dir, "fp", "models"),
+                "fp_bitmaps": os.path.join(item_dir, "fp", "bitmaps"),
+                "fp_source": os.path.join(item_dir, "fp", "source")}
+        for path in tree.values():
+            os.makedirs(path, exist_ok=True)
+        share_files(tree["bitmaps"], tree["fp_bitmaps"])
+        made[order] = tree
+    return made
 
 
 def mirror_fbx(out, blend_dir, stems):
@@ -3197,33 +3335,16 @@ def main():
         stem = record.get("stem") or os.path.splitext(
             os.path.basename(record.get("obj") or record["id"]))[0]
         stems.append(stem)
-        # data\<item>\ is what tool.exe takes as its source directory, and it
+                # data\<item>\ is what tool.exe takes as its source directory, and it
         # looks inside models\ for the .jms and animations\ for animation data.
-        models_dir = os.path.join(hek_data, stem, "models")
-        os.makedirs(models_dir, exist_ok=True)
-        os.makedirs(os.path.join(hek_data, stem, "animations"), exist_ok=True)
-        # Halo's first-person arms are a model of their own, so they get their
-        # own folder the way a model does: fp\ holds the bitmaps they compile
-        # against and the .jms tool.exe builds them from, instead of being left
-        # in with the body's. Both that folder and the item's own carry a
-        # source\ holding the file the model was exported from, which is where
-        # a HEK user looks for the thing to re-export.
-        item_dir = os.path.join(hek_data, stem)
-        fp_dir = os.path.join(item_dir, "fp")
-        source_dir = os.path.join(item_dir, "source")
-        fp_models = os.path.join(fp_dir, "models")
-        fp_bitmaps = os.path.join(fp_dir, "bitmaps")
-        fp_source = os.path.join(fp_dir, "source")
-        for folder in (source_dir, fp_models, fp_bitmaps, fp_source):
-            os.makedirs(folder, exist_ok=True)
-        # The arms are textured with the item's own maps, so the folder they
-        # are built from carries them too rather than pointing back at the
-        # body's - each channel order taking its own, because the pc and xbox
-        # masks are not the same bytes.
-        for order in ("pc", "xbox"):
-            order_dir = os.path.join(out, HEK_DIR, order, "data", stem)
-            share_files(os.path.join(order_dir, "bitmaps"),
-                        os.path.join(order_dir, "fp", "bitmaps"))
+        # hek_folders() makes that tree for both orders, arms folder and all,
+        # so the two cannot drift apart.
+        folders = hek_folders(out, stem)
+        models_dir = folders["pc"]["models"]
+        item_dir = folders["pc"]["item"]
+        source_dir = folders["pc"]["source"]
+        fp_models = folders["pc"]["fp_models"]
+        fp_source = folders["pc"]["fp_source"]
         # Halo rig: the item on the biped, arms loaded, as a .blend that opens
         # straight onto it so it can simply be exported from there. The .jms is
         # Halo's own text model, and the .fbx is the same thing for anything
