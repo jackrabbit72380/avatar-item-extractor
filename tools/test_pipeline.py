@@ -544,15 +544,29 @@ def main():
             print("\nFAIL: the single-player .tif masks something")
             return 1
 
-        # An item that ships its own tint mask uses that instead of derived
-        # coverage - the mask is the item's data, resampled to the export size.
+        # An item's team colour comes from its tint mask, read as the avatar
+        # reads it: lerp(base, red*C1 + green*C2 + blue*C3, alpha). Alpha is the
+        # amount; red, green and blue are which of the player's three colours.
+        # A flat alpha means the item marked whole regions by colour instead.
         import extract_items as masks
         tint = {"width": 2, "height": 1,
-                "rgba": bytes([255, 0, 0, 255, 0, 0, 0, 255])}
-        got = masks.mask_from_texture(tint, 2)
-        print("  tint mask      -> %r" % (got,))
+                "rgba": bytes([255, 0, 0, 255, 0, 0, 0, 0])}
+        print("  tint channel   -> %r" % (masks.tint_channel(tint),))
+        if masks.tint_channel(tint) != 3:
+            print("\nFAIL: a tint mask with an alpha is not read from alpha")
+            return 1
+        got = masks.mask_from_texture(tint, 2, 3)
+        print("  tint amount    -> %r" % (got,))
         if got != bytes([255, 0, 255, 0]):
-            print("\nFAIL: a tint mask is not read from its red channel")
+            print("\nFAIL: a tint mask's amount is not read from its alpha")
+            return 1
+        weighted = {"width": 2, "height": 1,
+                    "rgba": bytes([0, 255, 0, 255, 0, 0, 0, 255])}
+        print("  weight channel -> %r, amounts %r"
+              % (masks.tint_channel(weighted), masks.tint_amount(weighted, 2)))
+        if (masks.tint_channel(weighted) != 0
+                or masks.tint_amount(weighted, 2) != bytes([255, 0, 255, 0])):
+            print("\nFAIL: a flat-alpha tint mask is not read from its colours")
             return 1
 
         # With no tint mask, the painted texture's own islands are the coverage:
@@ -593,6 +607,88 @@ def main():
 
         print("\nPASS: masks painted from the item's UV island, both channel orders,"
               " sp masks nothing")
+
+        # Fifth case (where a team colour may come from): an item states one
+        # through its tint mask and nothing else. The Marine armour's tint slot is
+        # a blank 32x32 while the decal beside it carries an alpha blend over two
+        # thirds of its canvas; reading that alpha as a mask is how most of the
+        # suit came out tinted on no evidence. A blank tint mask means the item
+        # states no team colour: the multiplayer map is the whole item, the
+        # single-player map is zero, and the decal's alpha leaks into neither.
+        def dxt5_alpha(alpha, rgb):
+            """One DXT5 block: one alpha value and one solid colour."""
+            red, green, blue = rgb
+            value = ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3)
+            return bytes([alpha, alpha, 0, 0, 0, 0, 0, 0]) + struct.pack("<HHI", value, 0, 0)
+
+        def tint_trap():
+            out = batches()
+            out[0]["textures"] = [
+                {   # base colour
+                    "format": 0x14, "width": 16, "height": 16, "frames": 1,
+                    "per_frame": 256, "empty": False, "endian": 0,
+                    "data": dxt5_block((200, 200, 200)) * 16,
+                },
+                {   # the tint slot: declared, and blank like the Marine's
+                    "format": 0x14, "width": 16, "height": 16, "frames": 1,
+                    "per_frame": 256, "empty": False, "endian": 0,
+                    "data": b"\0" * 256,
+                },
+                {   # the decal: red, half of it fully opaque
+                    "format": 0x14, "width": 16, "height": 16, "frames": 1,
+                    "per_frame": 256, "empty": False, "endian": 0,
+                    "data": (dxt5_alpha(255, (255, 0, 0)) * 8
+                             + dxt5_alpha(0, (255, 0, 0)) * 8),
+                },
+            ]
+            out[0]["materials"] = [
+                {"kind": "texture", "id": 1, "texture": 0, "uv_set": 0, "mode": 0},
+                {"kind": "texture", "id": 2, "texture": 1, "uv_set": 1, "mode": 0},
+                {"kind": "texture", "id": 3, "texture": 2, "uv_set": 2, "mode": 0},
+            ]
+            return out
+
+        avatar_mesh.strb_blocks = lambda data: [(3, 1, 0, b"model-payload")]
+        avatar_mesh.read_model = lambda data: tint_trap()
+        inbox_tint = os.path.join(work, "tint-trap")
+        os.makedirs(inbox_tint, exist_ok=True)
+        with open(os.path.join(inbox_tint, "Tint Trap.bin"), "wb") as handle:
+            handle.write(b"STRB" + b"\0" * 60)
+        out_tint = os.path.join(work, "tint-trap-out")
+        code = extract_items.main(["--root", inbox_tint, "--obj", "--out", out_tint])
+        if code not in (0, None):
+            print("FAIL: the tint-trap extractor returned %r" % (code,))
+            return 1
+        # The multiplayer map must be the whole item - not the decal's half-lit
+        # alpha, which covers about half the canvas - and the single-player map
+        # must be zero.
+        for suffix in ("multipurpose", "multipurpose xbox", "change colour"):
+            path = os.path.join(out_tint, "extracted for max users",
+                                "Tint Trap %s.png" % suffix)
+            texels = pixels(path)
+            lit = sum(1 for pixel in texels if any(pixel))
+            print("  %-16s %d of %d texels lit" % (suffix, lit, len(texels)))
+            if lit != len(texels):
+                print("\nFAIL: %s lights %d of %d texels - a blank tint mask means"
+                      " the whole item, not a decal's cutout"
+                      % (suffix, lit, len(texels)))
+                return 1
+        sp_path = os.path.join(out_tint, "extracted for max users",
+                               "Tint Trap multipurpose sp.png")
+        if any(any(pixel) for pixel in pixels(sp_path)):
+            print("\nFAIL: the single-player map masks something")
+            return 1
+        with open(os.path.join(out_tint, "report.txt"), encoding="utf-8") as handle:
+            report_tint = handle.read()
+        if "states no tint mask" not in report_tint:
+            print("\nFAIL: report.txt does not say the item states no tint mask")
+            return 1
+        if "mask coverage: 100%" not in report_tint:
+            print("\nFAIL: report.txt does not say the whole item is the mask")
+            return 1
+
+        print("\nPASS: a blank tint mask gives the whole item to mp, nothing to sp,"
+              " and no decal alpha")
 
         # Fourth case: two parts in one item, each with its own colour, and the
         # same shader id on both. They must stay two materials with two colours -

@@ -78,6 +78,19 @@ Test Item\
                 source\   Test Item - halo fp arms.blend, .fbx
         xbox\data\Test Item\
             the same folders, the bitmaps in the original Xbox order
+        pc\data\Test Item sp\   a complete build that keeps the item's own
+            bitmaps\  the base map, the slots, and a multipurpose map that
+                      masks nothing
+            models\   Test Item sp.jms  named for the build, so both can be
+                      compiled without one overwriting the other
+            fp\       the same for the first-person arms
+        pc\data\Test Item mp\   a complete build that takes the team colour
+            bitmaps\  the base map, the slots, Test Item change colour.tif,
+                      and the team-colour multipurpose map
+            models\   Test Item mp.jms
+            fp\       the same for the arms
+        xbox\data\  the sp and mp pair again, in the original Xbox order
+                    (the team colour sits in blue there, not in alpha)
     Test Item.png  the item's icon, when the package has one
     colour_00.png  the item's own palette, when it carries one
     Test Item_colours.txt
@@ -489,30 +502,39 @@ is different, so both are written rather than leaving you to swap channels:
 | Halo CE | detail mask | self-illumination | specular | colour change |
 | Xbox | specular | self-illumination | colour change | detail |
 
-  * `<stem> multipurpose.*` - Halo CE order. The colour change mask comes from
-    the item itself, from the first slot that actually carries one: its tint mask
-    painted red, or a map whose alpha is the mask (the channel Halo CE reads).
-    Failing both - a table of blank slots - the painted base texture's own
-    islands (anything not transparent and not black), and only failing that, the
-    UV coverage. A slot that is blank all over is passed over rather than turned
-    into a mask that tints nothing; the report's `mask source:` line names the
-    slot and channel used, and `mask coverage:` how much of it is white. A part
-    that must keep its own colour needs painting black there. The `.png` is
-    1024x1024 and a few kilobytes; the `.tga` and `.tif` are the same mask at 256,
-    because uncompressed at 1024 they are 4 MB each and 256 is what a bitmap
-    compiled by `tool.exe` uses anyway. Detail, specular and self-illumination
-    are zero, because an item does not say which parts are shiny, glow or take a
-    detail map, and inventing that would be a guess.
+  * `<stem> multipurpose.*` - Halo CE order. Colour change is the team colour,
+    and the only thing an item states about it is its **tint mask** - a material's
+    parameter id 2, written beside the base map as `slot <n> tint mask`. The
+    avatar shader reads that mask as
+    `lerp(base, red*C1 + green*C2 + blue*C3, alpha)`: red, green and blue pick
+    which of the player's three custom colours a texel takes, and alpha is how
+    much of it shows. Halo CE holds one team colour in the multipurpose alpha, so
+    the alpha is the amount; an item that marks whole regions by colour and
+    leaves alpha flat tints everywhere a weight is set. A blank tint slot is not
+    a mask: the item states no team colour at all, and at run time its colours
+    come from the player's description, which a Halo CE bitmap cannot hold. The
+    multiplayer build then tints the whole item - that is what the build is for -
+    and the single-player build's map masks nothing, so the item can be built
+    either way. `report.txt`'s `mask source:` line says which of the three it is.
+
+    The slot beside the tint mask (parameter id 3) is a **decal**: artwork blended
+    over the base map by its own alpha, a tee's logo. It is never read as a mask.
+    The Marine armour's decal alpha covers two thirds of its canvas as a soft
+    blend - a decal cutout, not panels - and treating it as a team-colour mask
+    tinted most of the suit on no evidence at all.
+
+    The `.png` is 1024x1024 and a few kilobytes; the `.tga` and `.tif` are the same
+    mask at 256, because uncompressed at 1024 they are 4 MB each and 256 is what a
+    bitmap compiled by `tool.exe` uses anyway. Detail, specular and
+    self-illumination are zero, because an item does not say which parts are
+    shiny, glow or take a detail map, and inventing that would be a guess.
 
     The mask is read in **the base map's UV set**, because that is the space the
-    shader samples it in - and which set it was painted for is decided by where
+    shader samples it in. A tint mask painted in another set is decided by where
     its pixels actually cover the item, not by the set the material's record
-    names. The Marine armour's mask says set 2; in set 2 it covers 21% of the
-    body and in set 0 it covers 75%, and laid over the base map its shapes trace
-    that map's panels texel for texel. So it is painted in the base map's layout
-    and is read where it is. A mask that really is painted in another set covers
-    the body better there, and that one is carried across the geometry into the
-    base map's set, so the tint still lands where the base map shows it.
+    names: one that covers the body better in its own set is carried across the
+    geometry into the base map's set, so the tint still lands where the base map
+    shows it.
 
     The mask is in **the channel the shader reads** - alpha for the CE set,
     blue for the Xbox set. The `.png` and the `.tga` also paint it into colour,
@@ -524,11 +546,11 @@ is different, so both are written rather than leaving you to swap channels:
     looks black because nothing is masked.
   * `<stem> slot <n> tint mask.*`, `<stem> slot <n> decal map.*` - the item's
     own other textures, written as they came out of the model: real colour, real
-    alpha, no resampling. The mask is read out of one of these, and a mask file
-    is black wherever it masks nothing, so this is the texture to compare it
-    against. A slot holding one flat value everywhere is blank (the Marine
-    armour's 32x32 tint slot is) and the report names it instead of writing
-    another black image.
+    alpha, no resampling. The team colour is read out of the tint mask, and both
+    are worth looking at beside the mask file, because a mask is black wherever
+    it masks nothing. A slot holding one flat value everywhere is blank (the
+    Marine armour's 32x32 tint slot is) and the report names it instead of
+    writing another black image.
   * `<stem> multipurpose xbox.*` - the same masks in Xbox order, for H1A with the
     shader's "og xbox channel order" flag (0x40) set. Halo CE and the legacy HEK
     always read Gearbox order, which is why the first set is not a substitute.

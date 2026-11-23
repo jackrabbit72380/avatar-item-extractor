@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v59"
-BUILD = "2026-11-23 slot-textures-and-visible-masks"
+VERSION = "v61"
+BUILD = "2026-11-23 sp-and-mp-hek-builds"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -3584,6 +3584,8 @@ def report_text(options, records, stems, armature, nxe=None):
         lines.append("  bound to  : %s" % (record.get("binding") or "not skinned"))
         if record.get("halo_file"):
             lines.append("  halo file : %s" % record["halo_file"])
+        lines.append("  hek builds: data\\%s sp\\ (its own colours) and data\\%s"
+                     " mp\\ (team colour)" % (stem, stem))
         if record.get("arms_file"):
             lines.append("  fp arms   : %s" % record["arms_file"])
             lines.append("              %s" % (record.get("arms_binding")
@@ -3694,6 +3696,111 @@ def share_files(source, target, endings=None):
         shutil.copyfile(path, os.path.join(target, name))
         copied += 1
     return copied
+
+
+def jms_material_names(text, suffix):
+    r"""A .jms with `suffix` added to every material name.
+
+    The material section is the one place a .jms names a shader: a count, then
+    one '<name>\t<none>' a material, and the faces below refer to a material by
+    index rather than by name. Renaming here renames what tool.exe looks for
+    without touching the mesh, which is what lets one item become two builds
+    whose shaders can sit beside each other.
+    """
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.split(newline)
+    header = lines[0].split("\t")
+    if len(header) < 3 or header[0].strip() != "8200":
+        raise ValueError("not a .jms: %r" % lines[0][:40])
+    nodes = int(header[2])
+    at = 1 + nodes
+    if at >= len(lines):
+        raise ValueError("the .jms ends before its materials")
+    count = int(lines[at].strip())
+    out = lines[:at + 1]
+    for index in range(count):
+        parts = lines[at + 1 + index].split("\t")
+        parts[0] = parts[0] + suffix
+        out.append("\t".join(parts))
+    out.extend(lines[at + 1 + count:])
+    return newline.join(out)
+
+
+def hek_builds(out, stems):
+    r"""Make data\<item> sp and data\<item> mp: one build each way.
+
+    Halo CE ships an item twice - a single-player tag that keeps the colours the
+    item was painted in, and a multiplayer one that takes the team colour - and
+    the difference is one bitmap, the multipurpose map the shader reads. Each
+    build is therefore a complete data\ folder tool.exe can be pointed straight
+    at, with its own maps, its own model name and its own shader names: sharing a
+    folder or a name would make the second build overwrite the first's tags
+    instead of sitting beside them.
+    """
+    made = []
+    for stem in sorted(set(stems)):
+        folders = hek_folders(out, stem)
+        for order, tree in folders.items():
+            data = os.path.dirname(tree["item"])
+            # The two masks extraction wrote: the team-colour one in this order's
+            # channel layout, and the single-player one with nothing masked.
+            masks = {
+                "mp": os.path.join(tree["bitmaps"], "%s multipurpose%s.tif"
+                                   % (stem, " xbox" if order == "xbox" else "")),
+                "sp": os.path.join(tree["bitmaps"], "%s multipurpose sp.tif"
+                                   % stem),
+            }
+            for build in ("sp", "mp"):
+                target = os.path.join(data, "%s %s" % (stem, build))
+                bitmaps = os.path.join(target, "bitmaps")
+                models = os.path.join(target, "models")
+                fp_bitmaps = os.path.join(target, "fp", "bitmaps")
+                fp_models = os.path.join(target, "fp", "models")
+                for path in (bitmaps, models, fp_bitmaps, fp_models,
+                             os.path.join(target, "animations"),
+                             os.path.join(target, "source")):
+                    os.makedirs(path, exist_ok=True)
+                # Every map but the masks, which this build replaces with its
+                # own under the name the shader binds. The single-player build
+                # has no change-colour map either: nothing takes a colour.
+                for name in sorted(os.listdir(tree["bitmaps"])):
+                    low = name.lower()
+                    if not low.endswith(".tif"):
+                        continue
+                    if "multipurpose" in low:
+                        continue
+                    if build == "sp" and "change colour" in low:
+                        continue
+                    shutil.copyfile(os.path.join(tree["bitmaps"], name),
+                                    os.path.join(bitmaps, name))
+                mask = masks[build]
+                if os.path.exists(mask):
+                    shutil.copyfile(mask, os.path.join(
+                        bitmaps, "%s multipurpose.tif" % stem))
+                share_files(bitmaps, fp_bitmaps)
+                # The models are copied, not moved, and renamed for the build:
+                # tool.exe names the tag after the .jms file, so the two builds
+                # arrive as two tags rather than one overwriting the other.
+                for source, name, home in (
+                        (os.path.join(tree["models"], "%s.jms" % stem),
+                         "%s %s.jms" % (stem, build), models),
+                        (os.path.join(tree["fp_models"],
+                                      "%s - fp arms.jms" % stem),
+                         "%s %s - fp arms.jms" % (stem, build), fp_models)):
+                    if not os.path.exists(source):
+                        continue
+                    with open(source, encoding="utf-8", newline="") as handle:
+                        text = handle.read()
+                    try:
+                        text = jms_material_names(text, "_" + build)
+                    except ValueError:
+                        pass
+                    with open(os.path.join(home, name), "w", encoding="utf-8",
+                              newline="") as handle:
+                        handle.write(text)
+                share_files(tree["source"], os.path.join(target, "source"))
+                made.append(target)
+    return made
 
 
 def mirror_jms(out, stems):
@@ -4002,6 +4109,10 @@ def main():
     copied = mirror_jms(out, stems)
     if copied:
         log("copied %d .jms into the xbox folder" % copied)
+
+    built = hek_builds(out, stems)
+    if built:
+        log("wrote %d HEK builds (sp and mp for each order)" % len(built))
 
     shipped = ship_source_rigs(out, options, armature)
     if shipped:

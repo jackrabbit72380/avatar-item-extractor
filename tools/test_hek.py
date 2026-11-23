@@ -161,6 +161,91 @@ def main():
     check(lower == 1,
           "a lower-case file name did not match an item title in mixed case")
 
+    # 6. Two builds of the item: data\<item> sp and data\<item> mp, each a
+    #    complete data\ folder with its own multipurpose map, its own model name
+    #    and its own shader names, so the two can be compiled side by side.
+    jms = "\n".join([
+        "8200\t3251\t2",
+        "root\t-1\t-1\t0\t0\t0\t1\t0\t0\t0",
+        "bone1\t-1\t-1\t0\t0\t0\t1\t0\t1\t0",
+        "2",
+        "boot_shader\t<none>",
+        "armor_shader\t<none>",
+        "0", "1", "unnamed",
+        "3",
+        "0\t0\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0",
+        "0\t1\t0\t0\t0\t0\t0\t1\t0\t0\t0\t0",
+        "0\t0\t1\t0\t0\t0\t0\t1\t0\t0\t0\t0",
+        "1",
+        "0\t0\t0\t1\t2",
+    ]) + "\n"
+    for order in ("pc", "xbox"):
+        base = os.path.join(hek, order, "data", stem)
+        write(os.path.join(base, "bitmaps", "%s multipurpose.tif" % stem),
+              "team colour %s" % order)
+        write(os.path.join(base, "bitmaps", "%s multipurpose xbox.tif" % stem),
+              "team colour xbox")
+        write(os.path.join(base, "bitmaps", "%s multipurpose sp.tif" % stem),
+              "nothing masked %s" % order)
+        write(os.path.join(base, "bitmaps", "%s change colour.tif" % stem), "change")
+        write(os.path.join(base, "models", "%s.jms" % stem), jms)
+        write(os.path.join(base, "fp", "models", "%s - fp arms.jms" % stem), jms)
+
+    renamed = module.jms_material_names(jms, "_sp")
+    check("boot_shader_sp\t<none>" in renamed
+          and "armor_shader_sp\t<none>" in renamed,
+          "jms_material_names did not rename both materials")
+    check(renamed.count("<none>") == 2,
+          "jms_material_names renamed something that is not a material")
+    check(renamed.endswith("0\t0\t0\t1\t2\n"),
+          "jms_material_names changed the faces below the materials")
+    try:
+        module.jms_material_names("not a jms", "_sp")
+        check(False, "jms_material_names accepted a file that is not a .jms")
+    except ValueError:
+        pass
+
+    built = module.hek_builds(out, [stem])
+    check(len(built) == 4,
+          "hek_builds made %d folders, expected 4 - sp and mp for both orders"
+          % len(built))
+    for order in ("pc", "xbox"):
+        for build in ("sp", "mp"):
+            target = os.path.join(hek, order, "data", "%s %s" % (stem, build))
+            for sub in ("bitmaps", "models", "animations", "source",
+                        os.path.join("fp", "bitmaps"),
+                        os.path.join("fp", "models")):
+                check(os.path.isdir(os.path.join(target, sub)),
+                      "%s %s is missing %s\\" % (order, build, sub))
+            want = ("nothing masked %s" % order if build == "sp"
+                    else "team colour xbox" if order == "xbox"
+                    else "team colour %s" % order)
+            mask = os.path.join(target, "bitmaps", "%s multipurpose.tif" % stem)
+            check(os.path.exists(mask) and read(mask) == want,
+                  "%s %s\\bitmaps multipurpose is %r, expected %r"
+                  % (order, build, read(mask) if os.path.exists(mask) else None,
+                     want))
+            arms = os.path.join(target, "fp", "bitmaps",
+                                "%s multipurpose.tif" % stem)
+            check(os.path.exists(arms) and read(arms) == want,
+                  "%s %s's arms do not carry that build's own map" % (order, build))
+            change = os.path.join(target, "bitmaps", "%s change colour.tif" % stem)
+            check((build == "mp") == os.path.exists(change),
+                  "%s %s %s a change-colour map"
+                  % (order, build, "has" if os.path.exists(change) else "lacks"))
+            model = os.path.join(target, "models", "%s %s.jms" % (stem, build))
+            check(os.path.exists(model), "%s %s has no model" % (order, build))
+            if os.path.exists(model):
+                check("boot_shader_%s\t<none>" % build in read(model),
+                      "%s %s's model does not rename its shader" % (order, build))
+            arms_model = os.path.join(target, "fp", "models",
+                                      "%s %s - fp arms.jms" % (stem, build))
+            check(os.path.exists(arms_model),
+                  "%s %s has no fp arms model" % (order, build))
+            check(os.path.exists(os.path.join(target, "bitmaps",
+                                              "%s base map.tif" % stem)),
+                  "%s %s has no base map" % (order, build))
+
     if failures:
         print("FAIL: %d check(s)" % len(failures))
         for message in failures:

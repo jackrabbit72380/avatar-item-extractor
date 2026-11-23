@@ -941,20 +941,73 @@ def mask_bytes(mesh, batches, texture, channel, size, base_uv_set, own_uv_set=No
     return mask_from_texture(texture, size, channel)
 
 
-def mask_source(candidates):
-    """The first (role, texture, channel) that actually carries a mask.
+def texture_flat(texture):
+    """A texture holding one value in every channel: an unused slot.
 
-    Candidates arrive in the order the roles matter - the tint mask before the
-    decal map - so an item that paints its mask red keeps that mask, and one
-    whose tint slot is blank falls through to the slot that has one.
+    The Marine armour declares a 32x32 tint mask with one texel at 1 and the
+    rest at 0 - a blank slot, not a mask - and a slot written out anyway is one
+    more black image that looks like a broken build.
     """
-    for role, texture in candidates:
-        if not texture:
-            continue
-        channel = mask_channel(texture)
-        if channel is not None:
-            return role, texture, channel
-    return None, None, None
+    rgba = (texture or {}).get("rgba") or b""
+    if not rgba:
+        return True
+    return all(max(rgba[channel::4]) - min(rgba[channel::4]) < 8
+               for channel in (0, 1, 2, 3))
+
+
+def mask_source(texture):
+    """The item's tint mask, when it states one - never its decal.
+
+    A material's parameter id 2 is the tint mask and id 3 is a decal: artwork
+    blended over the base map by its own alpha, a tee's logo. No item says a
+    decal is tintable, and the Marine armour's decal alpha covers two thirds of
+    its canvas as a soft blend - reading that as a colour-change mask painted
+    most of the suit in team colour on no evidence at all. A tint slot that is
+    blank says the item is untinted, which is a fact about the item: its colours
+    come from the player's description at run time, not from its textures.
+    """
+    if not texture or texture_flat(texture):
+        return None
+    return texture
+
+
+def item_tint(facts):
+    """The item's tint mask, or None. Its decal is never consulted."""
+    return mask_source((facts or {}).get("tint_texture"))
+
+
+def tint_channel(texture):
+    """Which channel carries the amount: alpha, or red when alpha is flat."""
+    rgba = (texture or {}).get("rgba") or b""
+    if not rgba:
+        return 3
+    values = rgba[3::4]
+    return 3 if max(values) - min(values) >= 8 else 0
+
+
+def tint_amount(texture, size):
+    """A team-colour amount a texel, from a tint mask with a flat alpha.
+
+    An item reads its tint mask as lerp(base, red*C1 + green*C2 + blue*C3,
+    alpha): red, green and blue are which of the player's three custom colours a
+    texel takes, alpha how much of it shows. When the alpha is one value across
+    the slot, the item marked whole regions by colour instead, so every texel
+    with any weight takes the team colour.
+    """
+    width = (texture or {}).get("width") or 0
+    height = (texture or {}).get("height") or 0
+    rgba = (texture or {}).get("rgba") or b""
+    if width <= 0 or height <= 0 or len(rgba) < width * height * 4:
+        return None
+    out = bytearray(size * size)
+    for y in range(size):
+        source_row = min(height - 1, y * height // size) * width * 4
+        target = y * size
+        for x in range(size):
+            at = source_row + min(width - 1, x * width // size) * 4
+            if rgba[at] or rgba[at + 1] or rgba[at + 2]:
+                out[target + x] = 255
+    return bytes(out)
 
 
 def mask_from_coverage(texture, size):
@@ -1550,8 +1603,10 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                             entry["name"], stem, entry["slot"], entry["name"]))
     lines.append("change colour: %s change colour.png/.tga/.tif - white takes the"
                  " team colour; this is the alpha channel of the multipurpose map"
-                 " on Halo CE (blue on the original Xbox). All three formats show"
-                 " the mask in colour as well, so it can be looked at"
+                 " on Halo CE (blue on the original Xbox). It is the item's tint"
+                 " mask and nothing else: an item with a blank one does not change"
+                 " colour, and no decal is ever read as a mask. All three formats"
+                 " show the mask in colour as well, so it can be looked at"
                  % stem)
     lines.append("multipurpose: %s multipurpose.png/.tga/.tif - Halo CE order:"
                  " red detail, green self-illumination, blue specular,"
@@ -1566,9 +1621,12 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
     if facts.get("mask_source"):
         lines.append("mask source: %s" % facts["mask_source"])
     if facts.get("mask_coverage") is not None:
-        lines.append("mask coverage: %.0f%% of the canvas is white - the rest keeps"
-                     " the colour the item was drawn in"
-                     % (facts["mask_coverage"] * 100))
+        if facts["mask_coverage"]:
+            lines.append("mask coverage: %.0f%% of the canvas is white - the rest"
+                         " keeps the colour the item was drawn in"
+                         % (facts["mask_coverage"] * 100))
+        else:
+            lines.append("mask coverage: none - nothing takes the team colour")
     lines.append("")
     lines.append("The folder is laid out for the program you open it in:")
     lines.append("  %s\\  %s.obj and .mtl, with every texture as .png and .tga"
@@ -1597,10 +1655,16 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
     lines.append("  multipurpose.png is the Halo CE order; multipurpose xbox.png")
     lines.append("  is the Xbox order; multipurpose sp.png has every channel at")
     lines.append("  zero, so it is valid in either order and leaves the colour alone.")
-    lines.append("  Colour change is the item's own UV coverage. Detail, specular and")
-    lines.append("  self-illumination are zero: an item does not say which parts are")
-    lines.append("  shiny, glow or take a detail map, and inventing that would put")
-    lines.append("  someone else's look on the item.")
+    lines.append("  Colour change comes from the item's tint mask (a material's")
+    lines.append("  parameter id 2): its alpha is how much takes a colour, its red,")
+    lines.append("  green and blue which of the player's three - the avatar reads")
+    lines.append("  lerp(base, red*C1 + green*C2 + blue*C3, alpha). A blank tint mask")
+    lines.append("  means the item states no team colour, so the multiplayer build")
+    lines.append("  tints the whole item and the single-player map masks nothing.")
+    lines.append("  The decal (id 3) is artwork blended over the base map by its")
+    lines.append("  alpha, never a mask. Detail, specular and self-illumination are")
+    lines.append("  zero: an item does not say which parts are shiny, glow or take a")
+    lines.append("  detail map.")
     lines.append("")
     lines.append("  The .png and .tga show the colour change in colour as well as in its")
     lines.append("  channel, so they can be looked at. The .tif in bitmaps\\ is the file")
@@ -2047,8 +2111,7 @@ def main(argv=None):
                 entry = {"role": role, "slot": slot_texture.get("slot"),
                          "name": label, "width": slot_texture["width"],
                          "height": slot_texture["height"],
-                         "blank": all(max(rgba[channel::4]) - min(rgba[channel::4]) < 8
-                                      for channel in (0, 1, 2, 3))}
+                         "blank": texture_flat(slot_texture)}
                 if not entry["blank"]:
                     name = "%s slot %s %s" % (stem, entry["slot"], label)
                     base_name = os.path.join(out, name)
@@ -2070,16 +2133,13 @@ def main(argv=None):
             #   Halo CE  detail   self-illumination specular  colour change
             #   Xbox     specular self-illumination colour... detail
             #
-            # The colour change mask is what turns a biped into the player's
-            # team colour, so it is white: the whole item takes the colour. A
-            # part that must keep its own needs painting black there, and nothing
-            # in an item file says which parts those would be. Shiny and glowing
+            # Colour change is the team colour, and only the item's tint mask
+            # says which parts take it - see the block below. Shiny and glowing
             # parts are equally unstated, so specular and self-illumination are
             # zero - matte and unlit - rather than invented.
-            # The masks are painted where the item's own UV layout has geometry,
-            # because the shader samples them in the base map's texture space: an
-            # island-shaped mask lines up with the model, a flat fill only looks
-            # the same where there happens to be geometry under it.
+            # The shader samples these in the base map's texture space, so a mask
+            # that is carried in from another UV set follows the geometry and
+            # lands on the bases the item painted.
             # The PNG is the one a person looks at and keeps, so it is 1024 and
             # compresses to a few kilobytes. The .tga and .tif are the same mask
             # uncompressed - at 1024 that is 4 MB each, four masks, three
@@ -2089,64 +2149,75 @@ def main(argv=None):
             png_size = 1024
             small_size = 256
             picture = facts.get("texture")
-            # The mask is in the slot that carries one, and the slots are not
-            # interchangeable: the Marine's 32x32 tint slot is blank while its
-            # 256x128 map has the mask in alpha. Reading the blank one produced
-            # four black mask files that masked nothing.
-            role, mask_texture, channel = mask_source(
-                [(2, facts.get("tint_texture")), (3, facts.get("decal_texture"))])
-            if mask_texture:
-                # The item's own mask, painted by whoever made it, carried into
-                # the space the shader samples it in - not derived from geometry.
+            # A team colour comes from the item's tint mask and from nowhere
+            # else. The mask is the material's parameter id 2, read as
+            # lerp(base, red*C1 + green*C2 + blue*C3, alpha): red, green and blue
+            # pick which of the player's three custom colours a texel takes, and
+            # alpha is how much of it shows. Id 3 is a decal - artwork blended
+            # over the base map by its own alpha, a tee's logo - and no item says
+            # a decal is tintable. The Marine armour's tint slot is a blank
+            # 32x32, so it states no team colour at all: its colours come from
+            # the player's description at run time, which a Halo CE bitmap cannot
+            # hold, and tinting the suit from the decal was a guess.
+            tint_texture = item_tint(facts)
+            if tint_texture:
+                channel = tint_channel(tint_texture)
                 base_uv_set = (picture or {}).get("uv_set")
-                big = mask_bytes(mesh, batches, mask_texture, channel, png_size,
-                                 base_uv_set)
-                small = mask_bytes(mesh, batches, mask_texture, channel,
-                                   small_size, base_uv_set)
-                source = ("the item's own %s, slot %s, %dx%d, %s channel"
-                          % ("tint mask" if role == 2 else "decal map",
-                             mask_texture.get("slot"), mask_texture["width"],
-                             mask_texture["height"],
-                             "alpha" if channel == 3 else "red"))
-                own_uv_set = mask_texture.get("uv_set")
-                if (own_uv_set is not None and base_uv_set is not None
-                        and own_uv_set != base_uv_set):
-                    here = mask_reach(batches, mask_texture, channel, base_uv_set)
-                    there = mask_reach(batches, mask_texture, channel, own_uv_set)
-                    if there > here * 1.5:
-                        source += (", carried from UV set %d into UV set %d, the"
-                                   " set the base map samples"
-                                   % (own_uv_set, base_uv_set))
-                    else:
-                        source += (", read in UV set %d, the set the base map"
-                                   " samples: its pixels cover %d%% of the body"
-                                   " there against %d%% in its own set %d"
-                                   % (base_uv_set, round(here * 100),
-                                      round(there * 100), own_uv_set))
-            elif picture:
-                # No tint mask, but a painted texture: its own islands are the
-                # coverage the item actually has, so the mask follows the picture
-                # instead of the geometry.
-                big = mask_from_coverage(picture, png_size)
-                small = mask_from_coverage(picture, small_size)
-                source = ("the item's own texture, %dx%d, where it is not empty"
-                          % (picture["width"], picture["height"]))
+                if channel == 3:
+                    # The item's own amount, carried into the space the shader
+                    # samples it in - not derived from geometry.
+                    big = mask_bytes(mesh, batches, tint_texture, 3, png_size,
+                                     base_uv_set)
+                    small = mask_bytes(mesh, batches, tint_texture, 3, small_size,
+                                       base_uv_set)
+                    source = ("the item's own tint mask, slot %s, %dx%d, alpha - the"
+                              " amount that takes a colour; its red, green and blue"
+                              " pick which of the player's three"
+                              % (tint_texture.get("slot"), tint_texture["width"],
+                                 tint_texture["height"]))
+                    own_uv_set = tint_texture.get("uv_set")
+                    if (own_uv_set is not None and base_uv_set is not None
+                            and own_uv_set != base_uv_set):
+                        here = mask_reach(batches, tint_texture, 3, base_uv_set)
+                        there = mask_reach(batches, tint_texture, 3, own_uv_set)
+                        if there > here * 1.5:
+                            source += (", carried from UV set %d into UV set %d, the"
+                                       " set the base map samples"
+                                       % (own_uv_set, base_uv_set))
+                        else:
+                            source += (", read in UV set %d, the set the base map"
+                                       " samples: its pixels cover %d%% of the body"
+                                       " there against %d%% in its own set %d"
+                                       % (base_uv_set, round(here * 100),
+                                          round(there * 100), own_uv_set))
+                else:
+                    # A flat alpha: the item marked whole regions with a colour
+                    # weight instead, so every marked texel tints.
+                    big = tint_amount(tint_texture, png_size)
+                    small = tint_amount(tint_texture, small_size)
+                    source = ("the item's own tint mask, slot %s, %dx%d: its alpha"
+                              " is flat, so every texel with any colour weight"
+                              " takes the team colour"
+                              % (tint_texture.get("slot"), tint_texture["width"],
+                                 tint_texture["height"]))
+            else:
+                # The item states no tint mask - its tint slot is blank - so the
+                # only mask behind a multiplayer build is the whole item: that is
+                # what a team-coloured build is for. The single-player map beside
+                # it masks nothing, so the item can be built either way rather
+                # than only one.
+                big = mask_from_coverage(picture, png_size) if picture else None
+                small = mask_from_coverage(picture, small_size) if picture else None
                 if big is None:
-                    source = "the item's own UV layout"
-            else:
-                big = small = None
-                source = "the item's own UV layout"
-            if big is None:
-                big, painted = mesh.uv_coverage(batches, png_size)
-                small = mesh.uv_coverage(batches, small_size)[0]
-                if not painted:
-                    # No usable UVs. A blanket fill means the same thing in play
-                    # - the shader only samples texels with geometry over them.
-                    big = b"\xff" * (png_size * png_size)
-                    small = b"\xff" * (small_size * small_size)
-                    painted = png_size * png_size
-            else:
-                painted = sum(1 for value in big if value)
+                    big, painted = mesh.uv_coverage(batches, png_size)
+                    small = mesh.uv_coverage(batches, small_size)[0]
+                    if not painted:
+                        big = b"\xff" * (png_size * png_size)
+                        small = b"\xff" * (small_size * small_size)
+                source = ("the whole item: it states no tint mask - its tint slot"
+                          " is blank - so the multiplayer build tints the item and"
+                          " the single-player map (multipurpose sp) masks nothing")
+            painted = sum(1 for value in big if value)
             facts["mask_source"] = source
             facts["mask_coverage"] = round(painted / float(png_size * png_size), 4)
 

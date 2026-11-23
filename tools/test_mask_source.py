@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""Prove the colour-change mask comes from the slot that carries one.
+"""Prove a team colour comes from the item's tint mask and never its decal.
 
-An item states its mask in one of two places: a small tint map painted red, or a
-full map whose alpha is the mask - the channel Halo CE reads. Taking the tint
-slot whenever it exists is what went wrong for the Marine armour: its 32x32 tint
-slot is blank (every value 0 or 1), so all four mask files came out black and the
-armour took no team colour at all, while the 256x128 map beside it had the mask
-in alpha the whole time.
+The avatar shader colours an item as
+lerp(base, red*C1 + green*C2 + blue*C3, alpha): the material's parameter id 2 is
+the tint mask, its red, green and blue pick which of the player's three custom
+colours a texel takes, and its alpha is how much of it shows. Parameter id 3 is a
+decal - artwork blended over the base map by its own alpha, a tee's logo.
 
-Four things are checked:
+The Marine armour's tint slot is a blank 32x32 (one texel at 1, the rest 0) while
+the decal beside it carries an alpha blend over two thirds of its canvas. Reading
+that decal alpha as a colour-change mask tinted most of the suit on no evidence at
+all, which is the failure this test exists for.
 
-  * a blank slot is passed over, and the slot with a mask is used
-  * the tint mask still wins when it has one, so items painted red keep that mask
-  * a table with no mask anywhere says so instead of inventing a blanket fill
-  * the mask is the channel asked for, resampled - not a flat colour
+Five things are checked:
+
+  * a blank tint slot is not a mask, and an item with one is untinted
+  * only the tint mask is ever consulted - a decal with a strong alpha is not
+  * the amount is alpha when alpha varies, colour weights when it is flat
+  * the mask is resampled to the size written, not flattened
+  * a texture holding one value everywhere is recognised as an unused slot
 
     python3 tools/test_mask_source.py
     MESH_MODULES=/tmp/unpacked python3 tools/test_mask_source.py   # any build
@@ -57,56 +62,51 @@ def texture(width, height, pixels):
     return {"width": width, "height": height, "rgba": bytes(rgba)}
 
 
-# The Marine's two shapes, side by side. The tint slot is blank - 32x32, every
-# channel 0 or 1 - and the map next to it is 256x128 with a real mask in alpha.
-blank_tint = texture(4, 4, [(0, 0, 0, 1)] * 8 + [(1, 0, 0, 0)] * 8)
-mask_map = texture(4, 2, [(90, 90, 90, 255), (90, 90, 90, 255),
-                          (90, 90, 90, 0), (90, 90, 90, 0)] * 2)
-red_tint = texture(2, 1, [(255, 0, 0, 255), (0, 0, 0, 255)])
+# The Marine armour's two shapes, side by side: a blank 32x32 tint slot, and a
+# decal whose alpha covers most of its canvas.
+blank_tint = texture(4, 4, [(0, 0, 0, 0)] * 15 + [(0, 0, 0, 1)])
+decal = texture(4, 2, [(90, 90, 90, 255), (90, 90, 90, 255),
+                       (90, 90, 90, 0), (90, 90, 90, 0)] * 2)
+alpha_tint = texture(2, 1, [(255, 0, 0, 255), (0, 0, 0, 0)])
+weight_tint = texture(2, 1, [(0, 255, 0, 255), (0, 0, 0, 255)])
 
-check("blank slot carries no mask", items.mask_channel(blank_tint), None)
-check("a map with alpha does", items.mask_channel(mask_map), 3)
-check("a tint painted red does", items.mask_channel(red_tint), 0)
+check("a blank tint slot is no mask", items.mask_source(blank_tint), None)
+check("no tint slot at all", items.mask_source(None), None)
+check("a tint with content is a mask",
+      items.mask_source(alpha_tint) is alpha_tint, True)
 
-role, found, channel = items.mask_source([(2, blank_tint), (3, mask_map)])
-check("blank tint falls through to the map", (role, found is mask_map, channel),
-      (3, True, 3))
+# The decal is the trap: strong alpha, and never a tint source. item_tint reads
+# the tint slot alone, so an item whose only texture with an alpha is its decal
+# comes out untinted.
+check("a decal is never the tint",
+      items.item_tint({"decal_texture": decal}), None)
+check("a decal does not outrank a tint",
+      items.item_tint({"tint_texture": alpha_tint,
+                       "decal_texture": decal}) is alpha_tint, True)
+check("a blank tint beside a decal is untinted",
+      items.item_tint({"tint_texture": blank_tint,
+                       "decal_texture": decal}), None)
 
-role, found, channel = items.mask_source([(2, red_tint), (3, mask_map)])
-check("a real tint mask still wins", (role, found is red_tint, channel),
-      (2, True, 0))
+# Which channel carries the amount.
+check("varying alpha carries it", items.tint_channel(alpha_tint), 3)
+check("a flat alpha means colour weights", items.tint_channel(weight_tint), 0)
+check("weights tint where they are set",
+      items.tint_amount(weight_tint, 2), bytes([255, 0, 255, 0]))
 
-role, found, channel = items.mask_source([(2, blank_tint), (3, None)])
-check("nothing to mask anywhere", (role, found, channel), (None, None, None))
+# A mask that is half lit must not arrive as a blanket fill: a flat channel
+# passes a size check and still tints the whole item.
+check("amount resampled, not filled",
+      items.mask_from_texture(alpha_tint, 2, 3), bytes([255, 0, 255, 0]))
+if items.mask_from_texture(alpha_tint, 2, 3) == b"\xff" * 4:
+    failures.append("a half-lit mask came back as a blanket fill")
 
-role, found, channel = items.mask_source([(2, None), (3, None)])
-check("empty roles", (role, found, channel), (None, None, None))
-
-# The mask is the channel that was asked for, resampled to the size written.
-check("alpha channel", items.mask_from_texture(mask_map, 2, 3),
-      bytes([255, 0, 255, 0]))
-check("red channel", items.mask_from_texture(red_tint, 2, 0), bytes([255, 0, 255, 0]))
-check("red channel by default", items.mask_from_texture(red_tint, 2),
-      bytes([255, 0, 255, 0]))
-
-# A mask that is 3/4 lit must not arrive as a blanket fill: that is the failure
-# this test exists for, and a flat channel passes a size check.
-wide = texture(4, 1, [(0, 0, 0, 255), (0, 0, 0, 255), (0, 0, 0, 255),
-                      (0, 0, 0, 0)])
-mask = items.mask_from_texture(wide, 4, 3)
-check("three of four lit", mask, bytes([255, 255, 255, 0]) * 4)
-if mask == b"\xff" * 16:
-    failures.append("a partial mask came back as a blanket fill")
-
-# A stray lit texel is not a mask: one in a thousand would tint one speck.
-speck = bytearray(1000 * 4)
-speck[400:404] = b"\xff\xff\xff\xff"
-check("one lit texel in a thousand", items.mask_channel(
-    {"width": 1000, "height": 1, "rgba": bytes(speck)}), None)
+# An unused slot is one value everywhere, even when one texel is at 1.
+check("blank slot recognised", items.texture_flat(blank_tint), True)
+check("painted slot recognised", items.texture_flat(decal), False)
 
 print("")
 if failures:
     for failure in failures:
         print("FAIL: %s" % failure)
     raise SystemExit(1)
-print("PASS: the colour-change mask comes from the slot that has one")
+print("PASS: the team colour comes from the tint mask, and a decal is not one")
