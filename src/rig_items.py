@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v39"
-BUILD = "2026-11-23 fp-arms-own-finger-measure"
+VERSION = "v40"
+BUILD = "2026-11-23 fp-arms-fit-to-halos-arms"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -960,7 +960,7 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
         target = [sum(point[i] for point in hand_cloud) / len(hand_cloud)
                   for i in range(3)]
 
-    def placed(turn):
+    def placed(turn, amount=None):
         """The side's carry for one turn, shifted onto Halo's bone.
 
         The arm's own middle belongs on Halo's bone. Pinning only the shoulder
@@ -974,11 +974,12 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
         the bone. The shift is worked out after the turn, so a rolled side still
         lands its middle on the bone rather than beside it.
         """
+        step = scale if amount is None else amount
         centre = [sum(point[i] for point in anchor) / len(anchor)
                   for i in range(3)]
         delta = [centre[i] - shoulder[i] for i in range(3)]
-        moved = [scale * sum(turn[row * 3 + col] * delta[col]
-                             for col in range(3)) for row in range(3)]
+        moved = [step * sum(turn[row * 3 + col] * delta[col]
+                            for col in range(3)) for row in range(3)]
         across = sum(moved[i] * reach_axis[i] for i in range(3))
         shift = [moved[i] - reach_axis[i] * across for i in range(3)]
         # Where the target itself sits off the bone, across the arm only: the
@@ -988,7 +989,7 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
         along_target = sum(want[i] * reach_axis[i] for i in range(3))
         want = [want[i] - reach_axis[i] * along_target for i in range(3)]
         return {"axis": axis, "shoulder": tuple(shoulder), "turn": turn,
-                "scale": scale, "from": tuple(shoulder),
+                "scale": step, "from": tuple(shoulder),
                 "to": tuple(head[i] + want[i] - shift[i] for i in range(3)),
                 "low": low, "high": high, "span": span, "twist": 0.0,
                 "glove": "none", "wrist": min(max(wrist, low), high),
@@ -1033,7 +1034,213 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
         # next, so there is no flat to line up and no answer to give. Saying so
         # is better than rolling it onto a guess.
         place["glove"] = "round"
+    # The bones say where an arm is; the mesh the game draws says what it looks
+    # like, and the two do not quite agree - a gauntlet leans a degree or two
+    # off its own bone, and an item's sleeve can lean the other way by more. So
+    # the side, already placed, is fitted onto Halo's own arm mesh: its nearest
+    # point on that arm for each of its own, the one turn and one size that
+    # bring them together, repeated until it stops moving. Still one
+    # similarity, so nothing tears, and the shift is worked out again after
+    # each pass, so the glove stays on Halo's hand while the sleeve finds the
+    # arm the game wears.
+    cloud = halo_arm_cloud(armature_fp, side)
+    if cloud:
+        kept = {"twist": place.get("twist", 0.0),
+                "glove": place.get("glove", "none")}
+        fitted = carry_onto(place, points, cloud, placed)
+        if fitted is not None:
+            place = fitted
+            place["twist"], place["glove"] = kept["twist"], kept["glove"]
     return place
+
+
+def biggest_eigen(grid, size=4):
+    """The largest eigenvector of a small symmetric matrix, by Jacobi sweeps.
+
+    Four by four and symmetric, so a handful of plane turns diagonalises it
+    exactly. Power iteration was tried first and answered with the wrong
+    vector often enough to move an arm the wrong way, and shifting it to fix
+    that only made it crawl.
+    """
+    work = [list(row) for row in grid]
+    vectors = [[1.0 if row == col else 0.0 for col in range(size)]
+               for row in range(size)]
+    for _sweep in range(40):
+        off = sum(work[row][col] ** 2 for row in range(size)
+                  for col in range(size) if row != col)
+        if off < 1e-20:
+            break
+        for first in range(size):
+            for second in range(first + 1, size):
+                pair = work[first][second]
+                if abs(pair) < 1e-20:
+                    continue
+                theta = (work[second][second] - work[first][first]) / (2.0 * pair)
+                sign = 1.0 if theta >= 0.0 else -1.0
+                turn = sign / (abs(theta) + math.sqrt(theta * theta + 1.0))
+                cosine = 1.0 / math.sqrt(turn * turn + 1.0)
+                sine = turn * cosine
+                # Every row and column but the pair itself, then the pair
+                # itself in one go: turning those four entries twice as the
+                # loops would have done left the sweep half-finished, and the
+                # best turn came back a couple of degrees short.
+                for row in range(size):
+                    if row in (first, second):
+                        continue
+                    one, two = work[row][first], work[row][second]
+                    work[row][first] = cosine * one - sine * two
+                    work[row][second] = sine * one + cosine * two
+                    one, two = work[first][row], work[second][row]
+                    work[first][row] = cosine * one - sine * two
+                    work[second][row] = sine * one + cosine * two
+                one, two = work[first][first], work[second][second]
+                work[first][first] = (cosine * cosine * one
+                                      - 2.0 * sine * cosine * pair
+                                      + sine * sine * two)
+                work[second][second] = (sine * sine * one
+                                        + 2.0 * sine * cosine * pair
+                                        + cosine * cosine * two)
+                work[first][second] = work[second][first] = 0.0
+                for row in range(size):
+                    one, two = vectors[row][first], vectors[row][second]
+                    vectors[row][first] = cosine * one - sine * two
+                    vectors[row][second] = sine * one + cosine * two
+    best = max(range(size), key=lambda index: work[index][index])
+    return [vectors[row][best] for row in range(size)], work[best][best]
+
+
+def best_turn(pairs, here, there):
+    """The one turn taking the first points onto the second, as a 3x3.
+
+    Horn's answer, by power iteration on the 4x4 the cross-covariance builds:
+    no library, and the largest eigenvector is the quaternion of the best turn
+    whether or not the points are a mirror of each other.
+    """
+    cross = [[0.0] * 3 for _ in range(3)]
+    for first, second in pairs:
+        for row in range(3):
+            one = first[row] - here[row]
+            for col in range(3):
+                cross[row][col] += one * (second[col] - there[col])
+    grid = [
+        [cross[0][0] + cross[1][1] + cross[2][2],
+         cross[1][2] - cross[2][1], cross[2][0] - cross[0][2],
+         cross[0][1] - cross[1][0]],
+        [cross[1][2] - cross[2][1],
+         cross[0][0] - cross[1][1] - cross[2][2],
+         cross[0][1] + cross[1][0], cross[2][0] + cross[0][2]],
+        [cross[2][0] - cross[0][2], cross[0][1] + cross[1][0],
+         -cross[0][0] + cross[1][1] - cross[2][2],
+         cross[1][2] + cross[2][1]],
+        [cross[0][1] - cross[1][0], cross[2][0] + cross[0][2],
+         cross[1][2] + cross[2][1],
+         -cross[0][0] - cross[1][1] + cross[2][2]],
+    ]
+    held, _value = biggest_eigen(grid)
+    length = math.sqrt(sum(value * value for value in held))
+    if length < 1e-12:
+        return None
+    w, x, y, z = [value / length for value in held]
+    return (1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y),
+            2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
+            2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y))
+
+
+def limit_turn(turn, most=10.0):
+    """A turn cut back to `most` degrees, keeping the axis it turns about."""
+    cosine = max(-1.0, min(1.0, (turn[0] + turn[4] + turn[8] - 1.0) / 2.0))
+    angle = math.acos(cosine)
+    if angle <= math.radians(most) or angle <= 1e-9:
+        return turn
+    axis = [turn[7] - turn[5], turn[2] - turn[6], turn[3] - turn[1]]
+    length = math.sqrt(sum(value * value for value in axis))
+    if length < 1e-9:
+        return turn
+    return turn_about([value / length for value in axis], math.radians(most))
+
+
+def carry_onto(place, points, cloud, rebuild, rounds=4, sample=240, most=10.0):
+    """Turn a placed side onto Halo's own arm mesh, a little at a time.
+
+    The bones say where an arm is jointed; the mesh the game draws says how it
+    actually leans, and an item's sleeve can lean the other way by several
+    degrees. Each pass pairs the side's own vertices with their nearest points
+    on Halo's arm, works out the turn that would bring those pairs together,
+    and keeps it only if the arm really is closer afterwards - nearest-point
+    pairing can otherwise slide a sleeve along itself and walk it away, which
+    is exactly what a plain fit did on one side.
+
+    Only the turn is fitted, never the size: the size is what puts the glove
+    past Halo's fingertips, and a fit that shrinks the arm to close a gap would
+    take that away. Each pass is also capped, so the sleeve settles onto the
+    arm instead of swinging past it, and the shift is worked out again by
+    `rebuild` after every pass, so the glove stays on Halo's hand.
+    """
+    if place is None or not cloud or len(points) < 8:
+        return None
+    step = max(1, len(points) // sample)
+    mine = list(points[::step])
+
+    def gap_of(candidate):
+        return sum(min(sum((other[i] - point[i]) ** 2 for i in range(3))
+                       for other in cloud) ** 0.5
+                   for point in (place_arm(candidate, one) for one in mine)) / len(mine)
+
+    best = place
+    best_gap = gap_of(best)
+    for _round in range(rounds):
+        moved = [place_arm(best, point) for point in mine]
+        here = [sum(point[i] for point in moved) / len(moved) for i in range(3)]
+        pairs = []
+        for point in moved:
+            near = min(cloud, key=lambda other: sum((other[i] - point[i]) ** 2
+                                                    for i in range(3)))
+            pairs.append((point, near))
+        there = [sum(second[i] for _first, second in pairs) / len(pairs)
+                 for i in range(3)]
+        spin = best_turn(pairs, here, there)
+        if spin is None:
+            break
+        candidate = rebuild(turn_product(limit_turn(spin, most), best["turn"]),
+                            best["scale"])
+        candidate_gap = gap_of(candidate)
+        if candidate_gap >= best_gap - 1e-3:
+            break
+        best, best_gap = candidate, candidate_gap
+    return best
+
+
+def halo_arm_cloud(armature_fp, side, reach=3.0, limit=500):
+    """Halo's own arm on one side, as the points an item's arm is fitted onto.
+
+    Taken from the arm mesh the rig file ships, not from the bones: the bones
+    say where the arm is jointed, while this says how thick it is and which way
+    it actually leans, which is what a sleeve has to match to look worn rather
+    than pinned on.
+    """
+    bones = getattr(getattr(armature_fp, "data", None), "bones", None)
+    if bones is None:
+        return []
+    spans = []
+    for name in ("frame %s upperarm" % side, "frame %s forearm" % side,
+                 "frame %s wriste" % side):
+        bone = bones.get(name)
+        if bone is not None:
+            spans.append((armature_fp.matrix_world @ bone.head_local,
+                          armature_fp.matrix_world @ bone.tail_local))
+    if not spans:
+        return []
+    seen = []
+    for item in halo_arms(armature_fp):
+        matrix = item.matrix_world
+        vertices = list(getattr(item.data, "vertices", []) or [])
+        step = max(1, len(vertices) // limit)
+        for vertex in vertices[::step]:
+            point = matrix @ vertex.co
+            if min(point_segment_distance(point, head, tail)
+                   for head, tail in spans) <= reach:
+                seen.append(point)
+    return seen
 
 
 def place_arm(place, point):
@@ -1914,6 +2121,63 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
             elif place.get("glove") == "round":
                 log("%s arm: its glove is too round to say which way round it "
                     "goes, so it keeps the roll the item gave it" % side)
+
+    # The glove's thumb is a plate that stands off the thumb it was modelled
+    # on, and on Halo's hand that leaves Halo's thumb bones a couple of units
+    # outside it - a weapon grip would then pull the thumb from outside the
+    # glove, the one place it reads wrong in first person. The plate keeps its
+    # shape and is walked onto Halo's thumb until it sits on it the way the
+    # other fingers sit on theirs, feathered by how much of the thumb each
+    # vertex is, so the base of the thumb still belongs to the hand.
+    if armature_fp is not None:
+        for side in ("l", "r"):
+            entries = finger_chains(armature_fp, side).get("thumb")
+            if not entries:
+                continue
+            points = []
+            for _name, head, tail in entries:
+                for step in range(5):
+                    part = step / 4.0
+                    points.append([head[k] + (tail[k] - head[k]) * part
+                                   for k in range(3)])
+            mine = []
+            for index in order:
+                if side_of[index] != side or index not in finals:
+                    continue
+                held = sum(weight for name, weight in finals[index].items()
+                           if finger_of(name) == "thumb")
+                if held > 0.05:
+                    mine.append((index, min(1.0, held)))
+            if len(mine) < 8:
+                continue
+            walked = 0.0
+            for _pass in range(4):
+                drift = [0.0, 0.0, 0.0]
+                total = 0.0
+                for index, weight in mine:
+                    point = coords[slot[index]]
+                    near = min(points, key=lambda place: sum(
+                        (place[k] - point[k]) ** 2 for k in range(3)))
+                    for k in range(3):
+                        drift[k] += (near[k] - point[k]) * weight
+                    total += weight
+                if total <= 1e-6:
+                    break
+                drift = [value / total for value in drift]
+                reach = math.sqrt(sum(value * value for value in drift))
+                # The thumb is never walked further than the gap it was
+                # measured at: a plate that keeps asking to go further is one
+                # that does not fit, and dragging it on would tear it off the
+                # hand it belongs to.
+                if reach < 0.05 or walked + reach > 2.6:
+                    break
+                walked += reach
+                for index, weight in mine:
+                    point = coords[slot[index]]
+                    coords[slot[index]] = tuple(point[k] + drift[k] * weight
+                                                for k in range(3))
+            log("%s thumb: %d vert(s) walked onto Halo's thumb by %.2f units"
+                % (side, len(mine), walked))
 
     faces, flips = [], []
     turned_out = 0

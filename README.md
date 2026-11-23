@@ -151,7 +151,29 @@ from the body and the player sees the arms, not the body's:
   stretch an edge. The half turn that is also flat is settled by whichever
   stands closer to Halo's own hand, and a glove too round to have a flat - a
   fist - keeps the roll the item gave it, which `report.txt` says. A bent
-  arm keeps its bend. Its vertex groups are renamed to Halo's (`frame l upperarm`,
+  arm keeps its bend.
+
+  The bones say where an arm is jointed; the arm mesh inside `fp arms.blend` says
+  how it actually leans - Halo's own sleeve sits 1.8 degrees off its bone line,
+  and an item's sleeve can lean the other way by ten. So once a side is placed,
+  it is fitted onto that mesh: each of its vertices paired with its nearest
+  point on Halo's arm, the one turn that brings those pairs together folded into
+  the carry, and every pass kept only if the arm really is closer afterwards -
+  a plain nearest-point fit slid one side's sleeve along itself and walked it
+  away, so the passes are capped at ten degrees and measured. Only the turn is
+  fitted, never the size, because the size is what puts the glove past Halo's
+  fingertips; and the shift is worked out again after each pass, so the glove
+  stays on Halo's hand while the sleeve finds the arm the game wears.
+
+  The glove's thumb is a plate that stands off the thumb it was modelled on,
+  which on Halo's hand left its thumb bones two units outside the glove - a
+  weapon grip would have pulled the thumb from beside it. The plate keeps its
+  shape and is walked onto Halo's thumb bones by the gap measured between them,
+  feathered by how much of the thumb each vertex is so the base still belongs to
+  the hand, and capped at 2.6 units so a plate that does not fit is not dragged
+  off the hand it belongs to.
+
+  Its vertex groups are renamed to Halo's (`frame l upperarm`,
   `frame l forearm`, `frame l wriste`), and a glove the item weighted to its
   forearm alone - an avatar rig has no finger bones - hands over to
   `frame l wriste` along its length, so the glove follows Halo's hand instead of
