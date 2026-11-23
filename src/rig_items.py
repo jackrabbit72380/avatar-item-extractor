@@ -1043,11 +1043,17 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
     # similarity, so nothing tears, and the shift is worked out again after
     # each pass, so the glove stays on Halo's hand while the sleeve finds the
     # arm the game wears.
-    cloud = halo_arm_cloud(armature_fp, side)
-    if cloud:
+    want = halo_arm_axis(armature_fp, side)
+    # Measured the way Halo's own arm is measured - the skin its upper arm,
+    # forearm and hand bones hold - so the two axes are the same measurement
+    # and the angle between them is the angle a player sees.
+    worn = arm_centre(points, weights, side)
+    sleeve = worn if len(worn) >= 12 else [point for point, t in zip(points, along)
+                                           if t <= cuff]
+    if want is not None and len(sleeve) >= 12:
         kept = {"twist": place.get("twist", 0.0),
                 "glove": place.get("glove", "none")}
-        fitted = carry_onto(place, points, cloud, placed)
+        fitted = carry_onto(place, sleeve, want, placed)
         if fitted is not None:
             place = fitted
             place["twist"], place["glove"] = kept["twist"], kept["glove"]
@@ -1159,88 +1165,87 @@ def limit_turn(turn, most=10.0):
     return turn_about([value / length for value in axis], math.radians(most))
 
 
-def carry_onto(place, points, cloud, rebuild, rounds=4, sample=240, most=10.0):
-    """Turn a placed side onto Halo's own arm mesh, a little at a time.
+def carry_onto(place, points, want, rebuild, rounds=3, most=12.0):
+    """Turn a placed side until its sleeve runs the way Halo's own does.
 
-    The bones say where an arm is jointed; the mesh the game draws says how it
-    actually leans, and an item's sleeve can lean the other way by several
-    degrees. Each pass pairs the side's own vertices with their nearest points
-    on Halo's arm, works out the turn that would bring those pairs together,
-    and keeps it only if the arm really is closer afterwards - nearest-point
-    pairing can otherwise slide a sleeve along itself and walk it away, which
-    is exactly what a plain fit did on one side.
+    The bones say where an arm is jointed; the arm mesh the game draws says
+    which way its sleeve actually runs, and the two do not agree - Halo's own
+    sleeve leans a degree or two off its bone line, and an item's can lean the
+    other way by ten, which is what a player sees as an arm at the wrong angle.
+    The item's sleeve axis is measured the way Halo's is, carried into the world
+    by the turn already chosen, and turned onto Halo's about the shoulder; the
+    shift is worked out again afterwards, so the glove stays on Halo's hand
+    while the sleeve finds the arm.
 
-    Only the turn is fitted, never the size: the size is what puts the glove
-    past Halo's fingertips, and a fit that shrinks the arm to close a gap would
-    take that away. Each pass is also capped, so the sleeve settles onto the
-    arm instead of swinging past it, and the shift is worked out again by
-    `rebuild` after every pass, so the glove stays on Halo's hand.
+    Only the turn moves, never the size - the size is what puts the glove past
+    Halo's fingertips - and each pass is capped, so a side settles onto the
+    angle instead of swinging past it. Fitting the whole arm cloud by nearest
+    point was tried first and was worse at this: it closes the distance by
+    rolling a fat sleeve without ever pointing it the right way.
     """
-    if place is None or not cloud or len(points) < 8:
+    if place is None or want is None or len(points) < 12:
         return None
-    step = max(1, len(points) // sample)
-    mine = list(points[::step])
 
-    def gap_of(candidate):
-        return sum(min(sum((other[i] - point[i]) ** 2 for i in range(3))
-                       for other in cloud) ** 0.5
-                   for point in (place_arm(candidate, one) for one in mine)) / len(mine)
+    def angle_of(candidate):
+        own, _centre = arm_axis(points)
+        if own is None:
+            return None
+        held = turn_point(candidate["turn"], own)
+        if sum(held[i] * want[i] for i in range(3)) < 0.0:
+            held = [-value for value in held]
+        cosine = max(-1.0, min(1.0, sum(held[i] * want[i] for i in range(3))))
+        return math.degrees(math.acos(cosine))
 
     best = place
-    best_gap = gap_of(best)
+    best_angle = angle_of(best)
+    if best_angle is None:
+        return None
     for _round in range(rounds):
-        moved = [place_arm(best, point) for point in mine]
-        here = [sum(point[i] for point in moved) / len(moved) for i in range(3)]
-        pairs = []
-        for point in moved:
-            near = min(cloud, key=lambda other: sum((other[i] - point[i]) ** 2
-                                                    for i in range(3)))
-            pairs.append((point, near))
-        there = [sum(second[i] for _first, second in pairs) / len(pairs)
-                 for i in range(3)]
-        spin = best_turn(pairs, here, there)
+        if best_angle < 0.05:
+            break
+        own, _centre = arm_axis(points)
+        held = turn_point(best["turn"], own)
+        if sum(held[i] * want[i] for i in range(3)) < 0.0:
+            held = [-value for value in held]
+        spin = alignment(held, want)
         if spin is None:
             break
         candidate = rebuild(turn_product(limit_turn(spin, most), best["turn"]),
                             best["scale"])
-        candidate_gap = gap_of(candidate)
-        if candidate_gap >= best_gap - 1e-3:
+        candidate_angle = angle_of(candidate)
+        if candidate_angle is None or candidate_angle >= best_angle:
             break
-        best, best_gap = candidate, candidate_gap
+        best, best_angle = candidate, candidate_angle
     return best
 
 
-def halo_arm_cloud(armature_fp, side, reach=3.0, limit=500):
-    """Halo's own arm on one side, as the points an item's arm is fitted onto.
+def halo_arm_axis(armature_fp, side):
+    """Which way Halo's own sleeve runs, measured the way the item's is.
 
-    Taken from the arm mesh the rig file ships, not from the bones: the bones
-    say where the arm is jointed, while this says how thick it is and which way
-    it actually leans, which is what a sleeve has to match to look worn rather
-    than pinned on.
+    From the arm mesh the rig file ships: the vertices weighted to that side's
+    upper arm, forearm and wrist, and their long axis. That is the arm the game
+    draws, so it is the angle an item's arm has to match to look worn rather
+    than pinned on - and it is not quite the bone line, which is why lining up
+    with the bones alone left the arms visibly tilted.
     """
-    bones = getattr(getattr(armature_fp, "data", None), "bones", None)
-    if bones is None:
-        return []
-    spans = []
-    for name in ("frame %s upperarm" % side, "frame %s forearm" % side,
-                 "frame %s wriste" % side):
-        bone = bones.get(name)
-        if bone is not None:
-            spans.append((armature_fp.matrix_world @ bone.head_local,
-                          armature_fp.matrix_world @ bone.tail_local))
-    if not spans:
-        return []
-    seen = []
+    names = {"frame %s upperarm" % side, "frame %s forearm" % side,
+             "frame %s wriste" % side}
+    points = []
     for item in halo_arms(armature_fp):
-        matrix = item.matrix_world
-        vertices = list(getattr(item.data, "vertices", []) or [])
-        step = max(1, len(vertices) // limit)
-        for vertex in vertices[::step]:
-            point = matrix @ vertex.co
-            if min(point_segment_distance(point, head, tail)
-                   for head, tail in spans) <= reach:
-                seen.append(point)
-    return seen
+        groups = {group.name: group.index
+                  for group in getattr(item, "vertex_groups", []) or []}
+        keep = {groups[name] for name in names if name in groups}
+        if not keep:
+            continue
+        for vertex in getattr(item.data, "vertices", []) or []:
+            for weight in vertex.groups:
+                if weight.group in keep and weight.weight > 0.5:
+                    points.append(item.matrix_world @ vertex.co)
+                    break
+    if len(points) < 12:
+        return None
+    axis, _centre = arm_axis(points)
+    return axis
 
 
 def place_arm(place, point):
@@ -2135,7 +2140,7 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
             if not entries:
                 continue
             points = []
-            for _name, head, tail in entries:
+            for _name, head, tail, _flat in entries:
                 for step in range(5):
                     part = step / 4.0
                     points.append([head[k] + (tail[k] - head[k]) * part
@@ -2150,6 +2155,16 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                     mine.append((index, min(1.0, held)))
             if len(mine) < 8:
                 continue
+            def spread():
+                """How far the thumb bones sit from the plate: worst, then mean."""
+                gaps = []
+                for point in points:
+                    gaps.append(min(math.dist(point, coords[slot[index]])
+                                    for index, _weight in mine))
+                return max(gaps), sum(gaps) / len(gaps)
+
+            before = spread()
+            kept_at = [coords[slot[index]] for index, _weight in mine]
             walked = 0.0
             for _pass in range(4):
                 drift = [0.0, 0.0, 0.0]
@@ -2176,8 +2191,19 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                     point = coords[slot[index]]
                     coords[slot[index]] = tuple(point[k] + drift[k] * weight
                                                 for k in range(3))
-            log("%s thumb: %d vert(s) walked onto Halo's thumb by %.2f units"
-                % (side, len(mine), walked))
+            after = spread()
+            if after[0] > before[0] + 1e-6:
+                # The plate does not fit the thumb it was given: putting it
+                # back is better than a thumb that hangs off its own bones.
+                for (index, _weight), point in zip(mine, kept_at):
+                    coords[slot[index]] = point
+                log("%s thumb: kept where the item put it - walking it onto "
+                    "Halo's thumb made the worst gap %.2f units instead of %.2f"
+                    % (side, after[0], before[0]))
+            else:
+                log("%s thumb: %d vert(s) walked onto Halo's thumb by %.2f "
+                    "units, worst gap %.2f -> %.2f"
+                    % (side, len(mine), walked, before[0], after[0]))
 
     faces, flips = [], []
     turned_out = 0
@@ -3035,6 +3061,28 @@ def mirror_fbx(out, blend_dir, stems):
     return copied
 
 
+def share_files(source, target, endings=None):
+    r"""Copy the files of one folder into another, making the target.
+
+    Halo's own data\<item>\ is a folder of folders, and the same file is wanted
+    in more than one of them - the textures a model compiles against, the file
+    it was exported from. `endings` keeps the copy to the kinds asked for.
+    """
+    if not os.path.isdir(source):
+        return 0
+    os.makedirs(target, exist_ok=True)
+    copied = 0
+    for name in sorted(os.listdir(source)):
+        path = os.path.join(source, name)
+        if not os.path.isfile(path):
+            continue
+        if endings is not None and not name.lower().endswith(endings):
+            continue
+        shutil.copyfile(path, os.path.join(target, name))
+        copied += 1
+    return copied
+
+
 def mirror_jms(out, stems):
     r"""Copy each Halo text model into the xbox folder as well.
 
@@ -3046,15 +3094,15 @@ def mirror_jms(out, stems):
     hek = os.path.join(out, HEK_DIR)
     copied = 0
     for stem in sorted(set(stems)):
-        source_dir = os.path.join(hek, "pc", "data", stem, "models")
-        target_dir = os.path.join(hek, "xbox", "data", stem, "models")
-        os.makedirs(target_dir, exist_ok=True)
-        for suffix in ("", " - fp arms"):
-            name = "%s%s.jms" % (stem, suffix)
-            source = os.path.join(source_dir, name)
-            if os.path.exists(source):
-                shutil.copyfile(source, os.path.join(target_dir, name))
-                copied += 1
+        # models\ holds the body's .jms, fp\models\ the first-person set's, and
+        # each has a source\ beside it holding the file it was exported from.
+        for folder, endings in ((("models",), (".jms",)),
+                                (("fp", "models"), (".jms",)),
+                                (("source",), None),
+                                (("fp", "source"), None)):
+            source_dir = os.path.join(hek, "pc", "data", stem, *folder)
+            target_dir = os.path.join(hek, "xbox", "data", stem, *folder)
+            copied += share_files(source_dir, target_dir, endings)
     return copied
 
 
@@ -3238,6 +3286,24 @@ def main():
         models_dir = os.path.join(hek_data, stem, "models")
         os.makedirs(models_dir, exist_ok=True)
         os.makedirs(os.path.join(hek_data, stem, "animations"), exist_ok=True)
+        # Halo's first-person arms are a model of their own, so they get their
+        # own folder the way a model does: fp\ holds the bitmaps they compile
+        # against and the .jms tool.exe builds them from, instead of being left
+        # in with the body's. Both that folder and the item's own carry a
+        # source\ holding the file the model was exported from, which is where
+        # a HEK user looks for the thing to re-export.
+        item_dir = os.path.join(hek_data, stem)
+        fp_dir = os.path.join(item_dir, "fp")
+        source_dir = os.path.join(item_dir, "source")
+        fp_models = os.path.join(fp_dir, "models")
+        fp_bitmaps = os.path.join(fp_dir, "bitmaps")
+        fp_source = os.path.join(fp_dir, "source")
+        for folder in (source_dir, fp_models, fp_bitmaps, fp_source):
+            os.makedirs(folder, exist_ok=True)
+        # The arms are textured with the item's own maps, so the folder they
+        # are built from carries them too rather than pointing back at the
+        # body's.
+        share_files(os.path.join(item_dir, "bitmaps"), fp_bitmaps)
         # Halo rig: the item on the biped, arms loaded, as a .blend that opens
         # straight onto it so it can simply be exported from there. The .jms is
         # Halo's own text model, and the .fbx is the same thing for anything
@@ -3255,6 +3321,8 @@ def main():
                           halo_note(stem, merged, armature, False))
             export_rigged(os.path.join(blend_dir, "%s - halo.fbx" % stem),
                           merged, armature, "fbx")
+            share_files(blend_dir, source_dir,
+                        ("%s - halo.blend" % stem, "%s - halo.fbx" % stem))
         # First-person arms: Halo's in-game hands are a separate model, so every
         # item gets its own second set on that rig - the fingers exist nowhere
         # else, and the player sees these arms and not the body's.
@@ -3268,7 +3336,7 @@ def main():
                 if options["jms"] and arms_item.data.vertices:
                     record["jms_arms_errors"] = export_jms(
                         arms_item, arms_rig,
-                        os.path.join(models_dir, "%s - fp arms.jms" % stem))
+                        os.path.join(fp_models, "%s - fp arms.jms" % stem))
                 record["arms_file"] = "%s - halo fp arms.blend" % stem
                 # The arms are carried onto Halo's own first-person rig, so
                 # that rig is the one in the file - the game's animations drive
@@ -3278,6 +3346,8 @@ def main():
                               halo_note(stem, arms_item, arms_rig, True))
                 export_rigged(os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
                               arms_item, arms_rig, "fbx")
+                share_files(blend_dir, fp_source, (" - halo fp arms.blend",
+                                                  " - halo fp arms.fbx"))
                 log("wrote %s on the first-person arms" % stem)
             except Exception as problem:  # noqa: BLE001 - see above
                 record.pop("arms_file", None)

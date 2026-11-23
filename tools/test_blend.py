@@ -216,18 +216,44 @@ def main():
     # into xbox\data as well: an xbox user should not have to reach into pc\
     # for the model when that target's bitmaps are already in its own folder.
     jms_work = tempfile.mkdtemp(prefix="jms-")
-    jms_pc = os.path.join(jms_work, "extracted for hek users", "pc", "data",
-                          "Item", "models")
-    os.makedirs(jms_pc, exist_ok=True)
-    for name in ("Item.jms", "Item - fp arms.jms", "Notes.txt"):
-        open(os.path.join(jms_pc, name), "w").close()
+    pc_item = os.path.join(jms_work, "extracted for hek users", "pc", "data", "Item")
+    xbox_item = os.path.join(jms_work, "extracted for hek users", "xbox", "data",
+                             "Item")
+    folders = ((("models",), ("Item.jms", "Notes.txt")),
+               (("fp", "models"), ("Item - fp arms.jms",)),
+               (("source",), ("Item - halo.blend",)),
+               (("fp", "source"), ("Item - halo fp arms.blend",)))
+    for folder, names in folders:
+        path = os.path.join(pc_item, *folder)
+        os.makedirs(path, exist_ok=True)
+        for name in names:
+            open(os.path.join(path, name), "w").close()
     copied = module.mirror_jms(jms_work, ["Item", "Missing"])
-    jms_xbox = sorted(os.listdir(os.path.join(jms_work, "extracted for hek users",
-                                              "xbox", "data", "Item", "models")))
-    print("  mirror_jms          -> %d copied, xbox\\data holds %r" % (copied, jms_xbox))
-    if copied != 2 or jms_xbox != ["Item - fp arms.jms", "Item.jms"]:
-        fail("mirror_jms copied %d files (%r), expected 2 (%r)"
-             % (copied, jms_xbox, ["Item - fp arms.jms", "Item.jms"]))
+    got = {folder: sorted(os.listdir(os.path.join(xbox_item, *folder)))
+           for folder, _names in folders}
+    print("  mirror_jms          -> %d copied, xbox\\data holds %r" % (copied, got))
+    wanted = {(("models",)): ["Item.jms"],
+              (("fp", "models")): ["Item - fp arms.jms"],
+              (("source",)): ["Item - halo.blend"],
+              (("fp", "source")): ["Item - halo fp arms.blend"]}
+    if copied != 4 or got != wanted:
+        fail("mirror_jms copied %d files (%r), expected 4 (%r)"
+             % (copied, got, wanted))
+
+    # The fp folder carries its own bitmaps and models, and both it and the
+    # item's own folder carry a source\\ with the file the model came from.
+    share_work = tempfile.mkdtemp(prefix="share-")
+    maps = os.path.join(share_work, "maps")
+    os.makedirs(maps, exist_ok=True)
+    for name in ("Item base map.tif", "Item colour.png", "notes.txt"):
+        open(os.path.join(maps, name), "w").close()
+    target = os.path.join(share_work, "fp", "bitmaps")
+    copied = module.share_files(maps, target, (".tif", ".png"))
+    got = sorted(os.listdir(target))
+    print("  share_files         -> %d copied, fp\\bitmaps holds %r" % (copied, got))
+    if copied != 2 or got != ["Item base map.tif", "Item colour.png"]:
+        fail("share_files copied %d files (%r), expected the two maps (%r)"
+             % (copied, got, ["Item base map.tif", "Item colour.png"]))
 
     # The scene and the rigs go into report.txt as a short section: two JSON
     # dumps per item folder that nothing read back were clutter.

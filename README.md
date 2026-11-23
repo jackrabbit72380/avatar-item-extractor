@@ -68,8 +68,13 @@ Test Item\
                         Test Item change colour.tif - Halo CE channel order
             models\     Test Item.jms  the model, for tool.exe
             animations\  empty until there are animation files to put here
+            source\     Test Item - halo.blend, .fbx  what the model came from
+            fp\         the first-person arms, a model of their own
+                bitmaps\  the item's own maps, for the arms
+                models\   Test Item - fp arms.jms
+                source\   Test Item - halo fp arms.blend, .fbx
         xbox\data\Test Item\
-            the same three folders, the bitmaps in the original Xbox order
+            the same folders, the bitmaps in the original Xbox order
     Test Item.png  the item's icon, when the package has one
     colour_00.png  the item's own palette, when it carries one
     Test Item_colours.txt
@@ -89,8 +94,12 @@ model, its `.fbx` when Blender ran, and its textures already beside it;
 `extracted for hek users` has `pc\` and `xbox\`, each with `data\<item>\` -
 the source directory `tool.exe` is pointed at - holding `bitmaps\` with the
 `.tif` files it compiles, `models\` with the `.jms` (in both builds, because the
-one text model compiles for either target) and `animations\` for animation
-data. There is deliberately no `tags\` in there: `tool.exe` writes its output
+one text model compiles for either target), `animations\` for animation data,
+and `source\` with the `.blend` and `.fbx` the model was exported from. The
+first-person arms are a model of their own, so they get their own `fp\` folder
+inside the item: `fp\bitmaps\` with the maps they compile against,
+`fp\models\` with their `.jms`, and `fp\source\` with their `.blend` and
+`.fbx`. There is deliberately no `tags\` in there: `tool.exe` writes its output
 to `tags\` at the HEK root, never inside `data\`.
 Both channel orders ship because the port and the original Xbox read the masks
 differently; nothing is left for you to swap by hand. The `.png` and `.tga`
