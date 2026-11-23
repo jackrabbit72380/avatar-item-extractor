@@ -501,6 +501,16 @@ is different, so both are written rather than leaving you to swap channels:
     are zero, because an item does not say which parts are shiny, glow or take a
     detail map, and inventing that would be a guess.
 
+    The mask is read in **the base map's UV set**, because that is the space the
+    shader samples it in - and which set it was painted for is decided by where
+    its pixels actually cover the item, not by the set the material's record
+    names. The Marine armour's mask says set 2; in set 2 it covers 21% of the
+    body and in set 0 it covers 75%, and laid over the base map its shapes trace
+    that map's panels texel for texel. So it is painted in the base map's layout
+    and is read where it is. A mask that really is painted in another set covers
+    the body better there, and that one is carried across the geometry into the
+    base map's set, so the tint still lands where the base map shows it.
+
     The mask is in **alpha alone**, because that is the channel the shader reads.
     An image viewer that draws colour and ignores alpha shows `multipurpose`,
     `multipurpose xbox` and `change colour` as solid black - that is where the
@@ -517,7 +527,9 @@ is different, so both are written rather than leaving you to swap channels:
 The masks are the same four channels either way; only which channel holds which
 mask moves, and the colour change channel is the team colour. The mask follows
 the UV set the item's base-colour material names, which is the space the shader
-samples the base map and the mask in together.
+samples the base map and the mask in together - and the images are written with
+v running down the picture, the way the pack stores its textures, so a mask sits
+on the base map's own islands rather than on their mirror image.
 
 Parts keep their own colours when the item states them: each mesh batch is its
 own material with its own `Kd`, and when the batches differ, each gets its own

@@ -1084,7 +1084,10 @@ def uv_coverage(batches, size=256, set_index=None):
                     points = []
                     break
                 u, v = uvs[index][chosen]
-                points.append((u * last, (1.0 - v) * last))
+                # The pack is D3D top-left origin, so v runs down the image and
+                # row = v. A mask written the other way up is a mirror of the
+                # base map it has to sit beside.
+                points.append((u * last, v * last))
             if len(points) != 3:
                 continue
             (x1, y1), (x2, y2), (x3, y3) = points
@@ -1108,6 +1111,95 @@ def uv_coverage(batches, size=256, set_index=None):
         if value:
             painted += 1
     return bytes(mask), painted
+
+
+def bake_mask(batches, source, channel, size, from_set, to_set):
+    """A mask carried from the UV set it is painted in to the one the shader uses.
+
+    Halo's shader samples the multipurpose map in the base map's UV set, so a
+    mask painted in a different set has to be carried across the geometry:
+    walking each triangle in `to_set` space and reading the mask at the same
+    point in `from_set` space puts the tint where the base map shows it. The
+    Marine armour's mask sits in UV set 2 and its base map in set 0, and the two
+    share no vertex, so reading one as the other tints the wrong parts.
+
+    Texture coordinates are in tiles, not in 0..1 - the base map's own run from
+    -3.6 to 4.0 - so both sides wrap, the way a repeating atlas does for the
+    colour. Where tiles overlap a texel takes the last triangle that covers it.
+    """
+    width = source.get("width") or 0
+    height = source.get("height") or 0
+    rgba = source.get("rgba") or b""
+    if width <= 0 or height <= 0 or len(rgba) < width * height * 4:
+        return None
+    mask = bytearray(size * size)
+    last = float(size - 1)
+    for batch in batches or []:
+        uvs = batch.get("uvs") or []
+        indices = batch.get("indices") or []
+        if not uvs or not indices:
+            continue
+        for step in range(0, len(indices) - 2, 3):
+            corners = indices[step:step + 3]
+            if max(corners) >= len(uvs):
+                continue
+            destination = []
+            sources = []
+            for index in corners:
+                entry = uvs[index]
+                if to_set >= len(entry) or from_set >= len(entry):
+                    destination = []
+                    break
+                destination.append(entry[to_set])
+                sources.append(entry[from_set])
+            if len(destination) != 3:
+                continue
+            # A triangle that crosses a tile edge has to be drawn once per tile
+            # it reaches, or the part past the edge lands on the far side of
+            # the atlas: the coordinates are tiles, not 0..1, so the canvas is
+            # one tile of a repeating space.
+            for shift_u in (-1, 0, 1):
+                for shift_v in (-1, 0, 1):
+                    points = [((u + shift_u) * last, (v + shift_v) * last)
+                              for u, v in destination]
+                    paint_triangle(mask, size, points, sources, rgba,
+                                   width, height, channel)
+    return bytes(mask)
+
+
+def paint_triangle(mask, size, points, sources, rgba, width, height, channel):
+    """Fill one triangle of the mask; False when it falls outside the canvas."""
+    (x1, y1), (x2, y2), (x3, y3) = points
+    low_x = max(0, int(min(x1, x2, x3)))
+    high_x = min(size - 1, int(max(x1, x2, x3)) + 1)
+    low_y = max(0, int(min(y1, y2, y3)))
+    high_y = min(size - 1, int(max(y1, y2, y3)) + 1)
+    if low_x > high_x or low_y > high_y:
+        return False
+    area = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
+    if not area:
+        return False
+    if (high_x - low_x) * (high_y - low_y) > size * size // 2:
+        # A triangle that covers half the atlas is a bad reading of the UVs, not
+        # a mask: skip it rather than flood the image.
+        return False
+    for y in range(low_y, high_y + 1):
+        row = y * size
+        for x in range(low_x, high_x + 1):
+            w1 = ((y2 - y3) * (x - x3) + (x3 - x2) * (y - y3)) / area
+            w2 = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) / area
+            w3 = 1.0 - w1 - w2
+            # A hair outside the edge still belongs to it: texel centres never
+            # land exactly on a shared edge, and a mask with one texel seams
+            # through it would tint in stripes.
+            if w1 < -0.05 or w2 < -0.05 or w3 < -0.05:
+                continue
+            u = w1 * sources[0][0] + w2 * sources[1][0] + w3 * sources[2][0]
+            v = w1 * sources[0][1] + w2 * sources[1][1] + w3 * sources[2][1]
+            sx = int((u % 1.0) * width) % width
+            sy = int((v % 1.0) * height) % height
+            mask[row + x] = rgba[(sy * width + sx) * 4 + channel]
+    return True
 
 
 def main():

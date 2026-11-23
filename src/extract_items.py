@@ -825,7 +825,8 @@ def texture_facts(entry):
     return {"width": entry["width"], "height": entry["height"],
             "format": entry["format"], "endian": entry.get("endian"),
             "frames": entry.get("frames"), "pixels": len(entry["data"]),
-            "slot": entry.get("slot"), "rgba": entry["rgba"]}
+            "slot": entry.get("slot"), "uv_set": entry.get("uv_set"),
+            "rgba": entry["rgba"]}
 
 
 def mask_from_texture(texture, size, channel=0):
@@ -874,6 +875,67 @@ def mask_channel(texture):
             continue
         return channel
     return None
+
+
+def mask_reach(batches, texture, channel, uv_set):
+    """The share of the item's triangles whose centre lands on the mask at all.
+
+    Which UV set a mask belongs to is a question the bytes answer: one painted
+    for a set covers the item in it, and one read in the wrong set falls mostly
+    on texels nobody painted. The Marine armour's mask covers 72% of its body in
+    set 0 and 11% in set 2, which is how it comes out that the mask is painted
+    in the base map's layout whatever the material's field says - zoom in on the
+    two images and the mask's shapes trace the base map's panels exactly.
+    """
+    width = texture.get("width") or 0
+    height = texture.get("height") or 0
+    rgba = texture.get("rgba") or b""
+    if width <= 0 or height <= 0 or len(rgba) < width * height * 4:
+        return 0.0
+    hits = total = 0
+    for batch in batches or []:
+        uvs = batch.get("uvs") or []
+        indices = batch.get("indices") or []
+        if not uvs or not indices:
+            continue
+        for step in range(0, len(indices) - 2, 3):
+            corners = indices[step:step + 3]
+            if max(corners) >= len(uvs):
+                continue
+            total += 1
+            if any(uv_set >= len(uvs[i]) for i in corners):
+                continue
+            u = sum(uvs[i][uv_set][0] for i in corners) / 3.0
+            v = sum(uvs[i][uv_set][1] for i in corners) / 3.0
+            sx = int((u % 1.0) * width) % width
+            sy = int((v % 1.0) * height) % height
+            if rgba[(sy * width + sx) * 4 + channel]:
+                hits += 1
+    return hits / float(total) if total else 0.0
+
+
+def mask_bytes(mesh, batches, texture, channel, size, base_uv_set, own_uv_set=None):
+    """The mask at `size`, in the base map's UV set, which is where it is read.
+
+    The shader samples the multipurpose map in the base map's set. If the mask's
+    pixels cover the item there, they are already in that layout and are just
+    resampled. If they instead cover it in the set their material names - far
+    more of the body lands on painted texels in that set - the mask really is
+    painted elsewhere and is carried across the geometry so it still lands where
+    the base map shows it.
+    """
+    if texture is None:
+        return None
+    if own_uv_set is None:
+        own_uv_set = texture.get("uv_set")
+    if (own_uv_set is not None and base_uv_set is not None
+            and own_uv_set != base_uv_set):
+        here = mask_reach(batches, texture, channel, base_uv_set)
+        there = mask_reach(batches, texture, channel, own_uv_set)
+        if there > here * 1.5:
+            return mesh.bake_mask(batches, texture, channel, size,
+                                  own_uv_set, base_uv_set)
+    return mask_from_texture(texture, size, channel)
 
 
 def mask_source(candidates):
@@ -977,6 +1039,7 @@ def slot_textures(mesh, batches):
             decoded = dict(entry)
             decoded["slot"] = slot
             decoded["role"] = role
+            decoded["uv_set"] = record.get("uv_set")
             decoded["rgba"] = mesh.decode_dxt_bytes(
                 entry["data"], width, height, entry["format"] == 0x14,
                 swap=entry.get("endian") == 1)
@@ -1980,15 +2043,33 @@ def main(argv=None):
             role, mask_texture, channel = mask_source(
                 [(2, facts.get("tint_texture")), (3, facts.get("decal_texture"))])
             if mask_texture:
-                # The item's own mask, painted by whoever made it, resampled to
-                # the size being written - not derived from geometry.
-                big = mask_from_texture(mask_texture, png_size, channel)
-                small = mask_from_texture(mask_texture, small_size, channel)
+                # The item's own mask, painted by whoever made it, carried into
+                # the space the shader samples it in - not derived from geometry.
+                base_uv_set = (picture or {}).get("uv_set")
+                big = mask_bytes(mesh, batches, mask_texture, channel, png_size,
+                                 base_uv_set)
+                small = mask_bytes(mesh, batches, mask_texture, channel,
+                                   small_size, base_uv_set)
                 source = ("the item's own %s, slot %s, %dx%d, %s channel"
                           % ("tint mask" if role == 2 else "decal map",
                              mask_texture.get("slot"), mask_texture["width"],
                              mask_texture["height"],
                              "alpha" if channel == 3 else "red"))
+                own_uv_set = mask_texture.get("uv_set")
+                if (own_uv_set is not None and base_uv_set is not None
+                        and own_uv_set != base_uv_set):
+                    here = mask_reach(batches, mask_texture, channel, base_uv_set)
+                    there = mask_reach(batches, mask_texture, channel, own_uv_set)
+                    if there > here * 1.5:
+                        source += (", carried from UV set %d into UV set %d, the"
+                                   " set the base map samples"
+                                   % (own_uv_set, base_uv_set))
+                    else:
+                        source += (", read in UV set %d, the set the base map"
+                                   " samples: its pixels cover %d%% of the body"
+                                   " there against %d%% in its own set %d"
+                                   % (base_uv_set, round(here * 100),
+                                      round(there * 100), own_uv_set))
             elif picture:
                 # No tint mask, but a painted texture: its own islands are the
                 # coverage the item actually has, so the mask follows the picture
