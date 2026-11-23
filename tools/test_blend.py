@@ -216,9 +216,9 @@ def main():
     # into xbox\data as well: an xbox user should not have to reach into pc\
     # for the model when that target's bitmaps are already in its own folder.
     jms_work = tempfile.mkdtemp(prefix="jms-")
-    pc_item = os.path.join(jms_work, "extracted for hek users", "pc", "data", "Item no_decals")
+    pc_item = os.path.join(jms_work, "extracted for hek users", "pc", "data", "Item sp")
     xbox_item = os.path.join(jms_work, "extracted for hek users", "xbox", "data",
-                             "Item no_decals")
+                             "Item sp")
     folders = ((("models",), ("Item.jms", "Notes.txt")),
                (("fp", "models"), ("Item - fp arms.jms",)),
                (("source",), ("Item - halo.blend",)),

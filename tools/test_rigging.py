@@ -65,8 +65,8 @@ for obj in "$items/extracted for max users"/*.obj "$items"/*.obj; do
     if [ "$hasrig" = "1" ]; then
       : > "$target/extracted for blender users/$base - halo.blend"; : > "$target/extracted for blender users/$base - halo.fbx"
       : > "$target/extracted for blender users/$base - halo fp arms.blend"; : > "$target/extracted for blender users/$base - halo fp arms.fbx"
-      mkdir -p "$target/extracted for hek users/pc/data/$base no_decals/models"
-      : > "$target/extracted for hek users/pc/data/$base no_decals/models/$base.jms"
+      mkdir -p "$target/extracted for hek users/pc/data/$base sp/models"
+      : > "$target/extracted for hek users/pc/data/$base sp/models/$base.jms"
     fi
     for k in blend fbx; do : > "$target/extracted for blender users/$base - unrigged.$k"; done
   fi

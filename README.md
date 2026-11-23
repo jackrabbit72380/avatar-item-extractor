@@ -69,37 +69,31 @@ Test Item\
         source rigs\  master chief skeleton.blend, fp arms.blend  Halo's own
                        rig files, kept for repair
     extracted for hek users\
-        pc\data\Test Item no_decals\
-            the plain build: the base map exactly as the pack stores it, so no
-            decal is blended into it. Point tool.exe here for an item without
-            one; the sp and mp builds below copy from it.
+        pc\data\Test Item sp\
+            the faithful build: the base map exactly as the pack stores it, and
+            a multipurpose map that masks nothing. This is the folder to compile
+            when the item should look like itself.
             bitmaps\    Test Item base map.tif, Test Item multipurpose.tif,
                         Test Item change colour.tif, Test Item slot 2 decal
-                        map.tif, and Test Item base map + decal.tif - Halo CE
-                        channel order
-            models\     Test Item.jms  the model, for tool.exe
+                        map.tif, and Test Item base map + decal.tif
+            models\     Test Item sp.jms  the model, named for the build
             animations\  empty until there are animation files to put here
             source\     Test Item - halo.blend, .fbx  what the model came from
             fp\         the first-person arms, a model of their own
-                bitmaps\  the item's own maps, for the arms
-                models\   Test Item - fp arms.jms
+                bitmaps\  the same maps, for the arms
+                models\   Test Item sp - fp arms.jms
                 source\   Test Item - halo fp arms.blend, .fbx
-        xbox\data\Test Item no_decals\
-            the same folders, the bitmaps in the original Xbox order
-        pc\data\Test Item sp\   a complete build that keeps the item's own
-            bitmaps\  the base map with the decal blended in, the slots, and a
-                      multipurpose map that masks nothing
-            models\   Test Item sp.jms  named for the build, so both can be
-                      compiled without one overwriting the other
-            fp\       the same for the first-person arms
-        pc\data\Test Item mp\   a complete build that takes the team colour
-            bitmaps\  the base map with the decal blended in, the slots, Test
-                      Item change colour.tif, and the team-colour multipurpose
-                      map
-            models\   Test Item mp.jms
-            fp\       the same for the arms
-        xbox\data\  the sp and mp pair again, in the original Xbox order
-                    (the team colour sits in blue there, not in alpha)
+        pc\data\Test Item sp-decals\   the same with the decal baked in
+        pc\data\Test Item mp\          the team-colour mask bound
+        pc\data\Test Item mp-decals\   team colour and decal
+        xbox\data\  all four again, in the original Xbox channel order: the
+                    team colour sits in blue there, not in alpha
+
+    The four builds are independent because the two choices are: Halo CE's
+    shader_model samples one colour layer, so a decal is baked into the base map
+    or absent, and the team colour is a channel of the multipurpose map. Each
+    folder is a complete data\ directory with its own model and JMS material
+    names, so tool.exe writes four sets of tags instead of overwriting one.
     Test Item.png  the item's icon, when the package has one
     colour_00.png  the item's own palette, when it carries one
     Test Item_colours.txt
@@ -511,6 +505,35 @@ is different, so both are written rather than leaving you to swap channels:
 | Halo CE | detail mask | self-illumination | specular | colour change |
 | Xbox | specular | self-illumination | colour change | detail |
 
+Two corrections to that table, from the tag reference itself
+([shader_model](https://c20.reclaimers.net/h1/tags/shader/shader_model)):
+
+  * **Red is an auxiliary mask, not a detail map.** It only becomes the detail
+    mask when the shader's *detail mask* field is set to *auxiliary mask*; the
+    detail map itself is a second bitmap with `detail map` usage, and the shader
+    blends it by one of three functions (double biased multiply, multiply,
+    double biased add). This item carries no detail bitmap, so red is left black
+    and the detail slot is unused.
+  * **Blue is cubemap specularity**, not the reflection mask of an environment
+    shader: full blue is the strongest reflection, black is none, and it needs a
+    reflection cube map bound to do anything. No cube map is written here, so
+    blue is black.
+  * **Green is self-illumination, "used for lights on the model"** - it is added
+    to diffuse light and then multiplied by the diffuse colour, so a black texel
+    cannot glow. This item's data has no emission map of any kind, so green is
+    black: its "lights" are painted into the base map, not lit.
+
+**There is no bump map field in shader_model.** Halo 1's bump maps belong to
+shader_environment (bitmaps compiled with `height map` usage and turned into
+normal maps), so an armour item cannot have one: the model shader's only maps
+are base, multipurpose, detail and the reflection cube map. Making a bump
+bitmap for this item would produce a tag nothing can reference.
+
+The decal is likewise not a shader input: `shader_model` samples one colour
+layer, so the item's decal is blended into the base map by its alpha
+(`base*(1-a) + decal.rgb*a`) in the `-decals` builds, and left out of the plain
+ones.
+
   * `<stem> multipurpose.*` - Halo CE order. Colour change is the team colour,
     and the only thing an item states about it is its **tint mask** - a material's
     parameter id 2, written beside the base map as `slot <n> tint mask`. The
@@ -519,25 +542,31 @@ is different, so both are written rather than leaving you to swap channels:
     which of the player's three custom colours a texel takes, and alpha is how
     much of it shows. Halo CE holds one team colour in the multipurpose alpha, so
     the alpha is the amount; an item that marks whole regions by colour and
-    leaves alpha flat tints everywhere a weight is set. A blank tint slot is not
-    a mask: the item states no team colour at all, and at run time its colours
-    come from the player's description, which a Halo CE bitmap cannot hold. The
-    multiplayer build then needs an amount from somewhere, and the base map's
-    own colour is the only evidence left. Brightness alone does not separate the
-    two: the Marine's tan suit is stored at (123, 109, 88) - darker than the
-    bright tan it looks like in a lit render, and a luminance threshold tints it
-    almost as hard as the plates (measured: the first rule did exactly that).
-    What does separate them is hue as well, so the derived amount is warmth
-    (red above blue) times brightness: the plates are dark near-neutral olive at
-    (60, 56, 49), red-minus-blue 11, and take 1.0; the cloth is warm at
-    red-minus-blue 35 and takes 0.32. A two-texel blur keeps the weave's own
-    shadows from reading as plate. On this item that is 86/255 across the cloth
-    islands and 255 on the plates (`derived_amount()` in `extract_items.py`).
-    `tools/tint_preview.py` writes the base map out under a few team colours and
-    beside the mask, so a wrong amount is visible before anything is compiled.
-    The single-player build's map masks nothing, so the item can be built either
-    way. `report.txt`'s `mask source:` line says which of the three it is, and
-    says when the amount is derived rather than stated by the item.
+    leaves alpha flat tints everywhere a weight is set. A blank tint slot states
+    no colour change, and the item's colour table is the other half of the same
+    fact: the avatar rule is `lerp(base, r*C1 + g*C2 + b*C3, a)`, with C1-C3 the
+    item's three custom colours, and it is **untinted when the item has no colour
+    table** (open-avatar-lib `docs/FORMATS.md` 3.6, which cites the game's own
+    shader and All-Stars Avatar's `avatar_colours.py`). The Marine armour has
+    both: a 32x32 tint slot with one texel set, and no colour-table block at all.
+    So its exact mask is **black**: nothing tints, and `report.txt` says that in
+    its `mask source:` line instead of inventing an amount from the base map. Two earlier versions did invent one; the second graded the suit to a
+    third of the colour and still was not the item's data, so it is gone from the
+    default path.
+
+    A team colour is then a deliberate choice, and `extract_items.py --tint`
+    takes it: `full` (every painted texel), `derived` (the armour/cloth rule
+    below) or a path to a black-and-white PNG of your own. report.txt names the
+    file as authored whenever one is used. The rule behind `derived`, for
+    reference: cloth share = warmth (red above blue) x brightness, blurred two
+    texels - the plates are dark near-neutral olive at (60, 56, 49), red minus
+    blue 11, the cloth warm at 35, so the plates take 1.0 and the cloth 0.32.
+    `tools/tint_preview.py` writes the base map out under a few team colours
+    beside the mask, so an authored mask can be judged before it is compiled.
+    The one-click .bat takes the same choice without a command line: a file
+    named `tint_mask.png` beside it becomes `--tint` that file, and
+    `tint_mode.txt` can say `full` or `derived` instead. With neither, nothing
+    tints and the report says why.
 
     The slot beside the tint mask (parameter id 3) is a **decal**: artwork blended
     over the base map by its own alpha, a tee's logo. It is never read as a mask.
@@ -634,11 +663,12 @@ three: it asks once where the editing kit is, copies the folders into its
 `build-hek.log`. `build-hek.bat xbox` does the same for the Xbox channel order.
 What it does, step by step:
 
-1. **Put the build where the tool looks.** Copy each of
-   `extracted for hek users\pc\data\<stem> no_decals`, `<stem> sp` and
-   `<stem> mp` (or the `xbox` ones) into the editing kit's `data\` folder. The
-   folder name is the tag path, and it is the only thing that has to move.
-   `no_decals` carries the plain base map; `sp` and `mp` carry the decal.
+1. **Put the build where the tool looks.** Copy any of
+   `extracted for hek users\pc\data\<stem> sp`, `<stem> sp-decals`,
+   `<stem> mp` and `<stem> mp-decals` (or the `xbox` four) into the editing
+   kit's `data\` folder. The folder name is the tag path, and it is the only
+   thing that has to move. `sp` is the faithful build; `-decals` adds the baked
+   decal; `mp` binds the team-colour mask.
 2. **Bitmaps.** `tool bitmaps "<stem> sp\bitmaps"` - H1A Tool also takes a type
    argument (`2d`), the legacy HEK reads it from the tag. Each `.tif` becomes
    `tags\<stem> sp\bitmaps\<name>.bitmap`, named after the file, so every map a

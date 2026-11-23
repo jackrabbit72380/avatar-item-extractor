@@ -626,16 +626,23 @@ def mask_orders(name):
     return ()
 
 
-PLAIN_SUFFIX = " no_decals"
+PLAIN_SUFFIX = " sp"
+
+# Which team-colour mask the mp build gets. "item" is the item's own tint mask
+# and nothing else: an item with a blank slot and no colour table states no
+# colour change at all, so its mask is black and nothing tints. The other
+# values author a mask the item does not have, and report.txt says so.
+TINT_MODE = "item"
 
 
 def plain_build(stem):
     """The item's own build folder: the maps as the pack stores them.
 
-    It holds the plain base map, so it is the build to point tool.exe at when
-    the decal is not wanted; the sp and mp builds sit beside it with the decal
-    blended in. Extraction and rigging both write here first, and the two
-    builds copy from it, so the folder has to be named the same way in both.
+    This is the single-player build - the decal-free base map and a multipurpose
+    map that masks nothing - so it is the faithful one. The decal and the team
+    colour are separate builds beside it (sp-decals, mp, mp-decals), made by
+    copying from here. Extraction and rigging both write here first, so the
+    folder has to be named the same way in both.
     """
     return stem + PLAIN_SUFFIX
 
@@ -1196,6 +1203,73 @@ def derived_amount(texture, size, armour=1.0, cloth=0.32,
             amount = armour + (cloth - armour) * share[row + min(width - 1, x * width // size)]
             out[target + x] = max(0, min(255, int(round(amount * 255))))
     return bytes(out)
+
+
+def mask_from_image(path, size):
+    """An authored mask image's red channel, sampled onto a size x size grid.
+
+    Masking in an image editor is the only way to say something the item does
+    not: white where the team colour shows, black where it does not. Red is the
+    channel because the change-colour map is written that way too, so a mask
+    saved from one of this tool's own masks needs no conversion.
+    """
+    try:
+        with open(path, "rb") as handle:
+            picture = read_png(handle.read())
+    except (IOError, OSError):
+        return None
+    if not picture:
+        return None
+    rgba, width, height = picture
+    out = bytearray(size * size)
+    for y in range(size):
+        row = min(height - 1, y * height // size) * width
+        target = y * size
+        for x in range(size):
+            out[target + x] = rgba[(row + min(width - 1, x * width // size)) * 4]
+    return bytes(out)
+
+
+def authored_tint(choice, picture, png_size, small_size, mesh=None, batches=None):
+    """A team-colour mask someone asked for, never one presented as the item's.
+
+    The item's own answer is the default and it is black for an item with a
+    blank tint slot: no colour table, no colour change. These are the ways to
+    say otherwise, and report.txt names whichever was used.
+    """
+    def coverage(size):
+        """Where the item is painted: its base map's own texels, or its UVs."""
+        if picture:
+            return mask_from_coverage(picture, size)
+        if mesh is not None and batches is not None:
+            painted, any_painted = mesh.uv_coverage(batches, size)
+            return painted if any_painted else None
+        return None
+
+    if choice == "full":
+        big = coverage(png_size)
+        small = coverage(small_size)
+        source = ("authored (--tint full): every texel the base map paints takes"
+                  " the team colour. The item states none of its own - blank tint"
+                  " slot, no colour table - so this is a choice, not its data")
+    elif choice == "derived":
+        big = derived_amount(picture, png_size) if picture else coverage(png_size)
+        small = derived_amount(picture, small_size) if picture else coverage(small_size)
+        source = ("authored (--tint derived): dark near-neutral armour takes the"
+                  " team colour fully, warm tan cloth about a third. A rule, not"
+                  " the item's data, which is blank")
+    else:
+        big = mask_from_image(choice, png_size)
+        small = mask_from_image(choice, small_size)
+        source = ("authored from %s, read as its red channel: white takes the"
+                  " team colour. The item states no colour change of its own"
+                  % os.path.basename(choice))
+    if big is None or small is None:
+        big = bytes(png_size * png_size)
+        small = bytes(small_size * small_size)
+        source = ("none - %s could not be read as a mask, so nothing tints"
+                  % choice)
+    return big, small, source
 
 
 def texture_from_model(mesh, batches):
@@ -1963,7 +2037,14 @@ def main(argv=None):
     parser.add_argument("--no-icons", action="store_true", help="do not copy icons")
     parser.add_argument("--root", action="append", default=[], help="search here (repeatable)")
     parser.add_argument("--mesh-dir", help="directory for the reader modules")
+    parser.add_argument("--tint", default=None, metavar="MODE",
+                        help="the mp team-colour mask: item (default: the item's"
+                             " own mask, and a blank slot means nothing tints),"
+                             " full, derived, or a black-and-white PNG to author one")
     args = parser.parse_args(argv)
+    global TINT_MODE
+    if args.tint is not None:
+        TINT_MODE = args.tint
 
     out = args.out_option or args.out or "extracted"
 
@@ -2376,7 +2457,10 @@ def main(argv=None):
             # the player's description at run time, which a Halo CE bitmap cannot
             # hold, and tinting the suit from the decal was a guess.
             tint_texture = item_tint(facts)
-            if tint_texture:
+            if TINT_MODE != "item":
+                big, small, source = authored_tint(TINT_MODE, picture, png_size,
+                                                   small_size, mesh, batches)
+            elif tint_texture:
                 channel = tint_channel(tint_texture)
                 base_uv_set = (picture or {}).get("uv_set")
                 if channel == 3:
@@ -2417,25 +2501,19 @@ def main(argv=None):
                               % (tint_texture.get("slot"), tint_texture["width"],
                                  tint_texture["height"]))
             else:
-                # The item states no tint mask - its tint slot is blank - so no
-                # mask is authored and the multiplayer build's amount is derived
-                # from the base map's own shading: the dark armour plates take
-                # the team colour, the bright tan suit takes a share of it. A
-                # whole-white mask would recolour the cloth as hard as the
-                # plates, which is not what these items look like.
-                big = derived_amount(picture, png_size) if picture else None
-                small = derived_amount(picture, small_size) if picture else None
-                if big is None:
-                    big, painted = mesh.uv_coverage(batches, png_size)
-                    small = mesh.uv_coverage(batches, small_size)[0]
-                    if not painted:
-                        big = b"\xff" * (png_size * png_size)
-                        small = b"\xff" * (small_size * small_size)
-                source = ("derived from the base map's own shading - the item"
-                          " states no tint mask, its tint slot is blank - so the"
-                          " dark armour takes the team colour fully and the bright"
-                          " cloth takes a share of it (about a third); the"
-                          " single-player map (multipurpose sp) masks nothing")
+                # The item's own answer. Its tint slot is blank and it carries no
+                # colour table, so the item states no colour change: the avatar
+                # rule (open-avatar-lib, FORMATS.md 3.6) is
+                # lerp(base, r*C1 + g*C2 + b*C3, a) with the colours from the
+                # colour table, "untinted if it has none". A black mask is
+                # therefore what its bytes say, and the mp build masks nothing
+                # until someone asks for a mask with --tint.
+                big = bytes(png_size * png_size)
+                small = bytes(small_size * small_size)
+                source = ("none - the item states no colour change: its tint slot"
+                          " is blank and it carries no colour table, so by the"
+                          " avatar rule its mask is black and nothing tints"
+                          " (--tint full, derived or a mask image authors one)")
             painted = sum(1 for value in big if value)
             facts["mask_source"] = source
             facts["mask_coverage"] = round(painted / float(png_size * png_size), 4)

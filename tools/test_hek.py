@@ -74,9 +74,9 @@ def main():
             failures.append(message)
 
     stem = "UNSC Marine Armor"
-    # The item's own build folder carries the plain base map, so its name says
-    # so: data\<item> no_decals. sp and mp copy from it.
-    plain = stem + " no_decals"
+    # The item's own build folder is the faithful single-player build: plain
+    # base map, nothing masked. The other three are made from it.
+    plain = stem + " sp"
     out = tempfile.mkdtemp(prefix="hek-layout-")
     hek = os.path.join(out, module.HEK_DIR)
 
@@ -191,6 +191,10 @@ def main():
         write(os.path.join(base, "bitmaps", "%s multipurpose sp.tif" % stem),
               "nothing masked %s" % order)
         write(os.path.join(base, "bitmaps", "%s change colour.tif" % stem), "change")
+        write(os.path.join(base, "bitmaps", "%s base map.tif" % stem),
+              "base %s" % order)
+        write(os.path.join(base, "bitmaps", "%s base map + decal.tif" % stem),
+              "decal base %s" % order)
         write(os.path.join(base, "models", "%s.jms" % stem), jms)
         write(os.path.join(base, "fp", "models", "%s - fp arms.jms" % stem), jms)
 
@@ -209,18 +213,19 @@ def main():
         pass
 
     built = module.hek_builds(out, [stem])
-    check(len(built) == 4,
-          "hek_builds made %d folders, expected 4 - sp and mp for both orders"
+    builds = ("sp", "sp-decals", "mp", "mp-decals")
+    check(len(built) == 8,
+          "hek_builds made %d folders, expected 8 - four builds for both orders"
           % len(built))
     for order in ("pc", "xbox"):
-        for build in ("sp", "mp"):
+        for build in builds:
             target = os.path.join(hek, order, "data", "%s %s" % (stem, build))
             for sub in ("bitmaps", "models", "animations", "source",
                         os.path.join("fp", "bitmaps"),
                         os.path.join("fp", "models")):
                 check(os.path.isdir(os.path.join(target, sub)),
                       "%s %s is missing %s\\" % (order, build, sub))
-            want = ("nothing masked %s" % order if build == "sp"
+            want = ("nothing masked %s" % order if build.startswith("sp")
                     else "team colour xbox" if order == "xbox"
                     else "team colour %s" % order)
             mask = os.path.join(target, "bitmaps", "%s multipurpose.tif" % stem)
@@ -233,13 +238,28 @@ def main():
             check(os.path.exists(arms) and read(arms) == want,
                   "%s %s's arms do not carry that build's own map" % (order, build))
             change = os.path.join(target, "bitmaps", "%s change colour.tif" % stem)
-            check((build == "mp") == os.path.exists(change),
-                  "%s %s %s a change-colour map"
-                  % (order, build, "has" if os.path.exists(change) else "lacks"))
+            # The item's own folder (the sp build) is where extraction put the
+            # reference mask, so the builds that must not carry one are the
+            # sp-decals ones.
+            check(build != "sp-decals" or not os.path.exists(change),
+                  "%s %s has a change-colour map and masks nothing"
+                  % (order, build))
+            # The decal is in the base map only where the build says so.
+            shipped = os.path.join(target, "bitmaps", "%s base map.tif" % stem)
+            wanted_base = ("decal base %s" % order if "-decals" in build
+                           else "base %s" % order)
+            check(os.path.exists(shipped) and read(shipped) == wanted_base,
+                  "%s %s's base map is %r, expected %r"
+                  % (order, build,
+                     read(shipped) if os.path.exists(shipped) else None,
+                     wanted_base))
             model = os.path.join(target, "models", "%s %s.jms" % (stem, build))
             check(os.path.exists(model), "%s %s has no model" % (order, build))
             if os.path.exists(model):
-                check("boot_shader_%s\t<none>" % build in read(model),
+                # A JMS material name becomes a tag name, so the suffix is the
+                # build with underscores: _sp_decals, not _sp-decals.
+                suffix = build.replace("-", "_")
+                check("boot_shader_%s\t<none>" % suffix in read(model),
                       "%s %s's model does not rename its shader" % (order, build))
             arms_model = os.path.join(target, "fp", "models",
                                       "%s %s - fp arms.jms" % (stem, build))
