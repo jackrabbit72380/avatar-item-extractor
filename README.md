@@ -532,7 +532,11 @@ is different, so both are written rather than leaving you to swap channels:
         colour = base * (1 - alpha) + decal.rgb * alpha
 
     which is what both readers of the format do (open-avatar-lib's
-    `avatar_bake.c` and All-Stars Avatar's `avatar_compose.py`). Halo CE's
+    `avatar_bake.c` and All-Stars Avatar's `avatar_compose.py`). The decal has
+    no channel of its own: open-avatar-lib's `docs/FORMATS.md` section 3.6 says
+    so in one line - "id 3 a decal with alpha", then "the decal by its alpha" - and
+    the tint mask is the item texture that is read as channels (red, green and
+    blue pick which custom colour, alpha is the amount). Halo CE's
     `shader_model` samples one colour layer and cannot blend a second texture at
     run time, so `<stem> base map + decal.*` is the map for the game, the plain
     base map stays exactly as it came out of the pack, and the .blend binds the
