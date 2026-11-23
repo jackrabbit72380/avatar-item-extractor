@@ -161,7 +161,12 @@ from the body and the player sees the arms, not the body's:
   hand does rather than moving as one lump with the wrist. The hand-over is
   smooth, so no finger is torn from its neighbour, and it is eased out again at
   the knuckles, which leaves the palm and any knuckle plate on `frame l wriste`.
-  Weights cannot tear anything: the geometry is already carried whole. The rig in
+  Weights cannot tear anything: the geometry is already carried whole. The
+  finger room `report.txt` gives is measured on the glove's own vertices, past
+  the wrist, and never over the whole arm: a sleeve or a bracer runs further
+  along the arm than the hand does, so a whole-arm measurement would report room
+  the glove does not have and hide a glove that stopped short of Halo's fingers.
+  The rig in
   the file *is* Halo's own 37-bone set, so the game's first-person animations
   drive it as they stand. Nothing is modelled again and nothing is retextured:
   faces, UVs, smoothing and

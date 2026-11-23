@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v30"
-BUILD = "2026-11-22 fp-arms-aligned"
+VERSION = "v31"
+BUILD = "2026-11-23 fp-arms-glove-report"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -992,6 +992,7 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
                 "to": tuple(head[i] + want[i] - shift[i] for i in range(3)),
                 "low": low, "high": high, "span": span, "twist": 0.0,
                 "glove": "none", "wrist": min(max(wrist, low), high),
+                "cuff": min(max(cuff, low), high),
                 "anchor": "hand" if glove and hand_cloud else "bone"}
 
     place = placed(turn)
@@ -1255,23 +1256,43 @@ def inside_out(faces, coords, slot):
     return counted >= 4 and inward >= 0.8 * counted
 
 
-def finger_room(coords, slot, order, sides, armature_fp):
+def glove_of(place, point):
+    """Whether a vertex of one side is part of its glove: past the wrist.
+
+    `side_carry` already finds the line where the sleeve stops and the hand
+    starts, because it measures and places the glove from there. The finger
+    check draws its line in the same place rather than guessing a second one.
+    """
+    if place is None or place.get("cuff") is None:
+        return False
+    return sum((point[axis] - place["shoulder"][axis]) * place["axis"][axis]
+               for axis in range(3)) > place["cuff"]
+
+
+def finger_room(coords, slot, gloves, armature_fp):
     """How far Halo's finger bones end inside the carried gloves, in units.
 
     A glove's fingers ride Halo's own finger bones, so those bones have to be
     inside the glove: a glove whose end stops short of a bone tip leaves the
     bone standing out of the end of a finger, which reads as a hand that does
-    not line up with the rig however well the arm was carried. Answers
-    (worst gap, how many tips stand past the glove, how many tips were seen),
-    where a negative gap is a tip outside the glove.
+    not line up with the rig however well the arm was carried.
+
+    `gloves` holds the glove's own vertices per side - what `glove_of` says is
+    past the wrist - and never the whole arm. A sleeve, a cuff or a bracer runs
+    further along the arm than the hand does, so measured over the whole side a
+    long bracer would report room the glove does not have, and a glove that
+    stopped short of Halo's fingers would look covered by the sleeve behind it.
+    Answers (worst gap, how many tips stand past the glove, how many tips were
+    seen, how many glove verts were measured), where a negative gap is a tip
+    outside the glove, or None when there is no glove to measure.
     """
-    worst, outside, seen = None, 0, 0
+    worst, outside, seen, held = None, 0, 0, 0
     for side in ("l", "r"):
         span = hand_span(armature_fp, side)
-        points = [Vector(coords[slot[index]]) for index in order
-                  if sides.get(index) == side]
-        if span is None or not points:
+        indices = gloves.get(side) or []
+        if span is None or not indices:
             continue
+        points = [Vector(coords[slot[index]]) for index in indices]
         head, axis, _length, _knuckle = span
         far = max(sum((point[i] - head[i]) * axis[i] for i in range(3))
                   for point in points)
@@ -1282,9 +1303,10 @@ def finger_room(coords, slot, order, sides, armature_fp):
             if gap < 0.0:
                 outside += 1
             worst = gap if worst is None else min(worst, gap)
+        held += len(points)
     if not seen:
         return None
-    return worst, outside, seen
+    return worst, outside, seen, held
 
 
 def arm_pieces(object_data, names=ARM_WEIGHTS, share=ARM_SHARE):
@@ -1401,6 +1423,10 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                 mapping[source] = target
 
     home, side_of = {}, {}
+    # Only the glove's own vertices are measured against Halo's fingers, so
+    # they are collected here, from the same wrist line the carry placed the
+    # glove by. The sleeve and a bracer are left out of that check.
+    gloves = {"l": [], "r": []}
     for piece in pieces:
         for index in piece["indices"]:
             home[index] = piece["bone"]
@@ -1435,6 +1461,8 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         else:
             moved = place_arm(place, point)
             coords.append(moved)
+            if glove_of(place, point):
+                gloves[side_of[index]].append(index)
             step = math.sqrt(sum((moved[axis] - point[axis]) ** 2
                                  for axis in range(3)))
             if step > 1e-6:
@@ -1604,18 +1632,26 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     # The glove's fingers ride Halo's finger bones, so those bones have to be
     # inside the glove. This is the check a person makes in the viewport: bones
     # standing out of the fingertips mean the arm stopped short of the hand.
-    room = finger_room(coords, slot, order, side_of, armature_fp) \
+    room = finger_room(coords, slot, gloves, armature_fp) \
         if armature_fp is not None else None
     if room is not None:
         arms["finger_room"] = room[0]
         arms["finger_outside"] = room[1]
+        arms["finger_glove"] = room[3]
         if room[1]:
             log("fingers: %d of Halo's %d finger bone tip(s) stand past the "
-                "glove (%.2f units) - the glove is shorter than the hand"
+                "glove (%.2f units short) - the glove is shorter than the hand"
                 % (room[1], room[2], -room[0]))
         else:
-            log("fingers: all %d of Halo's finger bone tips sit %.2f units "
-                "inside the glove" % (room[2], room[0]))
+            log("fingers: the glove reaches %.2f units past Halo's farthest "
+                "finger bone tip (%d glove vert(s), measured on the glove "
+                "only)" % (room[0], room[3]))
+    elif armature_fp is not None:
+        # Nothing past the wrist means nothing to check: saying so is better
+        # than reporting the sleeve's reach as if it were a hand.
+        arms["finger_glove"] = 0
+        log("fingers: no glove past the wrist to measure, so the finger bones "
+            "were not checked")
     if any(carry.values()) and not moved_verts:
         log("%s: every arm weight sits on a bone with no first-person frame, so "
             "nothing was carried - report.txt and the file's own note say so"
@@ -1665,15 +1701,24 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
                                       "%.2f units (mean %.2f)"
                                       % (meta(arms, "fit_worst"),
                                          meta(arms, "fit_mean")))
-            if meta(arms, "finger_outside") is not None:
-                record["arms_fingers"] = (
-                    "every finger bone tip sits %.2f units inside the glove"
-                    % meta(arms, "finger_room")
-                    if not meta(arms, "finger_outside") else
-                    "%d of Halo's finger bone tips stand past the glove "
-                    "(%.2f units) - the glove is shorter than the hand"
-                    % (meta(arms, "finger_outside"),
-                       -meta(arms, "finger_room")))
+            glove = meta(arms, "finger_glove")
+            if glove is not None:
+                if not glove:
+                    record["arms_fingers"] = (
+                        "no glove past the wrist, so the finger bones were not "
+                        "measured")
+                elif meta(arms, "finger_outside"):
+                    record["arms_fingers"] = (
+                        "%d of Halo's finger bone tips stand past the glove "
+                        "(%.2f units short of them, %d glove vert(s)) - the "
+                        "glove is shorter than the hand"
+                        % (meta(arms, "finger_outside"),
+                           -meta(arms, "finger_room"), glove))
+                else:
+                    record["arms_fingers"] = (
+                        "the glove reaches %.2f units past Halo's farthest "
+                        "finger bone tip (%d glove vert(s))"
+                        % (meta(arms, "finger_room"), glove))
             if worst is None:
                 record["arms_carried"] = "arms stayed where they were"
             elif not (meta(arms, "carried_verts") or 0):

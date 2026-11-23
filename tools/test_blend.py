@@ -282,7 +282,7 @@ def main():
                  "principal_axes", "hand_plane", "turn_about",
                  "turn_product", "turn_point", "hand_twist", "hand_fit",
                  "halo_hand", "HAND_FINGERS", "hand_span", "finger_bones",
-                 "finger_split", "finger_room", "inside_out"):
+                 "finger_split", "glove_of", "finger_room", "inside_out"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -707,6 +707,10 @@ def main():
                  fist.get("twist") if fist else None))
         if fist is None or fist.get("glove") != "round" or fist["twist"] != 0.0:
             fail("a fist was rolled onto a guess: %r" % (fist,))
+        if fist is None or fist.get("cuff") is None:
+            fail("the carry never said where the sleeve stops and the glove "
+                 "starts, so the finger check cannot find the glove: %r"
+                 % (fist,))
 
         # The glove's fingers ride Halo's own finger bones. Riding the hand bone
         # alone, the fingers went wherever a wrist went and never closed round a
@@ -801,20 +805,50 @@ def main():
         # of the ends of the fingers and the hand reads as not lined up.
         glove_coords = [(30.0, 9.4, 0.0), (29.6, 9.9, 0.3), (30.2, 9.0, -0.3)]
         short_coords = [(27.0, 9.4, 0.0), (26.6, 9.9, 0.3), (27.2, 9.0, -0.3)]
+        hand_slot = {0: 0, 1: 1, 2: 2}
         room = module.finger_room(
-            glove_coords, {0: 0, 1: 1, 2: 2}, [0, 1, 2],
-            {0: "l", 1: "l", 2: "l"}, hand_rig)
+            glove_coords, hand_slot, {"l": [0, 1, 2]}, hand_rig)
         short = module.finger_room(
-            short_coords, {0: 0, 1: 1, 2: 2}, [0, 1, 2],
-            {0: "l", 1: "l", 2: "l"}, hand_rig)
+            short_coords, hand_slot, {"l": [0, 1, 2]}, hand_rig)
         print("  finger_room        -> glove %.2f units, short glove %d tip(s) "
               "out" % (room[0] if room else -1.0, short[1] if short else -1))
-        if room is None or room[1] != 0 or room[0] <= 0.0:
+        if room is None or room[1] != 0 or room[0] <= 0.0 or room[3] != 3:
             fail("a glove past Halo's fingertips did not enclose them: %r"
                  % (room,))
         if short is None or short[1] == 0:
             fail("a glove stopping short of the fingertips was not noticed: %r"
                  % (short,))
+        # The glove is what is past the wrist, and only that is measured. A
+        # sleeve or a bracer runs further along the arm than the hand does, so
+        # a whole-arm measurement reports room the glove does not have and
+        # hides a glove that stopped short of Halo's fingers - which is what
+        # the report used to do.
+        sleeve = [(35.0, 9.4, 0.0)]
+        with_sleeve = short_coords + sleeve
+        four = {0: 0, 1: 1, 2: 2, 3: 3}
+        whole = module.finger_room(with_sleeve, four,
+                                   {"l": [0, 1, 2, 3]}, hand_rig)
+        glove = module.finger_room(with_sleeve, four, {"l": [0, 1, 2]}, hand_rig)
+        print("  finger_room sleeve -> whole arm %d tip(s) out, glove %d out"
+              % (whole[1] if whole else -1, glove[1] if glove else -1))
+        if whole is None or whole[1] != 0:
+            fail("a sleeve past Halo's fingertips should look covered when the "
+                 "whole arm is measured: %r" % (whole,))
+        if glove is None or glove[1] == 0:
+            fail("a glove stopping short was hidden by the sleeve behind it: "
+                 "%r" % (glove,))
+        # Which vertices are the glove is answered at the wrist, by the same
+        # line the carry placed the glove by.
+        place = {"shoulder": (0.0, 0.0, 0.0), "axis": (0.0, 1.0, 0.0),
+                 "cuff": 30.0}
+        print("  glove_of           -> sleeve %r, glove %r, no carry %r"
+              % (module.glove_of(place, (0.0, 25.0, 0.0)),
+                 module.glove_of(place, (0.0, 32.0, 0.0)),
+                 module.glove_of(None, (0.0, 32.0, 0.0))))
+        if (module.glove_of(place, (0.0, 25.0, 0.0))
+                or not module.glove_of(place, (0.0, 32.0, 0.0))
+                or module.glove_of(None, (0.0, 32.0, 0.0))):
+            fail("the glove was not taken from the sleeve at the wrist")
 
         # A closed shell the item itself had inside out is written the right way
         # round - from outside it shows its own blank back - while an open plate
