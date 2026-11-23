@@ -163,6 +163,15 @@ from the body and the player sees the arms, not the body's:
   is smooth along the finger, and it is eased out again at the knuckles, which
   leaves the palm and any knuckle plate on `frame l wriste`.
 
+  A glove is often one surface across two fingers rather than separate fingers:
+  the Marine's is a single 226-vertex skin, and the skin between its index and
+  middle fingertips belongs to both. Where a vertex is near two fingers the
+  weight is shared between the two nearest, in proportion to how close it is to
+  each and with a steep enough fall-off that a finger's own middle stays its own.
+  Each small piece then commits to the one finger most of its weight is on,
+  because a plate or a finger shell split between two fingers pulls itself in
+  two as soon as they curl apart.
+
   The thumb is found by its own chain, not by how far along the hand it lies. It
   sits beside the wrist and never crosses the knuckle line the other fingers do,
   so the hand's own measure put it behind that line: the Marine's whole thumb

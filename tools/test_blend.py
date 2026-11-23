@@ -303,8 +303,9 @@ def main():
                  "principal_axes", "hand_plane", "turn_about",
                  "turn_product", "turn_point", "hand_twist", "hand_fit",
                  "halo_hand", "HAND_FINGERS", "hand_span", "finger_bones",
-                 "finger_split", "finger_chains", "glove_of", "finger_room",
-                 "glove_surface", "skin_gap", "finger_gaps", "inside_out"):
+                 "finger_split", "finger_chains", "finger_of", "ride_chain",
+                 "glove_of", "finger_room", "glove_surface", "skin_gap",
+                 "finger_gaps", "inside_out"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -802,6 +803,30 @@ def main():
             print("  finger_split seam  -> grip %.2f" % (seam[0] if seam else -1.0))
             if seam is None or not 0.2 < seam[0] < 0.85:
                 fail("the seam with the index took full thumb weight: %r" % (seam,))
+            # A glove finger is often one piece with the one beside it, and a
+            # piece split between two fingers tears itself in two when they curl
+            # apart. A shared piece rides the one finger it mostly is.
+            shared = {"frame l index tip": 0.5, "frame l middle tip": 0.5,
+                      "frame l wriste": 0.2}
+            rode = module.ride_chain(dict(shared), Vec(28.9, 9.9, 0.33),
+                                     hand_rig, "l", "middle")
+            print("  ride_chain         -> %r" % (rode,))
+            allowed = {"frame l middle tip", "frame l middle mid", "frame l wriste"}
+            if set(rode) - allowed:
+                fail("a shared piece kept another finger's bone: %r" % (rode,))
+            if abs(sum(rode.values()) - sum(shared.values())) > 1e-6:
+                fail("ride_chain changed the weight total: %r" % (rode,))
+            if module.finger_of("frame l wriste") is not None:
+                fail("the wrist was taken for a finger")
+            # The skin where two fingers join is one piece on a glove modelled
+            # as one surface, so a vertex there must take both fingers or the
+            # joining web tears as they curl apart.
+            web = module.finger_split(Vec(28.8, 9.8, 1.2), hand_rig, "l")
+            print("  finger_split web   -> grip %.2f on %r"
+                  % (web[0] if web else -1.0, sorted(web[1]) if web else None))
+            if web is None or len({name.split()[2] for name in web[1]}) < 2:
+                fail("the skin joining two fingers took only one of them: %r"
+                     % (web[1] if web else None,))
 
         # Shoulder plates are not arms. A pauldron is worn over the shoulder
         # rather than on the arm, and carried with an arm that turns about the

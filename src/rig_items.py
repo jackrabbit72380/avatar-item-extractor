@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v35"
-BUILD = "2026-11-23 fp-arms-thumb-blend"
+VERSION = "v38"
+BUILD = "2026-11-23 fp-arms-shared-skin"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -1157,6 +1157,49 @@ def finger_chains(armature_fp, side):
     return chains
 
 
+def finger_of(name):
+    """Which of Halo's fingers a bone belongs to, or None for any other bone."""
+    if not name.startswith("frame ") or name.count(" ") < 2:
+        return None
+    flat = name.split(" ", 2)[2].replace(" ", "")
+    for key in HAND_FINGERS:
+        if flat.startswith(key):
+            return key
+    return None
+
+
+def ride_chain(per, point, armature_fp, side, key, influences=2, power=4.0):
+    """Move every finger share of a piece's weight onto one finger's bones.
+
+    A glove's finger is often one piece with the finger beside it, so a piece
+    that ends up split between two fingers pulls itself in two the moment they
+    curl apart. This takes all of the finger weight a piece holds and gives it
+    to the one finger that piece mostly is, divided along that finger as usual;
+    the cuff, forearm and hand weights it already had are left alone.
+    """
+    chains = finger_chains(armature_fp, side)
+    entries = chains.get(key)
+    if not entries:
+        return per
+    names = {name for chain in chains.values()
+             for name, _head, _tail, _flat in chain}
+    total = 0.0
+    for name in list(per):
+        if name in names:
+            total += per.pop(name)
+    if total <= 0.0:
+        return per
+    near = sorted((point_segment_distance(point, head, tail), name)
+                  for name, head, tail, _flat in entries)[:influences]
+    weights = [(1.0 / ((gap + 0.3) ** power), name) for gap, name in near]
+    scale = sum(weight for weight, _name in weights)
+    if scale <= 0.0:
+        return per
+    for weight, name in weights:
+        per[name] = per.get(name, 0.0) + total * weight / scale
+    return per
+
+
 def finger_split(point, armature_fp, side, influences=2, power=4.0):
     """How much of a glove vertex rides Halo's fingers, and on which of them.
 
@@ -1201,14 +1244,38 @@ def finger_split(point, armature_fp, side, influences=2, power=4.0):
     near_chain.sort()
     gap, key = near_chain[0]
     entries = chains[key]
-    near = sorted((point_segment_distance(point, first, second), name)
-                  for name, first, second, _flat in entries)
-    weights = [(1.0 / ((reach + 0.3) ** power), name)
-               for reach, name in near[:influences]]
-    total = sum(weight for weight, _name in weights)
+    # A glove is often one surface across two fingers rather than two separate
+    # ones: the Marine's whole glove is a single 226-vertex skin, and the skin
+    # between its index and middle fingertips belongs to both. Choosing one
+    # finger there tore that joining web in two when the fingers curled apart,
+    # so the weight is shared between the two nearest fingers in proportion to
+    # how close it is to each. The fall-off with distance is steep enough that a
+    # vertex in the middle of a finger is its own finger's, and a switch at a
+    # distance would itself be a step in the weight, so there is no switch.
+    reached = near_chain[:2]
+    shares = {}
+    for chain_gap, chain_key in reached:
+        near = sorted((point_segment_distance(point, first, second), name)
+                      for name, first, second, _flat in chains[chain_key])
+        weights = [(1.0 / ((reach + 0.3) ** power), name)
+                   for reach, name in near[:influences]]
+        total = sum(weight for weight, _name in weights)
+        if total <= 0.0:
+            continue
+        pull = 1.0 / ((chain_gap + 0.3) ** power)
+        for weight, name in weights:
+            shares[name] = shares.get(name, 0.0) + pull * weight / total
+    total = sum(shares.values())
     if total <= 0.0:
         return None
-    shares = {name: weight / total for weight, name in weights}
+    shares = {name: weight / total for name, weight in shares.items()}
+    # A finger's own bones are all that is left worth writing once the next
+    # finger's share is under a fiftieth: it moves the skin by less than the
+    # mesh's own tolerance and only clutters the groups.
+    kept = {name: weight for name, weight in shares.items() if weight >= 0.02}
+    if kept:
+        total = sum(kept.values())
+        shares = {name: weight / total for name, weight in kept.items()}
     if key == "thumb":
         wrist = getattr(getattr(armature_fp, "data", None), "bones", None)
         wrist = wrist.get("frame %s wriste" % side) if wrist is not None else None
@@ -1714,6 +1781,8 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                   for side in ("l", "r")}
     filled = set()
     fingered = set()
+    finals = {}
+    moved_points = {}
     moved_verts = 0
     moved_worst = 0.0
     for index in order:
@@ -1778,6 +1847,49 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                         per[name] = (per.get(name, 0.0)
                                      + hand_weight * grip * share)
                     fingered.add(side)
+        if sum(per.values()) <= 0.0:
+            continue
+        finals[index] = per
+        moved_points[index] = moved
+
+    # A glove's finger is often one piece with the finger beside it - on the
+    # Marine the middle and index share a 30-vertex shell, ring and middle a
+    # 25-vertex one, ring and pinky a 28-vertex one - so choosing a finger per
+    # vertex tore every shared piece in half as soon as the fingers curled apart:
+    # two neighbouring vertices were pulled twelve times apart. A small piece now
+    # commits to the one finger most of its weight is on and rides it whole, so
+    # the piece stays the shape it was modelled in. The glove's own 226-vertex
+    # palm is not a finger and is left to choose per vertex, where it barely
+    # reaches past the knuckles anyway.
+    if armature_fp is not None and finals:
+        finger_names = {name for side in ("l", "r")
+                        for chain in finger_chains(armature_fp, side).values()
+                        for name, _head, _tail, _flat in chain}
+        for piece in pieces:
+            indices = [index for index in piece["indices"] if index in finals]
+            if not indices or len(indices) > 60:
+                continue
+            side = side_of[indices[0]]
+            if side not in ("l", "r"):
+                continue
+            tally = {}
+            for index in indices:
+                for name, weight in finals[index].items():
+                    if name in finger_names:
+                        key = finger_of(name)
+                        if key is not None:
+                            tally[key] = tally.get(key, 0.0) + weight
+            if len(tally) < 2:
+                continue
+            key = max(tally, key=tally.get)
+            for index in indices:
+                finals[index] = ride_chain(finals[index], Vector(moved_points[index]),
+                                           armature_fp, side, key)
+
+    for index in order:
+        per = finals.get(index)
+        if not per:
+            continue
         total = sum(per.values())
         if total <= 0.0:
             continue
