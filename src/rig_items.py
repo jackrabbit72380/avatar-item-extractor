@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v58"
-BUILD = "2026-11-23 mask-in-the-base-maps-uv-set"
+VERSION = "v59"
+BUILD = "2026-11-23 slot-textures-and-visible-masks"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the

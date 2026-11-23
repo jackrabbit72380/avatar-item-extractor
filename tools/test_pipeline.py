@@ -162,6 +162,30 @@ def first_pixel(path):
     return pixels(path)[0]
 
 
+def tiff(path):
+    """Every RGBA texel of a one-strip 8-bit TIFF, the shape write_tiff makes."""
+    with open(path, "rb") as handle:
+        raw = handle.read()
+    name = os.path.basename(path)
+    if raw[:4] != b"II*\x00":
+        raise ValueError("%s is not a little-endian TIFF" % name)
+    ifd = struct.unpack_from("<I", raw, 4)[0]
+    count = struct.unpack_from("<H", raw, ifd)[0]
+    tags = {}
+    for index in range(count):
+        at = ifd + 2 + index * 12
+        tag, kind, many = struct.unpack_from("<HHI", raw, at)
+        tags[tag] = (struct.unpack_from("<H", raw, at + 8)[0] if kind == 3 and many == 1
+                     else struct.unpack_from("<I", raw, at + 8)[0])
+    width, height = tags[256], tags[257]
+    strip = raw[tags[273]:tags[273] + tags[279]]
+    texels = [tuple(strip[i:i + 4]) for i in range(0, len(strip), 4)]
+    if len(texels) != width * height:
+        raise ValueError("%s holds %d texels, header says %dx%d"
+                         % (name, len(texels), width, height))
+    return texels
+
+
 def main():
     work = tempfile.mkdtemp(prefix="avatar-pipeline-")
     try:
@@ -236,13 +260,39 @@ def main():
             (4, 1, 0, b"\x00" * 3460),
         ]
 
+        def dxt5_block(rgb):
+            """One DXT5 block: alpha 255 everywhere, one solid colour."""
+            red, green, blue = rgb
+            value = ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3)
+            return bytes([255, 255, 0, 0, 0, 0, 0, 0]) + struct.pack("<HHI", value, 0, 0)
+
         def with_table():
             out = batches()
-            out[0]["textures"] = [{
-                "format": 0x14, "width": 16, "height": 16, "frames": 1,
-                "per_frame": 256, "empty": False, "endian": 0,
-                "data": bytes([0xFF, 0xFF, 0xE0, 0x07, 0, 0, 0, 0]) * 16 + b"\0" * 128,
-            }]
+            out[0]["textures"] = [
+                {
+                    "format": 0x14, "width": 16, "height": 16, "frames": 1,
+                    "per_frame": 256, "empty": False, "endian": 0,
+                    "data": bytes([0xFF, 0xFF, 0xE0, 0x07, 0, 0, 0, 0]) * 16 + b"\0" * 128,
+                },
+                # The item's own decal map: red and blue blocks, so it holds a
+                # picture rather than one flat value.
+                {
+                    "format": 0x14, "width": 16, "height": 16, "frames": 1,
+                    "per_frame": 256, "empty": False, "endian": 0,
+                    "data": (dxt5_block((255, 0, 0)) + dxt5_block((0, 0, 255))) * 8,
+                },
+                # A declared tint slot that holds one value in every channel.
+                {
+                    "format": 0x14, "width": 16, "height": 16, "frames": 1,
+                    "per_frame": 256, "empty": False, "endian": 0,
+                    "data": dxt5_block((128, 128, 128)) * 16,
+                },
+            ]
+            out[0]["materials"] = [
+                {"kind": "texture", "id": 1, "texture": 0, "uv_set": 0, "mode": 0},
+                {"kind": "texture", "id": 3, "texture": 1, "uv_set": 1, "mode": 0},
+                {"kind": "texture", "id": 2, "texture": 2, "uv_set": 1, "mode": 0},
+            ]
             return out
 
         avatar_mesh.read_model = lambda data: with_table()
@@ -276,7 +326,37 @@ def main():
             print(report)
             return 1
 
-        print("\nPASS: a texture-table-only item writes its base map in three formats")
+        # The other slots the table declares are textures the item binds, and
+        # they are what the masks are read out of - so they are written as they
+        # are, in their own colours, rather than only used and thrown away.
+        slot_file = os.path.join(out2, "extracted for max users",
+                                 "Model Table Item slot 1 decal map.png")
+        print("  %s slot 1 decal map.png"
+              % ("ok  " if os.path.exists(slot_file) else "MISS"))
+        if not os.path.exists(slot_file):
+            print("\nFAIL: the item's own decal slot was not written")
+            return 1
+        if first_pixel(slot_file) != (255, 0, 0, 255):
+            print("\nFAIL: the slot texture is %r, not the red it holds"
+                  % (first_pixel(slot_file),))
+            return 1
+        for name in ("pc", "xbox"):
+            tif = os.path.join(out2, "extracted for hek users", name, "data",
+                               "Model Table Item", "bitmaps",
+                               "Model Table Item slot 1 decal map.tif")
+            if not os.path.exists(tif):
+                print("\nFAIL: the slot .tif is missing from the %s bitmaps" % name)
+                return 1
+        if os.path.exists(os.path.join(out2, "extracted for max users",
+                                       "Model Table Item slot 2 tint mask.png")):
+            print("\nFAIL: a blank texture slot was written as another black image")
+            return 1
+        if "slot 2:    16x16 tint mask - blank" not in report:
+            print("\nFAIL: report.txt does not say which slot was blank")
+            return 1
+
+        print("\nPASS: a texture-table-only item writes its base map and its own"
+              " slots, and names a blank one instead of drawing it")
 
         # An item whose table declares slots and leaves every one of them empty,
         # while the container carries the texture in a block of its own. Reading
@@ -413,8 +493,14 @@ def main():
         if not 0.01 <= covered <= 0.75:
             print("\nFAIL: the mask covers %.1f%% of the canvas" % (covered * 100))
             return 1
-        if any(p[0] or p[1] or p[2] for p in ce):
-            print("\nFAIL: the Halo CE set lights something other than alpha")
+        # A mask that only lives in alpha looks like an empty black file in every
+        # viewer that ignores alpha, which is how a working mask got read as a
+        # broken one. The .png and .tga show it in colour as well as in its
+        # channel; the .tif is what tool.exe compiles, so it keeps the channel
+        # alone and must still be checked texel for texel.
+        if ([p[0] for p in ce] != coverage or [p[1] for p in ce] != coverage
+                or [p[2] for p in ce] != coverage):
+            print("\nFAIL: the Halo CE .png does not show its mask in colour")
             return 1
         if [p[2] for p in xbox] != coverage:
             print("\nFAIL: the Xbox set does not carry the colour change in blue")
@@ -426,8 +512,36 @@ def main():
             print("\nFAIL: the single-player set masks something")
             return 1
         if ([p[3] for p in change] != coverage
-                or any(p[0] or p[1] or p[2] for p in change)):
-            print("\nFAIL: change colour is not black with the same mask in alpha")
+                or [p[0] for p in change] != coverage):
+            print("\nFAIL: change colour does not show its mask")
+            return 1
+
+        def hek_tif(suffix, build="pc"):
+            return tiff(os.path.join(out3, "extracted for hek users", build, "data",
+                                     "Plain Tee", "bitmaps",
+                                     "Plain Tee %s.tif" % suffix))
+
+        ce_tif = hek_tif("multipurpose")
+        xbox_tif = hek_tif("multipurpose xbox", "xbox")
+        if any(p[0] or p[1] or p[2] for p in ce_tif):
+            print("\nFAIL: the Halo CE .tif lights something other than alpha")
+            return 1
+        if sorted({p[3] for p in ce_tif}) != [0, 255]:
+            print("\nFAIL: the Halo CE .tif does not carry the mask in alpha")
+            return 1
+        if [p[2] for p in xbox_tif] != [p[3] for p in ce_tif]:
+            print("\nFAIL: the Xbox .tif does not carry the colour change in blue")
+            return 1
+        if any(p[0] or p[1] or p[3] for p in xbox_tif):
+            print("\nFAIL: the Xbox .tif lights red, green or alpha")
+            return 1
+        change_tif = hek_tif("change colour")
+        if ([p[0] for p in change_tif] != [p[3] for p in change_tif]
+                or sorted({p[3] for p in change_tif}) != [0, 255]):
+            print("\nFAIL: change colour .tif does not show its mask")
+            return 1
+        if any(any(pixel) for pixel in hek_tif("multipurpose sp")):
+            print("\nFAIL: the single-player .tif masks something")
             return 1
 
         # An item that ships its own tint mask uses that instead of derived

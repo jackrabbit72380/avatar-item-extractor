@@ -48,6 +48,8 @@ Test Item\
                        the Blender folder
         master chief skeleton.fbx  Halo's biped, for repairing a binding by hand
         Test Item base map.png  also .tga  - the texture the model binds
+        Test Item slot 2 decal map.png  also .tga  a texture the item binds,
+                        written as it came out of the model, colours and all
         Test Item multipurpose.png  also .tga  Halo CE channel order
         Test Item multipurpose xbox.png  also .tga  Xbox channel order
         Test Item multipurpose sp.png  also .tga  nothing masked
@@ -65,7 +67,8 @@ Test Item\
     extracted for hek users\
         pc\data\Test Item\
             bitmaps\    Test Item base map.tif, Test Item multipurpose.tif,
-                        Test Item change colour.tif - Halo CE channel order
+                        Test Item change colour.tif, Test Item slot 2 decal
+                        map.tif - Halo CE channel order
             models\     Test Item.jms  the model, for tool.exe
             animations\  empty until there are animation files to put here
             source\     Test Item - halo.blend, .fbx  what the model came from
@@ -511,12 +514,21 @@ is different, so both are written rather than leaving you to swap channels:
     the body better there, and that one is carried across the geometry into the
     base map's set, so the tint still lands where the base map shows it.
 
-    The mask is in **alpha alone**, because that is the channel the shader reads.
-    An image viewer that draws colour and ignores alpha shows `multipurpose`,
-    `multipurpose xbox` and `change colour` as solid black - that is where the
-    data is, not an empty mask. Turn the alpha channel on in GIMP, Photoshop or
-    Paint.NET to see it, and check `mask coverage:` in `report.txt` for the
-    fraction that takes the team colour.
+    The mask is in **the channel the shader reads** - alpha for the CE set,
+    blue for the Xbox set. The `.png` and the `.tga` also paint it into colour,
+    so an ordinary viewer shows the mask instead of a black square that looks
+    like a broken one. The `.tif` is the file `tool.exe` compiles, so it carries
+    the channel alone and stays black in an RGB viewer: open the `.png` beside
+    it, or read `mask coverage:` in `report.txt`, for the fraction that takes
+    the team colour. `multipurpose sp` is zero in every channel by design - it
+    looks black because nothing is masked.
+  * `<stem> slot <n> tint mask.*`, `<stem> slot <n> decal map.*` - the item's
+    own other textures, written as they came out of the model: real colour, real
+    alpha, no resampling. The mask is read out of one of these, and a mask file
+    is black wherever it masks nothing, so this is the texture to compare it
+    against. A slot holding one flat value everywhere is blank (the Marine
+    armour's 32x32 tint slot is) and the report names it instead of writing
+    another black image.
   * `<stem> multipurpose xbox.*` - the same masks in Xbox order, for H1A with the
     shader's "og xbox channel order" flag (0x40) set. Halo CE and the legacy HEK
     always read Gearbox order, which is why the first set is not a substitute.

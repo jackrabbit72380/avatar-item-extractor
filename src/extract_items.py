@@ -606,6 +606,9 @@ HEK_KINDS = ("bitmaps", "models", "animations")
 def mask_orders(name):
     """Which Halo builds a bitmap is for: pc, xbox, or both."""
     low = name.lower()
+    if re.search(r" slot \d+ (tint mask|decal map)\.(png|tga|tif)$", low):
+        # A texture the item itself binds, so both builds get the .tif.
+        return ("pc", "xbox")
     if "multipurpose xbox" in low:
         return ("xbox",)
     if "multipurpose sp" in low:
@@ -1534,15 +1537,26 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
         lines.append("base map:  none - the item carries no texture")
         lines.append("           its colour is written as %s colour.png/.tga/.tif"
                      % stem)
+    for entry in sorted((facts.get("slot_images") or {}).values(),
+                        key=lambda item: item.get("slot") or 0):
+        if entry.get("blank"):
+            lines.append("slot %s:    %sx%s %s - blank: every channel is one value,"
+                         " so there is nothing to write"
+                         % (entry["slot"], entry["width"], entry["height"],
+                            entry["name"]))
+        else:
+            lines.append("slot %s:    %sx%s %s, written as %s slot %s %s.png/.tga/.tif"
+                         % (entry["slot"], entry["width"], entry["height"],
+                            entry["name"], stem, entry["slot"], entry["name"]))
     lines.append("change colour: %s change colour.png/.tga/.tif - white takes the"
                  " team colour; this is the alpha channel of the multipurpose map"
-                 " on Halo CE (blue on the original Xbox). The mask lives in alpha"
-                 " alone, so a viewer that draws colour and no alpha shows these"
-                 " files black - that is where the data is, not an empty mask"
+                 " on Halo CE (blue on the original Xbox). All three formats show"
+                 " the mask in colour as well, so it can be looked at"
                  % stem)
     lines.append("multipurpose: %s multipurpose.png/.tga/.tif - Halo CE order:"
                  " red detail, green self-illumination, blue specular,"
-                 " alpha colour change" % stem)
+                 " alpha colour change. The .png and .tga show the mask in colour"
+                 " too; the .tif keeps it in alpha alone" % stem)
     lines.append("              %s multipurpose xbox.png/.tga/.tif - the same masks in"
                  " the original Xbox order: red specular, green"
                  " self-illumination, blue colour change, alpha detail" % stem)
@@ -1587,6 +1601,12 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
     lines.append("  self-illumination are zero: an item does not say which parts are")
     lines.append("  shiny, glow or take a detail map, and inventing that would put")
     lines.append("  someone else's look on the item.")
+    lines.append("")
+    lines.append("  The .png and .tga show the colour change in colour as well as in its")
+    lines.append("  channel, so they can be looked at. The .tif in bitmaps\\ is the file")
+    lines.append("  tool.exe compiles: it carries the masks in their channels and nowhere")
+    lines.append("  else, so a viewer that ignores alpha draws it black. That black is")
+    lines.append("  where the data is, not an empty mask - open the .png beside it.")
     lines.append("")
     lines.append("Both builds are ready; which one the item was is not recorded in")
     lines.append("the file, so pick the one you are making:")
@@ -2008,6 +2028,39 @@ def main(argv=None):
                                if facts.get("colours") else "no colour in the file"),
                 }
 
+            # The item's other slots are textures in their own right - the tint
+            # mask and the decal map - and the only way to tell a real mask from
+            # a blank slot is to look at the texture it came out of. Each one is
+            # written in its own colours and alpha. A slot that is one flat value
+            # everywhere is blank (the Marine's 32x32 tint slot is) and is named
+            # in the report instead of becoming another black image.
+            slot_images = {}
+            for role, key, label in ((2, "tint_texture", "tint mask"),
+                                     (3, "decal_texture", "decal map")):
+                slot_texture = facts.get(key)
+                if not slot_texture:
+                    continue
+                rgba = slot_texture["rgba"]
+                # A slot whose channels vary by less than 8 is blank in the way
+                # that matters: a 32x32 tint map with one texel at 1 and the rest
+                # at 0 is not a mask, and writing it makes another black image.
+                entry = {"role": role, "slot": slot_texture.get("slot"),
+                         "name": label, "width": slot_texture["width"],
+                         "height": slot_texture["height"],
+                         "blank": all(max(rgba[channel::4]) - min(rgba[channel::4]) < 8
+                                      for channel in (0, 1, 2, 3))}
+                if not entry["blank"]:
+                    name = "%s slot %s %s" % (stem, entry["slot"], label)
+                    base_name = os.path.join(out, name)
+                    write_png(base_name + ".png", rgba, entry["width"], entry["height"])
+                    write_tga(base_name + ".tga", rgba, entry["width"], entry["height"])
+                    write_tiff(base_name + ".tif", rgba, entry["width"], entry["height"])
+                    entry["png"] = name + ".png"
+                    entry["tga"] = name + ".tga"
+                    entry["tif"] = name + ".tif"
+                slot_images[key] = entry
+            facts["slot_images"] = slot_images
+
             # Halo's model shader packs four greyscale masks into one bitmap.
             # The Gearbox port - Halo PC, Custom Edition, and the HEK that
             # builds their bitmaps - keeps them in this order, which is not the
@@ -2097,24 +2150,38 @@ def main(argv=None):
             facts["mask_source"] = source
             facts["mask_coverage"] = round(painted / float(png_size * png_size), 4)
 
-            def mask_with(channel, size, data):
-                """One mask byte a texel in `channel`, the other channels zero."""
+            def mask_with(channel, size, data, show=False):
+                """One mask byte a texel in `channel`, the others zero.
+
+                When the mask lives in alpha, `show` also paints it into red,
+                green and blue so a viewer that draws colour and ignores alpha
+                shows the mask rather than a black square. Alpha keeps it either
+                way; the channel the shader reads is never moved.
+                """
                 packed = bytearray(size * size * 4)
                 packed[channel::4] = data
+                if show and channel == 3:
+                    for index in (0, 1, 2):
+                        packed[index::4] = data
                 return bytes(packed)
 
-            def write_mask(path_base, suffix, channel):
-                write_png(path_base + ".png", mask_with(channel, png_size, big),
+            def write_mask(path_base, channel, tif_show=False):
+                """The mask in every format: .png and .tga show it, the .tif is
+                the file tool.exe compiles and carries the channel alone."""
+                write_png(path_base + ".png",
+                          mask_with(channel, png_size, big, True),
                           png_size, png_size)
                 write_tga(path_base + ".tga",
-                          mask_with(channel, small_size, small),
+                          mask_with(channel, small_size, small, True),
                           small_size, small_size)
                 write_tiff(path_base + ".tif",
-                           mask_with(channel, small_size, small),
+                           mask_with(channel, small_size, small, tif_show),
                            small_size, small_size)
 
             mask = os.path.join(out, "%s change colour" % stem)
-            write_mask(mask, "change colour", 3)
+            # This one is a reference mask, not the bitmap the shader samples
+            # (the multipurpose map is), so all three formats show it.
+            write_mask(mask, 3, tif_show=True)
             record["change_colour"] = {
                 "png": "%s change colour.png" % stem,
                 "tga": "%s change colour.tga" % stem,
@@ -2128,7 +2195,7 @@ def main(argv=None):
                 "coverage": round(painted / float(png_size * png_size), 3),
             }
             multipurpose = os.path.join(out, "%s multipurpose" % stem)
-            write_mask(multipurpose, "multipurpose", 3)
+            write_mask(multipurpose, 3)
             record["multipurpose"] = {
                 "png": "%s multipurpose.png" % stem,
                 "tga": "%s multipurpose.tga" % stem,
@@ -2150,7 +2217,7 @@ def main(argv=None):
             # map uses og xbox channel order" flag (0x40) is set; Halo CE and
             # the legacy HEK always read Gearbox order, so both are written.
             multipurpose_xbox = os.path.join(out, "%s multipurpose xbox" % stem)
-            write_mask(multipurpose_xbox, "multipurpose xbox", 2)
+            write_mask(multipurpose_xbox, 2)
             record["multipurpose_xbox"] = {
                 "png": "%s multipurpose xbox.png" % stem,
                 "tga": "%s multipurpose xbox.tga" % stem,
@@ -2182,6 +2249,7 @@ def main(argv=None):
                 "meaning": "no masks: the item keeps its own colour",
                 "use": "a single-player build; valid in either channel order",
             }
+            record["slot_textures"] = facts.get("slot_images") or {}
 
             # Every item says what its colours are: a chip card and a hex list
             # when the container carries a table, and a note when it does not.
@@ -2274,6 +2342,18 @@ def main(argv=None):
                 paths["tif"] = HEK_DIR + "/%s/data/%s" % (orders[0], tif)
                 for order in orders[1:]:
                     paths["tif_%s" % order] = HEK_DIR + "/%s/data/%s" % (order, tif)
+        for image in (record.get("slot_textures") or {}).values():
+            if not isinstance(image, dict):
+                continue
+            for kind in ("png", "tga"):
+                if image.get(kind):
+                    image[kind] = MAX_DIR + "/" + image[kind]
+            tif = image.get("tif")
+            if tif:
+                orders = mask_orders(tif)
+                image["tif"] = HEK_DIR + "/%s/data/%s" % (orders[0], tif)
+                for order in orders[1:]:
+                    image["tif_%s" % order] = HEK_DIR + "/%s/data/%s" % (order, tif)
 
     out = titled_out(out, records)
     catalogue = {
