@@ -828,11 +828,12 @@ def texture_facts(entry):
             "slot": entry.get("slot"), "rgba": entry["rgba"]}
 
 
-def mask_from_texture(texture, size):
-    """A mask byte a texel out of a texture's red channel, nearest neighbour.
+def mask_from_texture(texture, size, channel=0):
+    """A mask byte a texel out of one channel of a texture, nearest neighbour.
 
-    The tint mask is painted red where the item takes a colour (with shading
-    through it on cloth), so its red channel is the mask as the item states it.
+    An item states the mask in one of two places: a small tint map painted red,
+    or a full map whose alpha is the mask - the channel Halo CE reads. Whichever
+    it is, the mask is that channel resampled to the size being written.
     """
     width = texture.get("width") or 0
     height = texture.get("height") or 0
@@ -844,8 +845,51 @@ def mask_from_texture(texture, size):
         source_row = min(height - 1, y * height // size) * width * 4
         target = y * size
         for x in range(size):
-            out[target + x] = rgba[source_row + min(width - 1, x * width // size) * 4]
+            out[target + x] = rgba[source_row + min(width - 1,
+                                                    x * width // size) * 4 + channel]
     return bytes(out)
+
+
+def mask_channel(texture):
+    """Which channel of a texture carries a colour-change mask: 3, 0 or None.
+
+    An item says it one of two ways: a tint map painted red, or a multipurpose
+    map whose alpha is the mask - the channel the shader reads. Alpha is tried
+    first for that reason, then red. A channel that never changes says nothing,
+    and one lit on a handful of texels is a stray mark rather than a mask, so
+    both are passed over: a blank slot must not become a mask that tints
+    nothing, which looks exactly like a broken texture.
+    """
+    width = texture.get("width") or 0
+    height = texture.get("height") or 0
+    rgba = texture.get("rgba") or b""
+    count = width * height
+    if count <= 0 or len(rgba) < count * 4:
+        return None
+    for channel in (3, 0):
+        values = rgba[channel::4]
+        if max(values) - min(values) < 8:
+            continue
+        if sum(1 for value in values if value >= 128) * 200 < count:
+            continue
+        return channel
+    return None
+
+
+def mask_source(candidates):
+    """The first (role, texture, channel) that actually carries a mask.
+
+    Candidates arrive in the order the roles matter - the tint mask before the
+    decal map - so an item that paints its mask red keeps that mask, and one
+    whose tint slot is blank falls through to the slot that has one.
+    """
+    for role, texture in candidates:
+        if not texture:
+            continue
+        channel = mask_channel(texture)
+        if channel is not None:
+            return role, texture, channel
+    return None, None, None
 
 
 def mask_from_coverage(texture, size):
@@ -1065,6 +1109,8 @@ def summarise(mesh, data):
         facts["texture_source"] = "its own base colour texture, slot %d" % base["slot"]
         if 2 in roles:
             facts["tint_texture"] = texture_facts(roles[2])
+        if 3 in roles:
+            facts["decal_texture"] = texture_facts(roles[3])
     else:
         from_table = texture_from_model(mesh, batches)
         if from_table:
@@ -1427,9 +1473,10 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                      % stem)
     lines.append("change colour: %s change colour.png/.tga/.tif - white takes the"
                  " team colour; this is the alpha channel of the multipurpose map"
-                 " on Halo CE (blue on the original Xbox). The white is painted"
-                 " where the item's own UV layout has geometry, so the mask sits"
-                 " on its islands the way the base map does" % stem)
+                 " on Halo CE (blue on the original Xbox). The mask lives in alpha"
+                 " alone, so a viewer that draws colour and no alpha shows these"
+                 " files black - that is where the data is, not an empty mask"
+                 % stem)
     lines.append("multipurpose: %s multipurpose.png/.tga/.tif - Halo CE order:"
                  " red detail, green self-illumination, blue specular,"
                  " alpha colour change" % stem)
@@ -1441,6 +1488,10 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                  " makes it valid in either order" % stem)
     if facts.get("mask_source"):
         lines.append("mask source: %s" % facts["mask_source"])
+    if facts.get("mask_coverage") is not None:
+        lines.append("mask coverage: %.0f%% of the canvas is white - the rest keeps"
+                     " the colour the item was drawn in"
+                     % (facts["mask_coverage"] * 100))
     lines.append("")
     lines.append("The folder is laid out for the program you open it in:")
     lines.append("  %s\\  %s.obj and .mtl, with every texture as .png and .tga"
@@ -1921,15 +1972,23 @@ def main(argv=None):
             # written at 256 instead.
             png_size = 1024
             small_size = 256
-            tint = facts.get("tint_texture")
             picture = facts.get("texture")
-            if tint:
-                # The item ships its own tint mask: this is the real colour-change
-                # data, painted by whoever made the item, not derived from geometry.
-                big = mask_from_texture(tint, png_size)
-                small = mask_from_texture(tint, small_size)
-                source = ("the item's own tint mask, slot %s, %dx%d, red channel"
-                          % (tint.get("slot"), tint["width"], tint["height"]))
+            # The mask is in the slot that carries one, and the slots are not
+            # interchangeable: the Marine's 32x32 tint slot is blank while its
+            # 256x128 map has the mask in alpha. Reading the blank one produced
+            # four black mask files that masked nothing.
+            role, mask_texture, channel = mask_source(
+                [(2, facts.get("tint_texture")), (3, facts.get("decal_texture"))])
+            if mask_texture:
+                # The item's own mask, painted by whoever made it, resampled to
+                # the size being written - not derived from geometry.
+                big = mask_from_texture(mask_texture, png_size, channel)
+                small = mask_from_texture(mask_texture, small_size, channel)
+                source = ("the item's own %s, slot %s, %dx%d, %s channel"
+                          % ("tint mask" if role == 2 else "decal map",
+                             mask_texture.get("slot"), mask_texture["width"],
+                             mask_texture["height"],
+                             "alpha" if channel == 3 else "red"))
             elif picture:
                 # No tint mask, but a painted texture: its own islands are the
                 # coverage the item actually has, so the mask follows the picture
@@ -1955,6 +2014,7 @@ def main(argv=None):
             else:
                 painted = sum(1 for value in big if value)
             facts["mask_source"] = source
+            facts["mask_coverage"] = round(painted / float(png_size * png_size), 4)
 
             def mask_with(channel, size, data):
                 """One mask byte a texel in `channel`, the other channels zero."""

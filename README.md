@@ -464,9 +464,10 @@ That table is where an item's colours actually are, and reading it is not
 optional: a garment ships its whole look as three slots - a base colour map, a
 tint mask and a decal - and every material names which slot each one comes from
 (id 1 base, 2 mask, 3 decal). The Marine armour's base map is a 256x128 DXT1
-sheet of olive plates, khaki fatigues and dark straps, and its tint mask is a
-32x32 DXT5 that becomes the multipurpose map's colour-change channel. Two things
-had to be right to read them: the pixels are the *compressed* size the slot's
+sheet of olive plates, khaki fatigues and dark straps; its 32x32 tint slot is
+blank, and the colour-change mask is the alpha channel of the 256x128 map in its
+decal slot, which is also where the greyscale detail art lives. Two things had
+to be right to read them: the pixels are the *compressed* size the slot's
 format implies (half a byte a texel for DXT1, one for DXT5), not the padded
 `bytes a frame` in the header - a 32x32 mask says 4,096 there and stores 1,024 -
 and they are tens of kilobytes, so they cannot be read through the bit reader the
@@ -486,16 +487,26 @@ is different, so both are written rather than leaving you to swap channels:
 | Xbox | specular | self-illumination | colour change | detail |
 
   * `<stem> multipurpose.*` - Halo CE order. The colour change mask comes from
-    the item itself, in this order: its own tint mask texture when the model
-    binds one; otherwise the painted base texture's own islands (anything not
-    transparent and not black); and only failing both, the UV coverage. The
-    report's `mask source:` line says which was used. A part that must keep its own colour
-    needs painting black there. The `.png` is 1024x1024 and a few kilobytes; the
-    `.tga` and `.tif` are the same mask at 256, because uncompressed at 1024 they
-    are 4 MB each and 256 is what a bitmap compiled by `tool.exe` uses anyway.
-    Detail, specular and self-illumination are zero, because an item does not say
-    which parts are shiny, glow or take a detail map, and inventing that would
-    be a guess.
+    the item itself, from the first slot that actually carries one: its tint mask
+    painted red, or a map whose alpha is the mask (the channel Halo CE reads).
+    Failing both - a table of blank slots - the painted base texture's own
+    islands (anything not transparent and not black), and only failing that, the
+    UV coverage. A slot that is blank all over is passed over rather than turned
+    into a mask that tints nothing; the report's `mask source:` line names the
+    slot and channel used, and `mask coverage:` how much of it is white. A part
+    that must keep its own colour needs painting black there. The `.png` is
+    1024x1024 and a few kilobytes; the `.tga` and `.tif` are the same mask at 256,
+    because uncompressed at 1024 they are 4 MB each and 256 is what a bitmap
+    compiled by `tool.exe` uses anyway. Detail, specular and self-illumination
+    are zero, because an item does not say which parts are shiny, glow or take a
+    detail map, and inventing that would be a guess.
+
+    The mask is in **alpha alone**, because that is the channel the shader reads.
+    An image viewer that draws colour and ignores alpha shows `multipurpose`,
+    `multipurpose xbox` and `change colour` as solid black - that is where the
+    data is, not an empty mask. Turn the alpha channel on in GIMP, Photoshop or
+    Paint.NET to see it, and check `mask coverage:` in `report.txt` for the
+    fraction that takes the team colour.
   * `<stem> multipurpose xbox.*` - the same masks in Xbox order, for H1A with the
     shader's "og xbox channel order" flag (0x40) set. Halo CE and the legacy HEK
     always read Gearbox order, which is why the first set is not a substitute.
