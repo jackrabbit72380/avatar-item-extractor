@@ -28,7 +28,8 @@ item they are, so they never name the output. When the bins are on their own and
 nothing else names the item, it becomes `extracted1`, `extracted2` and so on,
 numbered across the run, so two items never share a name.
 
-Needs Python 3.8+. Blender 4.x makes the rigging files.
+Needs Python 3.8+. Blender 5.2 or newer makes the rigging files: the two
+rigs it ships were saved by 5.2, and 4.x cannot open them.
 
 Halo CE's two rig files - `master chief skeleton.blend` and `fp arms.blend` -
 travel inside the `.bat` and are unpacked to
@@ -155,12 +156,23 @@ from the body and the player sees the arms, not the body's:
   forearm alone - an avatar rig has no finger bones - hands over to
   `frame l wriste` along its length, so the glove follows Halo's hand instead of
   swinging from the elbow, and its fingers end where Halo's own do. Past the
-  knuckles those fingers are then weighted onto Halo's own finger bones - the
-  two nearest of `frame l index`, `middle`, `ring`, `pinky` and `thumb`, each in
+  knuckles each glove vertex is weighted onto the two nearest bones of **its own
+  finger's chain** - `frame l index`, `middle`, `ring`, `pinky` or `thumb`, each in
   its low/mid/tip bones - so the glove closes round a rifle the way the game's
-  hand does rather than moving as one lump with the wrist. The hand-over is
-  smooth, so no finger is torn from its neighbour, and it is eased out again at
-  the knuckles, which leaves the palm and any knuckle plate on `frame l wriste`.
+  hand does, and no weight reaches across to the finger next door. The hand-over
+  is smooth along the finger, and it is eased out again at the knuckles, which
+  leaves the palm and any knuckle plate on `frame l wriste`.
+
+  The thumb is found by its own chain, not by how far along the hand it lies. It
+  sits beside the wrist and never crosses the knuckle line the other fingers do,
+  so the hand's own measure put it behind that line: the Marine's whole thumb
+  guard stayed on the wriste bone and did not move with the thumb at all. A
+  vertex belongs to the thumb when it is nearer the thumb chain than the hand
+  bone or any other finger, and it eases in over the first part of the thumb's
+  length so it still joins the glove's palm smoothly. Halo's thumb bones sit
+  outside the Marine's bulky thumb guard by 0.75-1.94 units - `report.txt` names
+  that per bone - so the guard follows the thumb from outside it, as armour over
+  a joint does, rather than being left behind.
   Weights cannot tear anything: the geometry is already carried whole. The
   finger room `report.txt` gives is measured on the glove's own vertices, past
   the wrist, and never over the whole arm: a sleeve or a bracer runs further

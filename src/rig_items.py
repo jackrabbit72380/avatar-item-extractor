@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v33"
-BUILD = "2026-11-23 fp-arms-finger-bones"
+VERSION = "v34"
+BUILD = "2026-11-23 fp-arms-thumb-chain"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -1135,38 +1135,94 @@ def finger_bones(armature_fp, side):
     return found
 
 
+def finger_chains(armature_fp, side):
+    """Halo's finger bones split by finger, each chain from knuckle to tip.
+
+    A glove's vertex belongs to one modelled finger, so the weights it takes
+    should come from that finger's own bones; the two nearest bones of the whole
+    hand can be one on each side of the finger next door, which is a weight that
+    drags skin across the gap between fingers. Keyed by `HAND_FINGERS`, ordered
+    low, mid, tip - `middlelow` is the one bone whose name has no space.
+    """
+    chains = {}
+    for name, head, tail in finger_bones(armature_fp, side):
+        flat = name[len("frame %s " % side):].replace(" ", "")
+        for key in HAND_FINGERS:
+            if flat.startswith(key):
+                chains.setdefault(key, []).append((name, head, tail, flat))
+                break
+    for entries in chains.values():
+        entries.sort(key=lambda entry: 0 if entry[3].endswith("low")
+                     else 1 if entry[3].endswith("mid") else 2)
+    return chains
+
+
 def finger_split(point, armature_fp, side, influences=2, power=4.0):
     """How much of a glove vertex rides Halo's fingers, and on which of them.
 
     Halo's own first-person hands close with their finger bones, so a glove that
     rides the hand bone alone cannot hold anything the way the game does: its
-    fingers go wherever a wrist goes and never close round a weapon. Everything
-    past the knuckles is given to the two nearest finger bones, so the weight
-    changes smoothly across a knuckle rather than jumping between them, and it
-    is eased out at the knuckles again so the palm - and a knuckle plate - stay
-    on Halo's hand bone.
+    fingers go wherever a wrist goes and never close round a weapon. Past the
+    knuckles a glove vertex is given to the two nearest bones of *its own*
+    finger, so the weight changes smoothly along the finger instead of reaching
+    across to the one beside it, and it is eased out at the knuckles again so the
+    palm - and a knuckle plate - stay on Halo's hand bone.
+
+    The thumb is found by its own chain rather than by how far along the hand it
+    lies. It sits beside the wrist and never crosses the knuckle line the other
+    fingers do, so the hand's own measure put it *behind* that line: its whole
+    guard stayed on the wriste bone and did not move with the thumb at all. It
+    is its own piece of the hand, recognised by being nearer the thumb chain than
+    the hand bone or another finger, and it eases in from its base over the first
+    part of its length so it still joins the glove's palm smoothly.
 
     Returns (grip, shares): `grip` is how much of the vertex belongs to the
-    fingers at all and `shares` divides that between finger bones. None when the
-    rig has no hand to measure.
+    fingers at all and `shares` divides that between its finger's bones. None
+    when the rig has no hand to measure.
     """
     span = hand_span(armature_fp, side)
-    bones = finger_bones(armature_fp, side)
-    if span is None or not bones:
+    chains = finger_chains(armature_fp, side)
+    if span is None or not chains:
         return None
     head, axis, length, knuckle = span
+    near_chain = []
+    for key, entries in chains.items():
+        gap = min(point_segment_distance(point, first, second)
+                  for _name, first, second, _flat in entries)
+        near_chain.append((gap, key))
+    near_chain.sort()
+    gap, key = near_chain[0]
+    entries = chains[key]
+    near = sorted((point_segment_distance(point, first, second), name)
+                  for name, first, second, _flat in entries)
+    weights = [(1.0 / ((reach + 0.3) ** power), name)
+               for reach, name in near[:influences]]
+    total = sum(weight for weight, _name in weights)
+    if total <= 0.0:
+        return None
+    shares = {name: weight / total for weight, name in weights}
+    if key == "thumb":
+        wrist = getattr(getattr(armature_fp, "data", None), "bones", None)
+        wrist = wrist.get("frame %s wriste" % side) if wrist is not None else None
+        others = [reach for reach, name in near_chain if name != "thumb"]
+        if wrist is not None and gap < min(
+                others + [point_segment_distance(
+                    point, armature_fp.matrix_world @ wrist.head_local,
+                    armature_fp.matrix_world @ wrist.tail_local)]):
+            base = entries[0][1]
+            tip = entries[-1][2]
+            reach = [tip[i] - base[i] for i in range(3)]
+            length = math.sqrt(sum(value * value for value in reach))
+            if length > 1e-6:
+                along = sum((point[i] - base[i]) * reach[i]
+                            for i in range(3)) / (length * length)
+                grip = min(1.0, max(0.0, along / 0.45))
+                return grip * grip * (3.0 - 2.0 * grip), shares
     t = sum((point[i] - head[i]) * axis[i] for i in range(3)) / length
     start = min(max(knuckle / length, 0.15), 0.85)
     grip = min(1.0, max(0.0, (t - start) / (1.0 - start)))
     grip = grip * grip * (3.0 - 2.0 * grip)
-    near = sorted((point_segment_distance(point, first, second), name)
-                  for name, first, second in bones)
-    weights = [(1.0 / ((gap + 0.3) ** power), name)
-               for gap, name in near[:influences]]
-    total = sum(weight for weight, _name in weights)
-    if total <= 0.0:
-        return None
-    return grip, {name: weight / total for weight, name in weights}
+    return grip, shares
 
 
 def shell_faces(mesh):

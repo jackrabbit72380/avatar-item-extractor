@@ -303,8 +303,8 @@ def main():
                  "principal_axes", "hand_plane", "turn_about",
                  "turn_product", "turn_point", "hand_twist", "hand_fit",
                  "halo_hand", "HAND_FINGERS", "hand_span", "finger_bones",
-                 "finger_split", "glove_of", "finger_room", "glove_surface",
-                 "skin_gap", "finger_gaps", "inside_out"):
+                 "finger_split", "finger_chains", "glove_of", "finger_room",
+                 "glove_surface", "skin_gap", "finger_gaps", "inside_out"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -779,6 +779,22 @@ def main():
                 fail("the index fingertip rides %r" % (index[1] if index else None,))
             if module.finger_split(Vec(23.0, 9.6, 0.2), fp_rig, "l") is not None:
                 fail("finger weights were invented for a rig with no fingers")
+            # A finger's weights come from its own chain, never a neighbour's:
+            # the two nearest bones of the whole hand can sit either side of the
+            # gap between two fingers and drag the skin across it.
+            if any("middle" not in name for name in (tip[1] if tip else {})):
+                fail("the middle fingertip takes a neighbour's bone: %r" % (tip[1],))
+            # The thumb sits beside the wrist, behind the line the other fingers
+            # cross, so a hand-long measure leaves its guard on the wriste bone
+            # and it never moves with the thumb. It is found by its own chain.
+            thumb = module.finger_split(Vec(23.4, 8.5, 2.5), hand_rig, "l")
+            print("  finger_split thumb -> grip %.2f on %r"
+                  % (thumb[0] if thumb else -1.0,
+                     sorted(thumb[1]) if thumb else None))
+            if thumb is None or thumb[0] < 0.9:
+                fail("the thumb was left on the wriste bone: %r" % (thumb,))
+            if thumb and any("thumb" not in name for name in thumb[1]):
+                fail("the thumb skin rides another finger: %r" % (thumb[1],))
 
         # Shoulder plates are not arms. A pauldron is worn over the shoulder
         # rather than on the arm, and carried with an arm that turns about the
