@@ -518,6 +518,55 @@ found, and each part's shader and texture bindings. The extractor writes it
 before any Blender runs, so a run without Blender still describes the file;
 the rigging section is added underneath it when Blender is there.
 
+## Recovering this project from GitHub alone
+
+Nothing here lives on a machine or in a chat: the repository is the project, and
+a fresh clone of it is a working one.
+
+```sh
+git clone https://github.com/jackrabbit72380/avatar-item-extractor.git
+cd avatar-item-extractor
+python3 tools/test_all.py
+```
+
+`test_all.py` unpacks the payload of the shipped `Extract-AvatarItem-v56.bat` and
+runs the whole suite against it, so a green run proves the artifact itself is
+intact rather than a copy of it beside the repository.
+
+Halo's two rig files travel in the repository, and they have to: every item is
+skinned to them, and without them nothing can be rigged.
+
+| file | what it is |
+|---|---|
+| `src/rig/master chief skeleton.blend` | Halo's 19-bone biped, the target of the body fit |
+| `src/rig/fp arms.blend` | Halo's 37-bone first-person arm set |
+
+Rebuilding the shipped `.bat` from the sources needs only Python:
+
+```sh
+python3 tools/payload.py pack Extract-AvatarItem-v56.bat src --rigs src/rig
+```
+
+`--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
+back to exactly the files it was given, rigs included. The banner's
+`Version : vNN` must also match `VERSION` in `src/rig_items.py` - `pack` refuses a
+mismatch, which is what stops a rebuilt payload shipping under the old name. Bump
+both when the sources change.
+
+A full run - extraction, then rigging - needs Blender 5.2 or newer, which is the
+one thing the repository does not carry:
+
+```sh
+python3 src/extract_items.py "<folder holding the item .bin>" --out out --obj
+blender -b --factory-startup --python src/rig_items.py -- \
+    --items out --out out \
+    --rig "src/rig/master chief skeleton.blend" \
+    --fp "src/rig/fp arms.blend"
+```
+
+That is the two halves the `.bat` runs in one double-click, and `out/report.txt`
+records every number either half measured.
+
 ## Working on the extractor itself
 
 Neither script is needed to run the tool.
