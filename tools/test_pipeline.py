@@ -687,8 +687,59 @@ def main():
             print("\nFAIL: report.txt does not say the whole item is the mask")
             return 1
 
+        # The decal goes onto a copy of the base map, never into the item's own
+        # one: the base map is what the pack stores, and the blend is the item's
+        # look. The rule is the one both readers of the format use -
+        # base*(1-a) + decal.rgb*a - so the three alphas that matter are pinned
+        # exactly, and the written picture is checked against them.
+        base_texels = pixels(os.path.join(out_tint, "extracted for max users",
+                                          "Tint Trap base map.png"))
+        composite_path = os.path.join(out_tint, "extracted for max users",
+                                      "Tint Trap base map + decal.png")
+        if not os.path.exists(composite_path):
+            print("\nFAIL: no decal-blended base map was written")
+            return 1
+        composite = pixels(composite_path)
+        if len(composite) != len(base_texels):
+            print("\nFAIL: the decal-blended base map is a different size")
+            return 1
+        red = sum(1 for pixel in composite if pixel[:3] == (255, 0, 0))
+        lazy = sum(1 for pixel in composite if pixel[3] != 255)
+        untouched = sum(1 for before, after in zip(base_texels, composite)
+                        if before[:3] == after[:3])
+        print("  composite      %d texels exactly the decal's red, %d left exactly"
+              " as the item's base map, of %d"
+              % (red, untouched, len(composite)))
+        if not red or not untouched or lazy:
+            print("\nFAIL: the decal blend either ignored its alpha or its"
+                  " colour, or wrote a transparent texel")
+            return 1
+        blended, changed = extract_items.decal_overlay(
+            bytes([200, 200, 200, 255]) * 3, 3, 1,
+            bytes([255, 0, 0, 0, 255, 0, 0, 255, 255, 0, 0, 128]), 3)
+        got = [tuple(blended[i:i + 3]) for i in (0, 4, 8)]
+        print("  blend maths    alpha 0, 255, 128 -> %r" % (got,))
+        if got != [(200, 200, 200), (255, 0, 0), (228, 100, 100)]:
+            print("\nFAIL: the decal blend is not base*(1-a) + decal.rgb*a")
+            return 1
+        with open(os.path.join(out_tint, "report.txt"), encoding="utf-8") as handle:
+            report_decal = handle.read()
+        if "base map + decal" not in report_decal or "decal:     slot 2" not in report_decal:
+            print("\nFAIL: report.txt does not describe the decal blend")
+            return 1
+        for order in ("pc", "xbox"):
+            path = os.path.join(out_tint, "extracted for hek users", order,
+                                "data", "Tint Trap", "bitmaps",
+                                "Tint Trap base map + decal.tif")
+            if not os.path.exists(path):
+                print("\nFAIL: no decal .tif for the %s build" % order)
+                return 1
+            if os.path.getsize(path) == 0:
+                print("\nFAIL: the %s decal .tif is empty" % order)
+                return 1
+
         print("\nPASS: a blank tint mask gives the whole item to mp, nothing to sp,"
-              " and no decal alpha")
+              " no decal alpha - and the decal blends onto a copy of the base map")
 
         # Fourth case: two parts in one item, each with its own colour, and the
         # same shader id on both. They must stay two materials with two colours -

@@ -1202,6 +1202,90 @@ def paint_triangle(mask, size, points, sources, rgba, width, height, channel):
     return True
 
 
+def bake_colour(batches, source, size, from_set, to_set):
+    """A texture carried from the UV set it is painted in to the base map's.
+
+    The walk ``bake_mask`` takes, keeping every channel instead of one: a decal
+    is artwork with its own colours and its own alpha, and one painted in
+    another set has to be resampled through the geometry rather than pasted at
+    the same coordinates. A texel no triangle covers keeps an alpha of zero, so
+    the result is safe to blend - it adds nothing where the item has no surface.
+
+    Returns (rgba, covered) where ``rgba`` is ``size`` x ``size`` bytes and
+    ``covered`` says how many texels a triangle reached.
+    """
+    width = source.get("width") or 0
+    height = source.get("height") or 0
+    rgba = source.get("rgba") or b""
+    if width <= 0 or height <= 0 or len(rgba) < width * height * 4:
+        return None, 0
+    out = bytearray(size * size * 4)
+    covered = bytearray(size * size)
+    last = float(size - 1)
+    for batch in batches or []:
+        uvs = batch.get("uvs") or []
+        indices = batch.get("indices") or []
+        if not uvs or not indices:
+            continue
+        for step in range(0, len(indices) - 2, 3):
+            corners = indices[step:step + 3]
+            if max(corners) >= len(uvs):
+                continue
+            destination = []
+            sources = []
+            for index in corners:
+                entry = uvs[index]
+                if to_set >= len(entry) or from_set >= len(entry):
+                    destination = []
+                    break
+                destination.append(entry[to_set])
+                sources.append(entry[from_set])
+            if len(destination) != 3:
+                continue
+            # The coordinates are tiles, not 0..1, so a triangle crossing a tile
+            # edge is drawn once per tile it reaches - as bake_mask does.
+            for shift_u in (-1, 0, 1):
+                for shift_v in (-1, 0, 1):
+                    points = [((u + shift_u) * last, (v + shift_v) * last)
+                              for u, v in destination]
+                    paint_colour_triangle(out, covered, size, points, sources,
+                                          rgba, width, height)
+    return bytes(out), sum(1 for mark in covered if mark)
+
+
+def paint_colour_triangle(out, covered, size, points, sources, rgba, width, height):
+    """Fill one triangle of a colour image; False when it falls outside."""
+    (x1, y1), (x2, y2), (x3, y3) = points
+    low_x = max(0, int(min(x1, x2, x3)))
+    high_x = min(size - 1, int(max(x1, x2, x3)) + 1)
+    low_y = max(0, int(min(y1, y2, y3)))
+    high_y = min(size - 1, int(max(y1, y2, y3)) + 1)
+    if low_x > high_x or low_y > high_y:
+        return False
+    area = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
+    if not area:
+        return False
+    if (high_x - low_x) * (high_y - low_y) > size * size // 2:
+        return False
+    for y in range(low_y, high_y + 1):
+        row = y * size
+        for x in range(low_x, high_x + 1):
+            w1 = ((y2 - y3) * (x - x3) + (x3 - x2) * (y - y3)) / area
+            w2 = ((y3 - y1) * (x - x3) + (x1 - x3) * (y - y3)) / area
+            w3 = 1.0 - w1 - w2
+            if w1 < -0.05 or w2 < -0.05 or w3 < -0.05:
+                continue
+            u = w1 * sources[0][0] + w2 * sources[1][0] + w3 * sources[2][0]
+            v = w1 * sources[0][1] + w2 * sources[1][1] + w3 * sources[2][1]
+            sx = int((u % 1.0) * width) % width
+            sy = int((v % 1.0) * height) % height
+            at = (sy * width + sx) * 4
+            target = (row + x) * 4
+            out[target:target + 4] = rgba[at:at + 4]
+            covered[row + x] = 1
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="Decode an avatar mesh from the asset pack.")
     parser.add_argument("--pack", required=True, help="AvatarAssetPack.toc")

@@ -48,6 +48,10 @@ Test Item\
                        the Blender folder
         master chief skeleton.fbx  Halo's biped, for repairing a binding by hand
         Test Item base map.png  also .tga  - the texture the model binds
+        Test Item base map + decal.png  also .tga  the same base map with the
+                        item's decal blended over it by its own alpha - this
+                        is what the .blend binds, and what a Halo CE build
+                        needs, because the shader has one colour layer
         Test Item slot 2 decal map.png  also .tga  a texture the item binds,
                         written as it came out of the model, colours and all
         Test Item multipurpose.png  also .tga  Halo CE channel order
@@ -68,7 +72,8 @@ Test Item\
         pc\data\Test Item\
             bitmaps\    Test Item base map.tif, Test Item multipurpose.tif,
                         Test Item change colour.tif, Test Item slot 2 decal
-                        map.tif - Halo CE channel order
+                        map.tif, and Test Item base map + decal.tif - Halo CE
+                        channel order
             models\     Test Item.jms  the model, for tool.exe
             animations\  empty until there are animation files to put here
             source\     Test Item - halo.blend, .fbx  what the model came from
@@ -521,7 +526,21 @@ is different, so both are written rather than leaving you to swap channels:
     over the base map by its own alpha, a tee's logo. It is never read as a mask.
     The Marine armour's decal alpha covers two thirds of its canvas as a soft
     blend - a decal cutout, not panels - and treating it as a team-colour mask
-    tinted most of the suit on no evidence at all.
+    tinted most of the suit on no evidence at all. It is blended into a copy of
+    the base map anyway, because that is the only way it can reach Halo CE:
+
+        colour = base * (1 - alpha) + decal.rgb * alpha
+
+    which is what both readers of the format do (open-avatar-lib's
+    `avatar_bake.c` and All-Stars Avatar's `avatar_compose.py`). Halo CE's
+    `shader_model` samples one colour layer and cannot blend a second texture at
+    run time, so `<stem> base map + decal.*` is the map for the game, the plain
+    base map stays exactly as it came out of the pack, and the .blend binds the
+    blended one. The decal is read in the UV set whose layout its artwork
+    actually traces: the Marine's record names set 2, where it covers 9% of the
+    body's triangles, against 34% in the base map's set - so it is sampled where
+    the artwork was painted, and carried across the geometry when it really does
+    belong to another set.
 
     The `.png` is 1024x1024 and a few kilobytes; the `.tga` and `.tif` are the same
     mask at 256, because uncompressed at 1024 they are 4 MB each and 256 is what a

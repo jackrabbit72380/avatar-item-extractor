@@ -941,6 +941,92 @@ def mask_bytes(mesh, batches, texture, channel, size, base_uv_set, own_uv_set=No
     return mask_from_texture(texture, size, channel)
 
 
+def decal_uv_set(batches, texture, base_uv_set):
+    """Which UV set the decal's own pixels are painted in.
+
+    The same question as the tint mask's, answered the same way - by where the
+    pixels actually cover the item. A material record names the set it means to
+    sample, but the Marine armour's decal is painted in the base map's layout:
+    read in the set its record names it falls on 9% of the body's triangles,
+    against 34% in the base map's own set, and the artwork smears across the
+    panels instead of tracing them. Whichever set puts more of the item on
+    painted texels is the one the artist used.
+    """
+    if texture is None:
+        return base_uv_set
+    own = texture.get("uv_set")
+    if own is None or base_uv_set is None or own == base_uv_set:
+        return own if own is not None else base_uv_set
+    here = mask_reach(batches, texture, 3, base_uv_set)
+    there = mask_reach(batches, texture, 3, own)
+    return own if there > here else base_uv_set
+
+
+def decal_layer(mesh, batches, decal, size, base_uv_set):
+    """The decal at `size` x `size`, in the base map's UV set, as RGBA.
+
+    Painted in the base map's own layout, it is resampled where it lies; painted
+    in another set, it is carried across the geometry the way bake_mask carries a
+    mask, so the artwork lands on the parts the base map shows.
+    """
+    width = decal.get("width") or 0
+    height = decal.get("height") or 0
+    rgba = decal.get("rgba") or b""
+    if width <= 0 or height <= 0 or len(rgba) < width * height * 4:
+        return None, 0
+    painted = decal_uv_set(batches, decal, base_uv_set)
+    if painted is not None and base_uv_set is not None and painted != base_uv_set:
+        return mesh.bake_colour(batches, decal, size, painted, base_uv_set)
+    out = bytearray(size * size * 4)
+    for y in range(size):
+        source_row = min(height - 1, y * height // size) * width * 4
+        for x in range(size):
+            at = source_row + min(width - 1, x * width // size) * 4
+            target = (y * size + x) * 4
+            out[target:target + 4] = rgba[at:at + 4]
+    return bytes(out), sum(1 for value in out[3::4] if value)
+
+
+def decal_overlay(base_rgba, base_width, base_height, decal_rgba, size):
+    """The base map with the decal blended over it, and how much it changed.
+
+    The avatar reads an item's decal as
+
+        colour = base * (1 - alpha) + decal.rgb * alpha
+
+    - the decal's own red, green and blue by its own alpha, over whatever the
+    tinted base came to. Both readers of this format that handle the decal do it
+    that way: open-avatar-lib's avatar_bake.c (`mix3(out, t[ITEM_DECAL],
+    t[ITEM_DECAL][3])`) and All-Stars Avatar's avatar_compose.py
+    (`col * (1 - a) + rgb * a`). An item whose decal alpha is zero everywhere
+    therefore leaves the base untouched, which is what makes this safe to write
+    for every item that has a decal at all.
+
+    Halo CE's shader_model has one colour layer, so a decal can only reach the
+    game blended into the base map like this - it cannot be layered at run time.
+    """
+    out = bytearray(base_rgba[:base_width * base_height * 4])
+    changed = 0
+    for y in range(base_height):
+        source_row = min(size - 1, y * size // base_height) * size * 4
+        for x in range(base_width):
+            at = (y * base_width + x) * 4
+            decal_at = source_row + min(size - 1, x * size // base_width) * 4
+            alpha = decal_rgba[decal_at + 3]
+            if not alpha:
+                continue
+            for channel in range(3):
+                over = decal_rgba[decal_at + channel]
+                under = out[at + channel]
+                value = (under * (255 - alpha) + over * alpha + 127) // 255
+                if value != under:
+                    out[at + channel] = value
+            if alpha:
+                changed += 1
+            out[at + 3] = 255
+    return bytes(out), changed
+
+
 def texture_flat(texture):
     """A texture holding one value in every channel: an unused slot.
 
@@ -1601,6 +1687,19 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
             lines.append("slot %s:    %sx%s %s, written as %s slot %s %s.png/.tga/.tif"
                          % (entry["slot"], entry["width"], entry["height"],
                             entry["name"], stem, entry["slot"], entry["name"]))
+    overlay = facts.get("decal_overlay")
+    if overlay:
+        lines.append("decal:     slot %s blended over a copy of the base map by its"
+                     " own alpha, as %s base map + decal.png/.tga/.tif"
+                     % (overlay.get("slot"), stem))
+        lines.append("           %d of %d texels changed; read in UV set %s, the base"
+                     " map's layout, because that is where its artwork traces the"
+                     " panels"
+                     % (overlay.get("changed"), overlay.get("texels"),
+                        overlay.get("uv_set")))
+        lines.append("           Halo CE's shader_model has one colour layer, so the"
+                     " decal can only reach the game this way. The plain base"
+                     " map is still written beside it, unchanged")
     lines.append("change colour: %s change colour.png/.tga/.tif - white takes the"
                  " team colour; this is the alpha channel of the multipurpose map"
                  " on Halo CE (blue on the original Xbox). It is the item's tint"
@@ -2149,6 +2248,45 @@ def main(argv=None):
             png_size = 1024
             small_size = 256
             picture = facts.get("texture")
+            # The decal is part of the item's look, and Halo CE's shader_model
+            # has one colour layer: a decal cannot be layered at run time, only
+            # blended into the base map. The item's own base map is therefore
+            # left exactly as it came out, and the decal goes onto a copy of it
+            # - decal.rgb by decal.a, the rule both readers of this format use.
+            # Which UV set it is read in is answered by its pixels, the same way
+            # the tint mask's is (decal_uv_set): the Marine's decal is painted
+            # in the base map's layout whatever its material record says.
+            decal = facts.get("decal_texture")
+            overlay = None
+            if picture and decal and not texture_flat(decal):
+                size = max(picture["width"], picture["height"])
+                layer, lit = decal_layer(mesh, batches, decal, size,
+                                         picture.get("uv_set"))
+                if layer and lit:
+                    blended, changed = decal_overlay(
+                        picture["rgba"], picture["width"], picture["height"],
+                        layer, size)
+                    name = os.path.join(out, "%s base map + decal" % stem)
+                    write_png(name + ".png", blended, picture["width"],
+                              picture["height"])
+                    write_tga(name + ".tga", blended, picture["width"],
+                              picture["height"])
+                    write_tiff(name + ".tif", blended, picture["width"],
+                               picture["height"])
+                    overlay = {
+                        "png": "%s base map + decal.png" % stem,
+                        "tga": "%s base map + decal.tga" % stem,
+                        "tif": "%s base map + decal.tif" % stem,
+                        "width": picture["width"],
+                        "height": picture["height"],
+                        "slot": decal.get("slot"),
+                        "uv_set": decal_uv_set(batches, decal,
+                                               picture.get("uv_set")),
+                        "base_uv_set": picture.get("uv_set"),
+                        "changed": changed,
+                        "texels": picture["width"] * picture["height"],
+                    }
+            facts["decal_overlay"] = overlay
             # A team colour comes from the item's tint mask and from nowhere
             # else. The mask is the material's parameter id 2, read as
             # lerp(base, red*C1 + green*C2 + blue*C3, alpha): red, green and blue
