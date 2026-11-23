@@ -242,6 +242,27 @@ def main():
     if not all(word in text for word in wanted):
         fail("report.txt has no scene section with the rig's root: %r" % (text[-300:],))
 
+    # The per-bone finger numbers reach report.txt, one line each, with the side
+    # and whether the bone is inside the glove or how far outside.
+    arm_record = {
+        "id": "Item", "title": "Item",
+        "arms_file": "Item - halo fp arms.blend",
+        "arms_binding": "renamed to Halo's fp bones",
+        "arms_fingers_bones": "all 7 of Halo's finger bones sit inside the glove",
+        "arms_finger_bones": ["l middle tip  -0.40 inside",
+                              "l thumb low   +0.62 OUTSIDE"],
+    }
+    arms_text = module.report_text({"rig": "rig.blend", "fp": None},
+                                   [arm_record], ["Item"], fake_rig)
+    wanted_fingers = ["per bone, from the glove's skin",
+                      "l thumb low   +0.62 OUTSIDE",
+                      "all 7 of Halo's finger bones"]
+    print("  report finger bones -> %s"
+          % ("present" if all(word in arms_text for word in wanted_fingers)
+             else "MISSING"))
+    if not all(word in arms_text for word in wanted_fingers):
+        fail("report.txt does not list each finger bone: %r" % (arms_text[-300:],))
+
     # Halo's own rig files are inputs, not outputs: they travel inside the .bat
     # and every item is skinned to them. Copying them into the item folders put
     # a second, unskinned skeleton beside every item and left the player
@@ -282,7 +303,8 @@ def main():
                  "principal_axes", "hand_plane", "turn_about",
                  "turn_product", "turn_point", "hand_twist", "hand_fit",
                  "halo_hand", "HAND_FINGERS", "hand_span", "finger_bones",
-                 "finger_split", "glove_of", "finger_room", "inside_out"):
+                 "finger_split", "glove_of", "finger_room", "glove_surface",
+                 "skin_gap", "finger_gaps", "inside_out"):
         if not hasattr(module, name):
             fail("no %s: the arm cut cannot say what is an arm" % name)
     if hasattr(module, "arm_share"):
@@ -849,6 +871,60 @@ def main():
                 or not module.glove_of(place, (0.0, 32.0, 0.0))
                 or module.glove_of(None, (0.0, 32.0, 0.0))):
             fail("the glove was not taken from the sleeve at the wrist")
+        # Every finger bone is measured against the glove's own skin, so a thumb
+        # outside its glove is named instead of being averaged away by whichever
+        # finger reached furthest. The box is the glove: it holds the fingers,
+        # and the thumb hangs below and above it.
+        box = [(21.0, 9.5, -1.4), (21.0, 9.5, 2.2),
+               (21.0, 10.6, -1.4), (21.0, 10.6, 2.2),
+               (30.0, 9.5, -1.4), (30.0, 9.5, 2.2),
+               (30.0, 10.6, -1.4), (30.0, 10.6, 2.2)]
+        box_faces = [Poly(0, 1, 3), Poly(0, 3, 2), Poly(4, 6, 7),
+                     Poly(4, 7, 5), Poly(0, 4, 5), Poly(0, 5, 1),
+                     Poly(2, 3, 7), Poly(2, 7, 6), Poly(0, 2, 6),
+                     Poly(0, 6, 4), Poly(1, 5, 7), Poly(1, 7, 3)]
+        box_slot = {index: index for index in range(8)}
+        gaps = module.finger_gaps(box, box_slot, {"l": list(range(8)), "r": []},
+                                  box_faces, hand_rig)
+        by_bone = {(entry["side"], entry["bone"]): entry["gap"]
+                   for entry in gaps or []}
+        middle = by_bone.get(("l", "middle tip"))
+        thumb = by_bone.get(("l", "thumb low"))
+        print("  finger_gaps        -> %d bone(s), middle tip %s, thumb %s"
+              % (len(gaps or []),
+                 "%+.2f" % middle if middle is not None else "none",
+                 "%+.2f" % thumb if thumb is not None else "none"))
+        if gaps is None or len(gaps) != 7:
+            fail("the per-finger check measured %r bone(s), expected 7"
+                 % (len(gaps or []),))
+        elif middle is None or middle >= 0.0:
+            fail("a finger inside the glove was not measured inside: %r"
+                 % (middle,))
+        elif thumb is None or thumb <= 0.0:
+            fail("a thumb hanging outside the glove was not caught: %r"
+                 % (thumb,))
+        elif not 0.3 < thumb < 1.5:
+            fail("the thumb's distance from the glove came out %r" % (thumb,))
+        if module.finger_gaps(box, box_slot, {"l": [], "r": []},
+                              box_faces, hand_rig) is not None:
+            fail("a side with no glove was measured anyway")
+        # A glove the item wound backwards must measure the same: the sign of
+        # the distance is decided by the shell, not by the order of its corners.
+        backwards = [Poly(*reversed(face.vertices)) for face in box_faces]
+        reversed_gaps = module.finger_gaps(
+            box, box_slot, {"l": list(range(8)), "r": []}, backwards, hand_rig)
+        reversed_by_bone = {(entry["side"], entry["bone"]): entry["gap"]
+                            for entry in reversed_gaps or []}
+        print("  finger_gaps wound  -> middle tip %s, thumb %s"
+              % ("%+.2f" % reversed_by_bone[("l", "middle tip")]
+                 if ("l", "middle tip") in reversed_by_bone else "none",
+                 "%+.2f" % reversed_by_bone[("l", "thumb low")]
+                 if ("l", "thumb low") in reversed_by_bone else "none"))
+        if (set(reversed_by_bone) != set(by_bone)
+                or any(abs(reversed_by_bone[key] - by_bone[key]) > 1e-6
+                       for key in by_bone)):
+            fail("a glove wound backwards changed the measured gaps: %r vs %r"
+                 % (reversed_by_bone, by_bone))
 
         # A closed shell the item itself had inside out is written the right way
         # round - from outside it shows its own blank back - while an open plate

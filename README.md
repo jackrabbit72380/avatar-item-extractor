@@ -166,6 +166,11 @@ from the body and the player sees the arms, not the body's:
   the wrist, and never over the whole arm: a sleeve or a bracer runs further
   along the arm than the hand does, so a whole-arm measurement would report room
   the glove does not have and hide a glove that stopped short of Halo's fingers.
+  Each of Halo's finger bones is then measured on its own against the glove's
+  own skin, and `report.txt` lists all of them with their side: a negative
+  number is how far the bone sits inside the glove, a positive one is how far
+  it stands outside. A thumb outside its glove therefore shows up by name
+  instead of passing on the hand-wide number, which another finger can satisfy.
   The rig in
   the file *is* Halo's own 37-bone set, so the game's first-person animations
   drive it as they stand. Nothing is modelled again and nothing is retextured:

@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v32"
-BUILD = "2026-11-23 hek-one-folder"
+VERSION = "v33"
+BUILD = "2026-11-23 fp-arms-finger-bones"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -1309,6 +1309,200 @@ def finger_room(coords, slot, gloves, armature_fp):
     return worst, outside, seen, held
 
 
+def _cross_dot(first, second, third):
+    """(first x second) . third, without needing vector objects."""
+    return ((first[1] * second[2] - first[2] * second[1]) * third[0]
+            + (first[2] * second[0] - first[0] * second[2]) * third[1]
+            + (first[0] * second[1] - first[1] * second[0]) * third[2])
+
+
+def glove_surface(coords, slot, glove, faces):
+    """The glove's own skin as triangles, each shell facing outward.
+
+    A face belongs to the glove when all its corners are glove vertices, so a
+    face reaching back up into the sleeve is left out.
+
+    Which way a shell faces is decided for the shell as a whole, by whether most
+    of its skin looks away from the shell's own middle - the reading `inside_out`
+    uses. That matters here because the sign of a distance is what says inside
+    or outside: a glove the item wound backwards would otherwise read every bone
+    in it as outside. Deciding per triangle would be worse - the skin between
+    two fingers faces across the glove rather than away from its middle, and
+    flipping those faces would invent gaps in the crotches. A flat plate has no
+    middle to look away from, so it keeps the winding the item gave it.
+    """
+    members = set(glove)
+    parent = {}
+
+    def find(index):
+        root = index
+        while parent.setdefault(root, root) != root:
+            root = parent[root]
+        while parent[index] != root:
+            parent[index], index = root, parent[index]
+        return root
+
+    kept = []
+    for polygon in faces:
+        loop = list(polygon.vertices)
+        if len(loop) < 3 or any(index not in members for index in loop):
+            continue
+        home = find(loop[0])
+        for index in loop[1:]:
+            other = find(index)
+            if other != home:
+                parent[other] = home
+                home = find(home)
+        points = [tuple(float(value) for value in coords[slot[index]])
+                  for index in loop]
+        triangles = [(points[0], points[first], points[first + 1])
+                     for first in range(1, len(points) - 1)]
+        kept.append((triangles, points, loop))
+    # Grouped only once every face has been joined: a face stored under the
+    # root it had at the time leaves a shell in pieces, and each piece then
+    # votes on its own middle and can flip the wrong way.
+    shells = {}
+    for triangles, points, loop in kept:
+        shells.setdefault(find(loop[0]), []).append((triangles, points))
+
+    surface = []
+    for root in sorted(shells, key=lambda key: min(
+            point[0] for entry in shells[key] for point in entry[1])):
+        entries = shells[root]
+        triangles = [triangle for entry in entries for triangle in entry[0]]
+        points = [point for entry in entries for point in entry[1]]
+        middle = [sum(point[axis] for point in points) / len(points)
+                  for axis in range(3)]
+        facing = []
+        vote = 0.0
+        for a, b, c in triangles:
+            side = [b[axis] - a[axis] for axis in range(3)]
+            other = [c[axis] - a[axis] for axis in range(3)]
+            normal = [side[1] * other[2] - side[2] * other[1],
+                      side[2] * other[0] - side[0] * other[2],
+                      side[0] * other[1] - side[1] * other[0]]
+            centre = [(a[axis] + b[axis] + c[axis]) / 3.0 for axis in range(3)]
+            reach = sum(normal[axis] * (centre[axis] - middle[axis])
+                        for axis in range(3))
+            vote += reach
+            facing.append((a, b, c, normal, centre))
+        flip = vote < 0.0
+        for a, b, c, normal, centre in facing:
+            length = math.sqrt(sum(value * value for value in normal))
+            if length <= 1e-9:
+                continue
+            normal = [value / length for value in normal]
+            if flip:
+                normal = [-value for value in normal]
+            radius = max(math.sqrt(sum((corner[axis] - centre[axis]) ** 2
+                                       for axis in range(3)))
+                         for corner in (a, b, c))
+            surface.append((a, b, c, normal, centre, radius))
+    return surface
+
+
+def _segment_nearest(point, head, tail):
+    """The point of one segment nearest `point`."""
+    along = [tail[axis] - head[axis] for axis in range(3)]
+    length_sq = sum(value * value for value in along)
+    if length_sq <= 1e-12:
+        return list(head)
+    factor = sum((point[axis] - head[axis]) * along[axis]
+                 for axis in range(3)) / length_sq
+    factor = max(0.0, min(1.0, factor))
+    return [head[axis] + along[axis] * factor for axis in range(3)]
+
+
+def skin_gap(point, surface):
+    """How far a point is from the glove's skin: outside positive, in units.
+
+    The nearest triangle is found, not just the nearest vertex, so a coarse
+    glove does not report gaps its surface does not have. The sign comes from
+    that triangle's normal, which `glove_surface` turned away from the glove, so
+    a bone behind the skin reads as inside however the item wound its faces.
+    """
+    best = None
+    for a, b, c, normal, centre, radius in surface:
+        reach = math.sqrt(sum((point[axis] - centre[axis]) ** 2
+                              for axis in range(3))) - radius
+        if best is not None and reach > best[2]:
+            continue
+        offset = sum((point[axis] - a[axis]) * normal[axis]
+                     for axis in range(3))
+        flat = [point[axis] - normal[axis] * offset for axis in range(3)]
+        # Whether the projected point lands over this triangle has to be read
+        # without caring which way round its corners go: a glove whose shell
+        # had to be turned to face outward keeps its corners in the order it
+        # was authored, and a one-sided test then calls every face a miss and
+        # measures to its edges instead.
+        sides = [_cross_dot([second[axis] - first[axis] for axis in range(3)],
+                            [flat[axis] - first[axis] for axis in range(3)],
+                            normal)
+                 for first, second in ((a, b), (b, c), (c, a))]
+        over = all(value >= -1e-9 for value in sides) \
+            or all(value <= 1e-9 for value in sides)
+        if over:
+            nearest = flat
+            distance = abs(offset)
+        else:
+            distance, nearest = None, None
+            for first, second in ((a, b), (b, c), (c, a)):
+                candidate = _segment_nearest(point, first, second)
+                gap = math.sqrt(sum((point[axis] - candidate[axis]) ** 2
+                                    for axis in range(3)))
+                if distance is None or gap < distance:
+                    distance, nearest = gap, candidate
+        toward = [point[axis] - nearest[axis] for axis in range(3)]
+        signed = distance if sum(toward[axis] * normal[axis]
+                                 for axis in range(3)) >= 0.0 else -distance
+        if best is None or abs(signed) < best[2]:
+            best = (signed, nearest, abs(signed))
+    if best is None:
+        return None, None
+    return best[0], best[1]
+
+
+def finger_gaps(coords, slot, gloves, faces, armature_fp):
+    """How far each of Halo's finger bones sits from the glove's own skin.
+
+    One number per finger bone, in units: positive means the bone stands outside
+    the glove by that much, negative means it sits inside, that far from the
+    skin. Each bone is measured at its head, middle and tail and reported at the
+    point that stands furthest out - the point a pose cannot hide.
+
+    A hand-wide number cannot answer this. "The glove reaches past the farthest
+    fingertip" stays true when the thumb's own bones lie outside the glove's
+    thumb, because another finger reached furthest, and the thumb is the finger
+    a rest pose hides. Measuring every bone against the glove's own surface
+    names the thumb instead of averaging it away.
+
+    Returns a list of {side, bone, gap} or None when there is no glove.
+    """
+    gaps = []
+    for side in ("l", "r"):
+        indices = gloves.get(side) or []
+        if not indices:
+            continue
+        surface = glove_surface(coords, slot, indices, faces)
+        if not surface:
+            continue
+        for name, head, tail in finger_bones(armature_fp, side):
+            worst = None
+            for factor in (0.0, 0.5, 1.0):
+                point = [head[axis] + (tail[axis] - head[axis]) * factor
+                         for axis in range(3)]
+                gap, _nearest = skin_gap(point, surface)
+                if gap is None:
+                    continue
+                worst = gap if worst is None else max(worst, gap)
+            if worst is None:
+                continue
+            gaps.append({"side": side,
+                         "bone": name[len("frame %s " % side):],
+                         "gap": worst})
+    return gaps or None
+
+
 def arm_pieces(object_data, names=ARM_WEIGHTS, share=ARM_SHARE):
     """The item's shells that are arms, with the side and bone each rides.
 
@@ -1652,6 +1846,38 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         arms["finger_glove"] = 0
         log("fingers: no glove past the wrist to measure, so the finger bones "
             "were not checked")
+    # Every finger bone against the glove's own skin. The line above answers
+    # "does the glove reach past Halo's fingers"; this answers "is each finger
+    # of Halo's skeleton inside its own finger of the glove", which is the one
+    # a thumb sitting outside its glove can fail while the other passes.
+    gaps = finger_gaps(coords, slot, gloves,
+                       [polygon for piece in pieces
+                        for polygon in piece["faces"]], armature_fp) \
+        if armature_fp is not None else None
+    if gaps:
+        outside = [entry for entry in gaps if entry["gap"] > 0.0]
+        worst = max(gaps, key=lambda entry: entry["gap"])
+        arms["finger_bones_checked"] = len(gaps)
+        arms["finger_bones_outside"] = len(outside)
+        arms["finger_worst_name"] = "%s %s" % (worst["side"], worst["bone"])
+        arms["finger_worst"] = worst["gap"]
+        arms["finger_lines"] = "\n".join(
+            "%s %-12s %+.2f %s"
+            % (entry["side"], entry["bone"], entry["gap"],
+               "OUTSIDE" if entry["gap"] > 0.0 else "inside")
+            for entry in gaps)
+        if outside:
+            log("fingers: %d of Halo's %d finger bone(s) stand outside the "
+                "glove - %s"
+                % (len(outside), len(gaps),
+                   ", ".join("%s %s %+.2f" % (entry["side"], entry["bone"],
+                                               entry["gap"])
+                             for entry in outside[:4])))
+        else:
+            log("fingers: all %d of Halo's finger bones sit inside the glove, "
+                "the nearest to the skin %s at %.2f units"
+                % (len(gaps), arms["finger_worst_name"],
+                   abs(arms["finger_worst"])))
     if any(carry.values()) and not moved_verts:
         log("%s: every arm weight sits on a bone with no first-person frame, so "
             "nothing was carried - report.txt and the file's own note say so"
@@ -1719,6 +1945,25 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
                         "the glove reaches %.2f units past Halo's farthest "
                         "finger bone tip (%d glove vert(s))"
                         % (meta(arms, "finger_room"), glove))
+            # One line per finger bone, plus a summary: whether each of Halo's
+            # finger bones is inside the glove's own finger, or how far outside.
+            lines = meta(arms, "finger_lines")
+            if lines:
+                record["arms_finger_bones"] = lines.split("\n")
+                checked = meta(arms, "finger_bones_checked") or 0
+                outside = meta(arms, "finger_bones_outside") or 0
+                name = meta(arms, "finger_worst_name") or ""
+                gap = meta(arms, "finger_worst") or 0.0
+                if outside:
+                    record["arms_fingers_bones"] = (
+                        "%d of Halo's %d finger bone(s) stand outside the glove "
+                        "- worst %s at %+.2f units"
+                        % (outside, checked, name, gap))
+                else:
+                    record["arms_fingers_bones"] = (
+                        "all %d of Halo's finger bones sit inside the glove - "
+                        "nearest the skin %s at %.2f units"
+                        % (checked, name, abs(gap)))
             if worst is None:
                 record["arms_carried"] = "arms stayed where they were"
             elif not (meta(arms, "carried_verts") or 0):
@@ -2307,6 +2552,13 @@ def report_text(options, records, stems, armature, nxe=None):
                 lines.append("              %s" % record["arms_fit"])
             if record.get("arms_fingers"):
                 lines.append("              %s" % record["arms_fingers"])
+            if record.get("arms_fingers_bones"):
+                lines.append("              %s" % record["arms_fingers_bones"])
+            if record.get("arms_finger_bones"):
+                lines.append("              per bone, from the glove's skin "
+                             "(+ outside, - inside):")
+                for entry in record["arms_finger_bones"]:
+                    lines.append("                %s" % entry)
             if record.get("arms_torn"):
                 lines.append("              %s" % record["arms_torn"])
         lines.append("  vertices  : %d" % (record.get("model", {}).get("vertices") or 0))
