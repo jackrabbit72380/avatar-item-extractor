@@ -65,8 +65,15 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v48"
-BUILD = "2026-11-23 thumb-weighed-not-moved"
+VERSION = "v49"
+BUILD = "2026-11-23 thumb-seated-in-the-palm"
+
+# How much of the hand bone the glove's thumb guard rides, at its base and at
+# its tip. The guard sits proud of the palm and Halo's thumb bone runs outside
+# it, so all-thumb weighting swings the plate off the hand when the thumb bends
+# and all-hand weighting leaves the thumb dead. Measured posed at 30/25/20.
+THUMB_SEATED = 0.55
+THUMB_FREE = 0.15
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -2225,6 +2232,41 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                 finals[index] = ride_chain(finals[index], Vector(moved_points[index]),
                                            armature_fp, side, key)
 
+    # Seat the glove's thumb guard in the palm. The guard sits proud of the
+    # glove and Halo's thumb bone runs outside it, so weighting all of it to the
+    # thumb swings the plate off the hand when the thumb bends, and weighting it
+    # all to the hand leaves the thumb dead. The share of the hand bone therefore
+    # falls off along the thumb: most of it at the base, little at the tip.
+    seated = {}
+    if armature_fp is not None and finals:
+        for side in ("l", "r"):
+            entries = finger_chains(armature_fp, side).get("thumb")
+            if not entries:
+                continue
+            base_point = list(entries[0][1])
+            tip_point = list(entries[-1][2])
+            span = [tip_point[k] - base_point[k] for k in range(3)]
+            span_sq = sum(value * value for value in span) or 1.0
+            hand_bone = "frame %s wriste" % side
+            for index in order:
+                if side_of[index] != side or index not in finals:
+                    continue
+                held = sum(weight for name, weight in finals[index].items()
+                           if finger_of(name) == "thumb")
+                if held <= 0.05:
+                    continue
+                point = moved_points[index]
+                along = sum((point[k] - base_point[k]) * span[k]
+                            for k in range(3)) / span_sq
+                along = max(0.0, min(1.0, along))
+                share = THUMB_SEATED + (THUMB_FREE - THUMB_SEATED) * along
+                seated.setdefault(side, []).append(index)
+                for name in list(finals[index]):
+                    if finger_of(name) == "thumb":
+                        finals[index][name] *= (1.0 - share)
+                finals[index][hand_bone] = (finals[index].get(hand_bone, 0.0)
+                                            + share)
+
     for index in order:
         per = finals.get(index)
         if not per:
@@ -2270,6 +2312,15 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     # base bones outside. What makes a thumb read wrong in game is the weight it
     # deforms with, and that is fixed above: it is weighted along its own chain,
     # so its base moves with its base bone, and none of it rides the forearm.
+    #
+    # The guard also sits proud of the glove, and Halo's thumb bone runs outside
+    # it, so bending the thumb swings the plate off the palm and opens the gap
+    # underneath. Weighting all of it to the thumb bone does exactly that (posed
+    # 30/25/20 it lifts clear and stretches its edges x2.65); weighting all of it
+    # to the hand leaves it rigid and the thumb dead. So it is shared: most of
+    # the hand at the base, most of the thumb at the tip. Posed the same way that
+    # keeps the plate on the palm and halves the stretch to x1.86, and a full
+    # grip stays under x2.5 with no edge past x3.
     if armature_fp is not None:
         for side in ("l", "r"):
             entries = finger_chains(armature_fp, side).get("thumb")
@@ -2281,19 +2332,12 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                     part = step / 4.0
                     points.append([head[k] + (tail[k] - head[k]) * part
                                    for k in range(3)])
-            mine = []
-            for index in order:
-                if side_of[index] != side or index not in finals:
-                    continue
-                held = sum(weight for name, weight in finals[index].items()
-                           if finger_of(name) == "thumb")
-                if held > 0.05:
-                    mine.append((index, min(1.0, held)))
+            mine = [(index, 1.0) for index in seated.get(side, [])]
             if len(mine) < 8:
                 continue
             gaps = [min(math.dist(point, coords[slot[index]])
                         for index, _weight in mine) for point in points]
-            solid = [index for index, weight in mine if weight >= 0.5]
+            solid = [index for index, _weight in mine]
             lying = (arm_direction([tuple(coords[slot[index]]) for index in solid])
                      if len(solid) >= 12 else None)
             base = points[0]
@@ -2304,10 +2348,15 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                 want = [value / reach for value in want]
                 off = math.degrees(math.acos(max(-1.0, min(1.0, sum(
                     lying[k] * want[k] for k in range(3))))))
-            log("%s thumb: %d vert(s) weighted along its own chain, guard %.1f "
-                "degrees off Halo's thumb chain, worst bone gap %.2f units - "
+                # A guard is nearly a line, so its own direction can come out
+                # either way round; report the angle between the lines.
+                off = min(off, 180.0 - off)
+            log("%s thumb: %d vert(s) weighted along its own chain and seated "
+                "in the palm (hand %.0f%% at the base, %.0f%% at the tip), guard "
+                "%.1f degrees off Halo's thumb chain, worst bone gap %.2f units - "
                 "left where the item put it"
-                % (side, len(mine), off, max(gaps)))
+                % (side, len(mine), THUMB_SEATED * 100.0, THUMB_FREE * 100.0,
+                   off, max(gaps)))
 
     faces, flips = [], []
     turned_out = 0

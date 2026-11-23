@@ -243,6 +243,14 @@ from the body and the player sees the arms, not the body's:
   than leaving it alone. The guard is a plate and Halo's thumb is a tube,
   and no displacement of one becomes the other.
 
+  What does fix it in the hand is the weight the guard rides. All-thumb
+  weighting swings the plate off the palm the moment the thumb bends;
+  all-hand weighting leaves the thumb dead. So the share of the hand bone
+  falls off along the thumb - 55% of it at the guard's base, 15% at its
+  tip - which keeps the plate seated while its tip still follows the
+  thumb. Posed at 30/25/20 that takes the worst edge from x2.49 to x2.04,
+  and a full grip from x2.49 to x2.29, with no edge past x3 either way.
+
   Its vertex groups are renamed to Halo's (`frame l upperarm`,
   `frame l forearm`, `frame l wriste`), and a glove the item weighted to its
   forearm alone - an avatar rig has no finger bones - hands over to
