@@ -65,15 +65,17 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v50"
-BUILD = "2026-11-23 thumb-seated-and-tested"
+VERSION = "v52"
+BUILD = "2026-11-23 thumb-chain-carried-into-the-palm"
 
-# How much of the hand bone the glove's thumb guard rides, at its base and at
-# its tip. The guard sits proud of the palm and Halo's thumb bone runs outside
-# it, so all-thumb weighting swings the plate off the hand when the thumb bends
-# and all-hand weighting leaves the thumb dead. Measured posed at 30/25/20.
-THUMB_SEATED = 0.55
-THUMB_FREE = 0.15
+# How far the thumb guard's chain is carried back into the palm, in Halo units -
+# about the length of the thumb's own base bone. The guard sits proud of the
+# palm and Halo's thumb bone runs outside it, so a guard weighted wholly to the
+# thumb swings off the hand when the thumb bends, and one weighted wholly to the
+# hand leaves the thumb dead. Carrying the chain back lets the palm own the
+# guard's root, and because it is one chain the guard still takes two weights a
+# vertex - a .jms carries two, and dropping one of a pair is what tore the plate.
+SEAT_REACH = 1.2
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -1528,24 +1530,40 @@ def ride_chain(per, point, armature_fp, side, key, influences=2, power=4.0):
     return per
 
 
-def seat_thumb(weights, position, base, tip, hand_bone, side=None,
-               side_of=None):
-    """Give a glove's thumb guard a share of the hand bone, falling off along it.
+def seat_thumb(weights, position, chain, hand_bone, side=None, side_of=None,
+               reach=SEAT_REACH, only=None):
+    """Seat a glove's thumb guard in the palm by carrying its chain into the hand.
 
     The guard is a plate standing proud of the glove, and Halo's thumb bone runs
     outside it, so a guard weighted wholly to the thumb swings off the palm the
-    moment the thumb bends and opens the gap underneath. A guard weighted wholly
-    to the hand stays put and the thumb goes dead. The share of the hand bone
-    therefore falls off from THUMB_SEATED at the guard's base to THUMB_FREE at
-    its tip: the plate stays seated where it meets the glove and its tip still
-    follows the thumb bone.
+    moment the thumb bends and opens the gap underneath; one weighted wholly to
+    the hand never moves and the thumb is dead.
+
+    The fix is not a share bolted onto the thumb's weights. A .jms carries two
+    weights a vertex, and a third share means the export drops one of the pair
+    the guard was using - measured posed at 30/25/20, that tore the plate to
+    x5.84. So the chain itself is carried back past the thumb's base by `reach`
+    and named for the hand bone: the guard's root lands in the palm's own
+    segment and its tip still lands on the thumb's. Every vertex then takes the
+    two bones that straddle it, as it always did, so neighbours keep sharing a
+    bone and the plate cannot tear.
 
     `weights` maps a vertex index to {bone: weight} and is changed in place;
-    `position` gives each vertex's carried position; `base` and `tip` are the
-    thumb chain's own ends. Returns the indices it seated.
+    `position` gives each vertex's carried position; `chain` is the thumb's
+    (name, head, tail, flat) entries; `only` limits it to whole shells - a palm
+    vertex that merely brushes the thumb must not be re-seated away from the
+    vertices beside it in its own shell, or the palm tears. Returns the indices
+    it seated.
     """
-    span = [tip[k] - base[k] for k in range(3)]
-    span_sq = sum(value * value for value in span) or 1.0
+    if not chain:
+        return []
+    base = list(chain[0][1])
+    tip = list(chain[-1][2])
+    span = [base[k] - tip[k] for k in range(3)]
+    size = math.sqrt(sum(value * value for value in span)) or 1.0
+    span = [value / size for value in span]
+    behind = [base[k] + span[k] * reach for k in range(3)]
+    extended = [(hand_bone, tuple(behind), tuple(base), "hand")] + list(chain)
     seated = []
     for index in sorted(weights):
         if side is not None and side_of is not None:
@@ -1555,19 +1573,20 @@ def seat_thumb(weights, position, base, tip, hand_bone, side=None,
                 continue
             if owner != side:
                 continue
+        if only is not None and index not in only:
+            continue
         per = weights[index]
         held = sum(weight for name, weight in per.items()
                    if finger_of(name) == "thumb")
         if held <= 0.05:
             continue
-        point = position[index]
-        along = sum((point[k] - base[k]) * span[k] for k in range(3)) / span_sq
-        along = max(0.0, min(1.0, along))
-        share = THUMB_SEATED + (THUMB_FREE - THUMB_SEATED) * along
-        for name in list(per):
-            if finger_of(name) == "thumb":
-                per[name] *= (1.0 - share)
-        per[hand_bone] = per.get(hand_bone, 0.0) + share
+        shares = chain_along(position[index], extended)
+        total = sum(weight for weight, _name in shares)
+        if total <= 0.0:
+            continue
+        per.clear()
+        for weight, name in shares:
+            per[name] = weight / total
         seated.append(index)
     return seated
 
@@ -2282,16 +2301,35 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
     # all to the hand leaves the thumb dead. The share of the hand bone therefore
     # falls off along the thumb: most of it at the base, little at the tip.
     seated = {}
+    thumb_members = {}
     if armature_fp is not None and finals:
         for side in ("l", "r"):
             entries = finger_chains(armature_fp, side).get("thumb")
             if not entries:
                 continue
-            seated[side] = seat_thumb(finals, moved_points,
-                                      list(entries[0][1]),
-                                      list(entries[-1][2]),
+            # Only a shell that is the guard itself is re-seated. A palm vertex
+            # that merely brushes the thumb belongs to the palm's shell, and
+            # moving it away from the vertices beside it tears the palm.
+            thumb_members[side] = [index for index in order
+                                   if index in finals and side_of[index] == side
+                                   and sum(weight for name, weight
+                                           in finals[index].items()
+                                           if finger_of(name) == "thumb") > 0.05]
+            guard_shell = set()
+            for piece in pieces:
+                indices = [index for index in piece["indices"]
+                           if index in finals and side_of[index] == side]
+                if not indices:
+                    continue
+                held = sum(1 for index in indices
+                           if sum(weight for name, weight in finals[index].items()
+                                  if finger_of(name) == "thumb") >= 0.5)
+                if held * 2 >= len(indices):
+                    guard_shell.update(indices)
+            seated[side] = seat_thumb(finals, moved_points, entries,
                                       "frame %s wriste" % side,
-                                      side=side, side_of=side_of)
+                                      side=side, side_of=side_of,
+                                      only=guard_shell)
 
     for index in order:
         per = finals.get(index)
@@ -2358,7 +2396,7 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                     part = step / 4.0
                     points.append([head[k] + (tail[k] - head[k]) * part
                                    for k in range(3)])
-            mine = [(index, 1.0) for index in seated.get(side, [])]
+            mine = [(index, 1.0) for index in thumb_members.get(side, [])]
             if len(mine) < 8:
                 continue
             gaps = [min(math.dist(point, coords[slot[index]])
@@ -2377,11 +2415,11 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                 # A guard is nearly a line, so its own direction can come out
                 # either way round; report the angle between the lines.
                 off = min(off, 180.0 - off)
-            log("%s thumb: %d vert(s) weighted along its own chain and seated "
-                "in the palm (hand %.0f%% at the base, %.0f%% at the tip), guard "
-                "%.1f degrees off Halo's thumb chain, worst bone gap %.2f units - "
-                "left where the item put it"
-                % (side, len(mine), THUMB_SEATED * 100.0, THUMB_FREE * 100.0,
+            log("%s thumb: %d vert(s) weighted along its own chain, %d of them "
+                "the guard, carried %.1f units back into the palm so its root "
+                "rides the hand; guard %.1f degrees off Halo's thumb chain, "
+                "worst bone gap %.2f units - left where the item put it"
+                % (side, len(mine), len(seated.get(side, [])), SEAT_REACH,
                    off, max(gaps)))
 
     faces, flips = [], []

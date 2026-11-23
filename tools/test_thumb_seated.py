@@ -3,24 +3,28 @@
 
 The guard is a plate standing about 1.5 units off Halo's thumb chain, and Halo's
 thumb bone runs outside it. Weighted wholly to the thumb, the plate swings clear
-of the palm as soon as the thumb bends and the gap underneath opens - measured
-posed at 30/25/20 on the Marine, the worst edge went to x2.49. Weighted wholly to
-the hand, the plate never moves and the thumb is dead.
+of the palm as soon as the thumb bends and the gap underneath opens; weighted
+wholly to the hand, it never moves and the thumb is dead.
 
-So the share of the hand bone falls off along the thumb, from THUMB_SEATED at the
-guard's base to THUMB_FREE at its tip. That is a claim about behaviour, and this
-test measures it rather than trusting it:
+A share added on top of the thumb's weights does not work either: a .jms carries
+two weights a vertex, so the extra one makes the export drop a bone the plate was
+using, and the plate tears - measured posed at 30/25/20, x5.84. So the chain
+itself is carried back past the thumb's base into the palm and the guard takes
+the two bones that straddle it, as any other skin does.
+
+This test builds a plate the way the Marine's guard is built, weights it the way
+the pipeline does, seats it, and checks:
 
   * every vertex of the plate is seated, and its weights still sum to one;
-  * the base rides THUMB_SEATED of the hand bone and the tip THUMB_FREE, with
-    the share only falling from base to tip;
-  * the thumb's own share is scaled by what is left, so nothing is invented or
-    lost;
-  * a vertex that is not on the thumb - an index finger, a palm - is not touched;
-  * a vertex on the other hand is not touched either;
-  * and posed, the guard's base moves by (1 - share) of what it moved before,
-    which is the whole point: the plate stays with the palm while the tip still
-    follows the thumb.
+  * no vertex rides more than two bones, so the .jms can carry all of it;
+  * the guard's base rides the hand bone and its tip does not, so the plate is
+    seated at the root and still follows the thumb at the end;
+  * neighbouring plate vertices always share a bone - the property whose absence
+    is a tear;
+  * a vertex that is not on the thumb, and a vertex on the other hand, are left
+    alone;
+  * and posed, the guard's base moves well under what it moved with all of its
+    weight on the thumb.
 
     python3 tools/test_thumb_seated.py
 
@@ -44,7 +48,6 @@ THUMB = [
     ("frame l thumb tip", (24.12, 8.42, 2.94), (25.09, 8.26, 3.41)),
 ]
 HAND = "frame l wriste"
-OTHER_HAND = "frame r wriste"
 
 
 class Vec:
@@ -105,11 +108,17 @@ def entries():
             for name, head, tail in THUMB]
 
 
-def plate(steps=9, offset=1.5):
-    """A guard: along the thumb's chain, standing `offset` units off it."""
+def plate(steps=11, offset=1.5, behind=0.2):
+    """A guard: along the thumb's chain, standing `offset` units off it.
+
+    It starts `behind` units short of the thumb's base, because the Marine's
+    guard does - its root sits back over the palm, which is exactly why the
+    plate swings off the hand when the thumb bends.
+    """
     first, last = THUMB[0][1], THUMB[-1][2]
     length = math.dist(first, last)
     axis = [(last[i] - first[i]) / length for i in range(3)]
+    first = tuple(first[i] - axis[i] * behind for i in range(3))
     aside = [-axis[2], 0.0, axis[0]]
     size = math.sqrt(sum(value * value for value in aside))
     aside = [value / size for value in aside]
@@ -135,22 +144,16 @@ def main():
     module = load()
     chain = entries()
     points = plate()
-    base, tip = points[0], points[-1]
+    base = points[0]
     failures = []
 
     def fail(message):
         failures.append(message)
         print("  FAIL %s" % message)
 
-    seated_share = module.THUMB_SEATED
-    free_share = module.THUMB_FREE
-    print("  the module seats %.0f%% at the base and %.0f%% at the tip"
-          % (seated_share * 100.0, free_share * 100.0))
-    if not 0.0 < free_share < seated_share < 1.0:
-        fail("the seating shares are not a fall-off: base %r, tip %r"
-             % (seated_share, free_share))
+    print("  the module carries the chain %.2f units into the palm"
+          % module.SEAT_REACH)
 
-    # Weight the plate the way the pipeline does, then seat it.
     weights = {}
     position = {}
     for index, point in enumerate(points):
@@ -162,15 +165,17 @@ def main():
     position[100] = (24.6, 10.1, 0.4)
     weights[101] = {"frame r thumb mid": 1.0}
     position[101] = (24.6, 10.1, 0.4)
+    weights[102] = {"frame l thumb tip": 0.6, "frame l index low": 0.4}
+    position[102] = points[0]
     side_of = {index: "l" for index in range(len(points))}
     side_of[100] = "l"
     side_of[101] = "r"
+    side_of[102] = "l"
 
-    returned = module.seat_thumb(weights, position, list(THUMB[0][1]),
-                                 list(THUMB[-1][2]), HAND,
+    returned = module.seat_thumb(weights, position, chain, HAND,
                                  side="l", side_of=side_of)
     print("  seated %d of %d plate vertices" % (len(returned), len(points)))
-    if sorted(returned) != list(range(len(points))):
+    if not set(range(len(points))) <= set(returned):
         fail("the plate was not seated whole: %r" % (sorted(returned),))
 
     for index in range(len(points)):
@@ -178,47 +183,82 @@ def main():
         if abs(total - 1.0) > 1e-6:
             fail("plate vertex %d sums to %r, so weight was invented or lost"
                  % (index, total))
-        if weights[index].get(HAND, 0.0) <= 0.0:
-            fail("plate vertex %d got no hand bone at all" % index)
+        carried = [name for name, weight in weights[index].items()
+                   if weight > 1e-6]
+        if len(carried) > 2:
+            fail("plate vertex %d rides %d bones and a .jms keeps two: %r"
+                 % (index, len(carried), weights[index]))
+        if not carried:
+            fail("plate vertex %d ended with no bones at all" % index)
 
-    # Nothing off the thumb may move: the index vertex keeps exactly its weights,
-    # and the other hand's thumb vertex is not touched.
+    # Nothing off the thumb may move.
     if weights[100] != untouched:
         fail("a vertex off the thumb was changed: %r" % (weights[100],))
     if weights[101] != {"frame r thumb mid": 1.0}:
         fail("a vertex on the other hand was changed: %r" % (weights[101],))
 
-    # Base to tip, the hand's share can only fall, and it must reach both ends.
     hand = [weights[index].get(HAND, 0.0) for index in range(len(points))]
-    print("  hand share base %.2f .. tip %.2f" % (hand[0], hand[-1]))
-    if abs(hand[0] - seated_share) > 0.02:
-        fail("the base rides %.3f of the hand, not the %.3f it should"
-             % (hand[0], seated_share))
-    if abs(hand[-1] - free_share) > 0.02:
-        fail("the tip rides %.3f of the hand, not the %.3f it should"
-             % (hand[-1], free_share))
-    if any(first < second - 1e-6 for first, second in zip(hand, hand[1:])):
-        fail("the hand's share rises again towards the tip: %r"
+    print("  hand share base %.2f, middle %.2f, tip %.2f"
+          % (hand[0], hand[len(hand) // 2], hand[-1]))
+    if hand[0] < 0.3:
+        fail("the guard's base rides only %.2f of the palm, so it is not seated"
+             % hand[0])
+    if hand[-1] > 0.05:
+        fail("the guard's tip still rides %.2f of the palm, so it will not "
+             "follow the thumb" % hand[-1])
+    if max(hand) > hand[0] + 1e-6:
+        fail("the palm's share peaks past the guard's base: %r"
              % ([round(value, 2) for value in hand],))
 
-    # The thumb's own share is scaled by what the hand leaves it.
-    for index in (0, len(points) // 2, len(points) - 1):
-        thumb_total = sum(weight for name, weight in weights[index].items()
-                          if module.finger_of(name) == "thumb")
-        expected = 1.0 - hand[index]
-        if abs(thumb_total - expected) > 1e-6:
-            fail("plate vertex %d keeps %.3f on the thumb, not %.3f"
-                 % (index, thumb_total, expected))
+    # Neighbours must share a bone: a pair that shares none is a tear waiting for
+    # the thumb to bend.
+    for index in range(len(points) - 1):
+        here = {name for name, weight in weights[index].items() if weight > 1e-6}
+        next_one = {name for name, weight in weights[index + 1].items()
+                    if weight > 1e-6}
+        if not here & next_one:
+            fail("plate vertices %d and %d share no bone: %r vs %r"
+                 % (index, index + 1, sorted(here), sorted(next_one)))
 
-    # Posed: the whole reason for the share. Turning the thumb's base bone 30
-    # degrees has to move the guard's base by (1 - share) of what it moved with
-    # all of the weight on the thumb, so the plate stays with the palm.
+    # A guard vertex that already held two bones is re-seated, not left alone.
+    if HAND not in weights[102]:
+        fail("a guard vertex holding two bones already kept its old weights: %r"
+             % (weights[102],))
+    print("  guard vertex holding two bones already -> %r" % (weights[102],))
+
+    # Whole shells only: a vertex outside the set is not re-seated, so a palm
+    # vertex that merely brushes the thumb cannot be pulled away from the
+    # vertices beside it in its own shell. The omitted vertex has to be one the
+    # seating would otherwise change, or the check proves nothing.
+    would_move = [index for index in range(len(points))
+                  if weights[index].get(HAND, 0.0) > 0.0]
+    if len(would_move) < 2:
+        fail("the seating only moves %d plate vertex/vertices, so the shell "
+             "gate cannot be checked" % len(would_move))
+    else:
+        omitted = would_move[1]
+        allowed = set(would_move) - {omitted}
+        subset = {}
+        subset_at = {}
+        for index, point in enumerate(points):
+            subset[index] = {name: weight
+                             for weight, name in module.chain_along(point, chain)}
+            subset_at[index] = point
+        module.seat_thumb(subset, subset_at, chain, HAND, only=allowed)
+        if subset[omitted].get(HAND, 0.0) > 0.0:
+            fail("a vertex outside the shells asked for was re-seated: %r"
+                 % (subset[omitted],))
+        if subset[would_move[0]].get(HAND, 0.0) <= 0.0:
+            fail("a vertex inside the shells asked for was not seated")
+        print("  shell gate: %d of %d plate vertices would be seated, %d kept "
+              "out" % (len(would_move), len(points), 1))
+
+    # Posed: turning the thumb's base bone 30 degrees has to move the guard's base
+    # well under the rigid move, which is what keeps the plate on the palm.
     head = THUMB[0][1]
     bone = [THUMB[0][2][i] - head[i] for i in range(3)]
     size = math.sqrt(sum(value * value for value in bone))
     bone = [value / size for value in bone]
-    # Turn about the axis square to both the bone and the plate's stand-off, so
-    # the bend swings the plate rather than spinning it in place.
     offset = [base[i] - head[i] for i in range(3)]
     turn_axis = [bone[1] * offset[2] - bone[2] * offset[1],
                  bone[2] * offset[0] - bone[0] * offset[2],
@@ -228,13 +268,11 @@ def main():
     moved = turned(base, head, turn_axis, 30.0)
     rigid = math.dist(moved, base)
     kept = rigid * (1.0 - hand[0])
-    print("  posed 30 degrees: the base moved %.3f of the %.3f it would have"
-          % (kept, rigid))
+    print("  posed 30 degrees: the base moves %.3f of the %.3f it would with "
+          "all of its weight on the thumb" % (kept, rigid))
     if rigid <= 0.1:
         fail("the test's own pose barely moves the base (%.3f), so it proves "
              "nothing" % rigid)
-    if abs(kept - rigid * (1.0 - seated_share)) > 1e-6:
-        fail("the base does not move by (1 - share) of the rigid move")
     if kept >= rigid * 0.75:
         fail("the base still moves %.0f%% of the way, so the plate is not "
              "seated" % (100.0 * kept / rigid))
@@ -243,8 +281,8 @@ def main():
     if failures:
         print("FAILED: %d check(s)" % len(failures))
         return 1
-    print("PASSED: the guard is seated in the palm and stays there when the "
-          "thumb bends")
+    print("PASSED: the guard is seated in the palm, two weights a vertex, and "
+          "no neighbouring pair is left without a bone to share")
     return 0
 
 

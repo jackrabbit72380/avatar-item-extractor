@@ -243,17 +243,23 @@ from the body and the player sees the arms, not the body's:
   than leaving it alone. The guard is a plate and Halo's thumb is a tube,
   and no displacement of one becomes the other.
 
-  What does fix it in the hand is the weight the guard rides. All-thumb
-  weighting swings the plate off the palm the moment the thumb bends;
-  all-hand weighting leaves the thumb dead. So the share of the hand bone
-  falls off along the thumb - 55% of it at the guard's base, 15% at its
-  tip - which keeps the plate seated while its tip still follows the
-  thumb. Posed at 30/25/20 that takes the worst edge from x2.49 to x2.04,
-  and a full grip from x2.49 to x2.29, with no edge past x3 either way.
-  `tools/test_thumb_seated.py` pins it: it builds a plate the way the guard
-  is built, seats it, and checks the guard's base moves by (1 - share) of
-  what it moved before when the thumb bone turns - and it fails when the
-  seating is removed or stops falling off along the thumb.
+  What does fix it in the hand is the chain the guard rides. All-thumb
+  weighting swings the plate off the palm the moment the thumb bends; all-hand
+  weighting leaves the thumb dead. Adding a hand share on top of the thumb's
+  weights does not work either - a .jms carries two weights a vertex, so a third
+  makes the export drop one the plate was using and the plate tears (posed,
+  x5.84). So the guard's chain is carried 1.2 units back past the thumb's base
+  and named for the hand bone: its root lands in the palm's own segment, its tip
+  still on the thumb's, and every vertex keeps the two bones that straddle it.
+  Only the guard's own shell is re-seated - a palm vertex that merely brushes
+  the thumb must not be pulled away from the vertices beside it, which is what
+  tore the palm at x4.38. Posed at 30/25/20 the worst edge is x2.22-2.25 and a
+  full grip x2.29-2.38, with no edge past x3 either way, against x2.49 for the
+  thumb left on its own bones. `tools/test_thumb_seated.py` pins it: two weights
+  a vertex, the root on the hand and the tip on the thumb, no neighbouring pair
+  left without a bone to share, and the root moving under three quarters of what
+  it moved before - and it fails when the seating is removed, when the chain is
+  not carried back, or when a vertex outside the guard's shell is re-seated.
 
   Its vertex groups are renamed to Halo's (`frame l upperarm`,
   `frame l forearm`, `frame l wriste`), and a glove the item weighted to its
