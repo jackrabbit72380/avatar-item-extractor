@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v62"
-BUILD = "2026-11-23 decal-baked-into-the-base-map"
+VERSION = "v63"
+BUILD = "2026-11-23 derived-team-colour-and-no_decals-build"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -3657,6 +3657,9 @@ def report_text(options, records, stems, armature, nxe=None):
 MAX_DIR = "extracted for max users"
 BLENDER_DIR = "extracted for blender users"
 HEK_DIR = "extracted for hek users"
+# The item's own build folder, the one with the plain base map: no decal. The
+# sp and mp builds copy from it. Must match extract_items.PLAIN_SUFFIX.
+PLAIN_SUFFIX = " no_decals"
 
 
 def hek_folders(out, stem):
@@ -3676,7 +3679,8 @@ def hek_folders(out, stem):
     """
     made = {}
     for order in ("pc", "xbox"):
-        item_dir = os.path.join(out, HEK_DIR, order, "data", stem)
+        item_dir = os.path.join(out, HEK_DIR, order, "data",
+                                stem + PLAIN_SUFFIX)
         tree = {"item": item_dir,
                 "bitmaps": os.path.join(item_dir, "bitmaps"),
                 "models": os.path.join(item_dir, "models"),
@@ -3870,8 +3874,9 @@ def mirror_jms(out, stems):
                                 (("fp", "models"), (".jms",)),
                                 (("source",), None),
                                 (("fp", "source"), None)):
-            source_dir = os.path.join(hek, "pc", "data", stem, *folder)
-            target_dir = os.path.join(hek, "xbox", "data", stem, *folder)
+            plain = stem + PLAIN_SUFFIX
+            source_dir = os.path.join(hek, "pc", "data", plain, *folder)
+            target_dir = os.path.join(hek, "xbox", "data", plain, *folder)
             copied += share_files(source_dir, target_dir, endings)
     return copied
 

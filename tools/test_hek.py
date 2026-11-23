@@ -74,12 +74,15 @@ def main():
             failures.append(message)
 
     stem = "UNSC Marine Armor"
+    # The item's own build folder carries the plain base map, so its name says
+    # so: data\<item> no_decals. sp and mp copy from it.
+    plain = stem + " no_decals"
     out = tempfile.mkdtemp(prefix="hek-layout-")
     hek = os.path.join(out, module.HEK_DIR)
 
     # The bitmaps extraction already left behind, one mask per order.
     for order in ("pc", "xbox"):
-        write(os.path.join(hek, order, "data", stem, "bitmaps",
+        write(os.path.join(hek, order, "data", plain, "bitmaps",
                            "%s base map.tif" % stem), order)
 
     tree = module.hek_folders(out, stem)
@@ -96,7 +99,7 @@ def main():
                       os.path.normpath(os.path.join(hek, order))),
                   "%s\\%s landed outside %s\\" % (order, name, order))
         check(os.path.normpath(tree[order]["fp_models"]) ==
-              os.path.normpath(os.path.join(hek, order, "data", stem, "fp", "models")),
+              os.path.normpath(os.path.join(hek, order, "data", plain, "fp", "models")),
               "%s arms are not in data\\<item>\\fp\\models\\" % order)
 
     # 2. The arms carry the maps of their own order, not a copy of pc's.
@@ -129,10 +132,10 @@ def main():
                          (("source",), "%s - halo.blend" % stem),
                          (("source",), "%s - halo.fbx" % stem),
                          (("fp", "source"), "%s - halo fp arms.blend" % stem)):
-        target = os.path.join(hek, "xbox", "data", stem, *folder, name)
+        target = os.path.join(hek, "xbox", "data", plain, *folder, name)
         check(os.path.exists(target),
               "xbox is missing %s\\%s" % (os.sep.join(folder), name))
-    check(not os.path.exists(os.path.join(hek, "xbox", "data", stem, "models",
+    check(not os.path.exists(os.path.join(hek, "xbox", "data", plain, "models",
                                          "notes.txt")),
           "mirror_jms copied a file that is not a model")
 
@@ -180,7 +183,7 @@ def main():
         "0\t0\t0\t1\t2",
     ]) + "\n"
     for order in ("pc", "xbox"):
-        base = os.path.join(hek, order, "data", stem)
+        base = os.path.join(hek, order, "data", plain)
         write(os.path.join(base, "bitmaps", "%s multipurpose.tif" % stem),
               "team colour %s" % order)
         write(os.path.join(base, "bitmaps", "%s multipurpose xbox.tif" % stem),

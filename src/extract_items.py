@@ -626,9 +626,23 @@ def mask_orders(name):
     return ()
 
 
+PLAIN_SUFFIX = " no_decals"
+
+
+def plain_build(stem):
+    """The item's own build folder: the maps as the pack stores them.
+
+    It holds the plain base map, so it is the build to point tool.exe at when
+    the decal is not wanted; the sp and mp builds sit beside it with the decal
+    blended in. Extraction and rigging both write here first, and the two
+    builds copy from it, so the folder has to be named the same way in both.
+    """
+    return stem + PLAIN_SUFFIX
+
+
 def hek_folders(stem):
     r"""data\<item>\<kind> for both builds, the tree tool.exe reads."""
-    return [HEK_DIR + "/%s/data/%s/%s" % (order, stem, kind)
+    return [HEK_DIR + "/%s/data/%s/%s" % (order, plain_build(stem), kind)
             for order in ("pc", "xbox") for kind in HEK_KINDS]
 
 
@@ -669,7 +683,7 @@ def organise(out, stems):
         elif extension in ("blend", "fbx", "glb"):
             homes = [BLENDER_DIR]
         elif extension == "jms":
-            homes = [HEK_DIR + "/pc/data/%s/models" % stem]
+            homes = [HEK_DIR + "/pc/data/%s/models" % plain_build(stem)]
         elif extension in ("png", "tga", "tif"):
             orders = mask_orders(name)
             if orders:
@@ -678,8 +692,8 @@ def organise(out, stems):
                 else:
                     # .tif is what tool.exe compiles, so it belongs in the
                     # item's own bitmaps\ folder, not beside the model.
-                    homes = [HEK_DIR + "/%s/data/%s/bitmaps" % (order, stem)
-                             for order in orders]
+                    homes = [HEK_DIR + "/%s/data/%s/bitmaps"
+                             % (order, plain_build(stem)) for order in orders]
         if not homes:
             continue
         for home in homes[:-1]:
@@ -1117,6 +1131,49 @@ def mask_from_coverage(texture, size):
             if (rgba[at + 3] >= 8 or rgba[at] >= 8 or rgba[at + 1] >= 8
                     or rgba[at + 2] >= 8):
                 out[target + x] = 255
+    return bytes(out)
+
+
+def derived_amount(texture, size, armour=1.0, cloth=0.32, dark=0.42, bright=0.62):
+    """How much of the team colour each texel takes, when the item states none.
+
+    An avatar colours an item's armour plates with the player's colour and
+    leaves cloth close to what it was drawn as. The Marine armour has no tint
+    mask to say where, so the base map's own shading is the only evidence left:
+    the dark olive plates take the colour, the bright tan suit keeps most of its
+    own and takes a share of it. Luminance separates them, so the rule is about
+    how light a texel is rather than which hue it happens to be - and it is
+    *derived*, not stated by the item, which is why report.txt says so.
+
+    `armour` and `cloth` are the two amounts, `dark` and `bright` the luminances
+    they apply at, and texels between them are lerped. A colour change is
+    `lerp(base, base * colour, amount)`, so 1.0 is the team colour fully and
+    0.32 is a tint of it.
+    """
+    width = texture.get("width") or 0
+    height = texture.get("height") or 0
+    rgba = texture.get("rgba") or b""
+    if width <= 0 or height <= 0 or len(rgba) < width * height * 4:
+        return None
+    table = []
+    for value in range(256):
+        lit = value / 255.0
+        if lit <= dark:
+            amount = armour
+        elif lit >= bright:
+            amount = cloth
+        else:
+            share = (lit - dark) / (bright - dark)
+            amount = armour + (cloth - armour) * share
+        table.append(max(0, min(255, int(round(amount * 255)))))
+    out = bytearray(size * size)
+    for y in range(size):
+        source_row = min(height - 1, y * height // size) * width * 4
+        target = y * size
+        for x in range(size):
+            at = source_row + min(width - 1, x * width // size) * 4
+            lit = (rgba[at] * 299 + rgba[at + 1] * 587 + rgba[at + 2] * 114) // 1000
+            out[target + x] = table[lit]
     return bytes(out)
 
 
@@ -2339,22 +2396,25 @@ def main(argv=None):
                               % (tint_texture.get("slot"), tint_texture["width"],
                                  tint_texture["height"]))
             else:
-                # The item states no tint mask - its tint slot is blank - so the
-                # only mask behind a multiplayer build is the whole item: that is
-                # what a team-coloured build is for. The single-player map beside
-                # it masks nothing, so the item can be built either way rather
-                # than only one.
-                big = mask_from_coverage(picture, png_size) if picture else None
-                small = mask_from_coverage(picture, small_size) if picture else None
+                # The item states no tint mask - its tint slot is blank - so no
+                # mask is authored and the multiplayer build's amount is derived
+                # from the base map's own shading: the dark armour plates take
+                # the team colour, the bright tan suit takes a share of it. A
+                # whole-white mask would recolour the cloth as hard as the
+                # plates, which is not what these items look like.
+                big = derived_amount(picture, png_size) if picture else None
+                small = derived_amount(picture, small_size) if picture else None
                 if big is None:
                     big, painted = mesh.uv_coverage(batches, png_size)
                     small = mesh.uv_coverage(batches, small_size)[0]
                     if not painted:
                         big = b"\xff" * (png_size * png_size)
                         small = b"\xff" * (small_size * small_size)
-                source = ("the whole item: it states no tint mask - its tint slot"
-                          " is blank - so the multiplayer build tints the item and"
-                          " the single-player map (multipurpose sp) masks nothing")
+                source = ("derived from the base map's own shading - the item"
+                          " states no tint mask, its tint slot is blank - so the"
+                          " dark armour takes the team colour fully and the bright"
+                          " cloth takes a share of it (about a third); the"
+                          " single-player map (multipurpose sp) masks nothing")
             painted = sum(1 for value in big if value)
             facts["mask_source"] = source
             facts["mask_coverage"] = round(painted / float(png_size * png_size), 4)

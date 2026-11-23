@@ -69,7 +69,10 @@ Test Item\
         source rigs\  master chief skeleton.blend, fp arms.blend  Halo's own
                        rig files, kept for repair
     extracted for hek users\
-        pc\data\Test Item\
+        pc\data\Test Item no_decals\
+            the plain build: the base map exactly as the pack stores it, so no
+            decal is blended into it. Point tool.exe here for an item without
+            one; the sp and mp builds below copy from it.
             bitmaps\    Test Item base map.tif, Test Item multipurpose.tif,
                         Test Item change colour.tif, Test Item slot 2 decal
                         map.tif, and Test Item base map + decal.tif - Halo CE
@@ -81,17 +84,18 @@ Test Item\
                 bitmaps\  the item's own maps, for the arms
                 models\   Test Item - fp arms.jms
                 source\   Test Item - halo fp arms.blend, .fbx
-        xbox\data\Test Item\
+        xbox\data\Test Item no_decals\
             the same folders, the bitmaps in the original Xbox order
         pc\data\Test Item sp\   a complete build that keeps the item's own
-            bitmaps\  the base map, the slots, and a multipurpose map that
-                      masks nothing
+            bitmaps\  the base map with the decal blended in, the slots, and a
+                      multipurpose map that masks nothing
             models\   Test Item sp.jms  named for the build, so both can be
                       compiled without one overwriting the other
             fp\       the same for the first-person arms
         pc\data\Test Item mp\   a complete build that takes the team colour
-            bitmaps\  the base map, the slots, Test Item change colour.tif,
-                      and the team-colour multipurpose map
+            bitmaps\  the base map with the decal blended in, the slots, Test
+                      Item change colour.tif, and the team-colour multipurpose
+                      map
             models\   Test Item mp.jms
             fp\       the same for the arms
         xbox\data\  the sp and mp pair again, in the original Xbox order
@@ -518,9 +522,16 @@ is different, so both are written rather than leaving you to swap channels:
     leaves alpha flat tints everywhere a weight is set. A blank tint slot is not
     a mask: the item states no team colour at all, and at run time its colours
     come from the player's description, which a Halo CE bitmap cannot hold. The
-    multiplayer build then tints the whole item - that is what the build is for -
-    and the single-player build's map masks nothing, so the item can be built
-    either way. `report.txt`'s `mask source:` line says which of the three it is.
+    multiplayer build then needs an amount from somewhere, and the base map's own
+    shading is the only evidence left: the **dark** texels are the armour plates
+    and take the team colour fully, the **bright** tan cloth keeps most of its own
+    colour and takes about a third of the player's (`derived_amount()` in
+    `extract_items.py`, 1.0 below luminance 0.42, 0.32 above 0.62, lerped
+    between). A whole-white mask would recolour the suit as hard as the plates,
+    which is not how these items look. The single-player build's map masks
+    nothing, so the item can be built either way. `report.txt`'s `mask source:`
+    line says which of the three it is, and says when the amount is derived
+    rather than stated by the item.
 
     The slot beside the tint mask (parameter id 3) is a **decal**: artwork blended
     over the base map by its own alpha, a tee's logo. It is never read as a mask.
@@ -610,12 +621,21 @@ docs](https://learn.microsoft.com/en-us/halo-master-chief-collection/) cover
 Halo 2 and Halo 3 tooling; they have no Halo 1 tool reference, so the H1-EK
 pages are the ones that apply.
 
-1. **Put the build where the tool looks.** Copy `extracted for hek users\pc\data\<stem>`
-   (or the `xbox` one) into the editing kit's `data\` folder. The folder name is
-   the tag path, and it is the only thing that has to move.
-2. **Bitmaps.** `tool bitmaps "<stem>\bitmaps" 2d` - H1A Tool takes the type as an
-   argument, the legacy HEK reads it from the tag. Each `.tif` becomes
-   `tags\<stem>\bitmaps\<name>.bitmap`, named after the file, so every map a
+Each item arrives as three data folders, and `build-hek.bat` (next to this
+README, or copied beside the item's output folder) runs the two verbs over all
+three: it asks once where the editing kit is, copies the folders into its
+`data\`, compiles the bitmaps and the models, and logs everything to
+`build-hek.log`. `build-hek.bat xbox` does the same for the Xbox channel order.
+What it does, step by step:
+
+1. **Put the build where the tool looks.** Copy each of
+   `extracted for hek users\pc\data\<stem> no_decals`, `<stem> sp` and
+   `<stem> mp` (or the `xbox` ones) into the editing kit's `data\` folder. The
+   folder name is the tag path, and it is the only thing that has to move.
+   `no_decals` carries the plain base map; `sp` and `mp` carry the decal.
+2. **Bitmaps.** `tool bitmaps "<stem> sp\bitmaps"` - H1A Tool also takes a type
+   argument (`2d`), the legacy HEK reads it from the tag. Each `.tif` becomes
+   `tags\<stem> sp\bitmaps\<name>.bitmap`, named after the file, so every map a
    shader asks for is already named the way it is referenced.
    - `.tif` must be at least 8 bits per pixel and power-of-two; ours are 32-bit.
    - Alpha survives only in a format that holds it: **DXT5 or 32-bit**. DXT1
@@ -624,8 +644,9 @@ pages are the ones that apply.
    - Leave **usage** at `default` for all of these. `alpha blend` fades
      transparent pixels to black in the mips and `detail map` fades the mips to
      grey; both are for other kinds of texture, and these are mask images.
-3. **Model.** `tool model "<stem>"` reads `data\<stem>\models\<file>.JMS` and
-   writes `tags\<stem>\<stem>.gbxmodel`. The material names inside the JMS are
+3. **Model.** `tool model "<stem> sp"` reads `data\<stem> sp\models\<file>.JMS`
+   and writes `tags\<stem> sp\<stem> sp.gbxmodel`. Run it only after the shader
+   exists: Tool looks up a shader per JMS material and will stop to ask for one. The material names inside the JMS are
    the only link to shaders, so each one needs a shader tag that exists. Tool
    reads the JMS **file name** as `<permutation> <lod>.JMS` (`base superhigh.JMS`;
    the LOD word is one of `superhigh`, `high`, `medium`, `low`, `superlow`, and

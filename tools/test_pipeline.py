@@ -38,8 +38,8 @@ EXPECTED = (
     "extracted for max users/UNSC Marine Armor base map.png",
     "extracted for max users/UNSC Marine Armor base map.tga",
     "extracted for blender users/UNSC Marine Armor base map.png",
-    "extracted for hek users/pc/data/UNSC Marine Armor/bitmaps/UNSC Marine Armor base map.tif",
-    "extracted for hek users/xbox/data/UNSC Marine Armor/bitmaps/UNSC Marine Armor base map.tif",
+    "extracted for hek users/pc/data/UNSC Marine Armor no_decals/bitmaps/UNSC Marine Armor base map.tif",
+    "extracted for hek users/xbox/data/UNSC Marine Armor no_decals/bitmaps/UNSC Marine Armor base map.tif",
     "UNSC Marine Armor_colours.txt",
     "colour_00.png",
     "catalogue.json",
@@ -63,7 +63,7 @@ def homes_for(family, stem):
         wanted.append((folder, "png"))
         wanted.append((folder, "tga"))
     for build in MASK_BUILDS[family]:
-        wanted.append(("extracted for hek users/%s/data/%s/bitmaps"
+        wanted.append(("extracted for hek users/%s/data/%s no_decals/bitmaps"
                        % (build, stem), "tif"))
     return wanted
 
@@ -308,8 +308,8 @@ def main():
 
         maps = ["extracted for max users/Model Table Item base map.png",
                 "extracted for max users/Model Table Item base map.tga",
-                "extracted for hek users/pc/data/Model Table Item/bitmaps/Model Table Item base map.tif",
-                "extracted for hek users/xbox/data/Model Table Item/bitmaps/Model Table Item base map.tif"]
+                "extracted for hek users/pc/data/Model Table Item no_decals/bitmaps/Model Table Item base map.tif",
+                "extracted for hek users/xbox/data/Model Table Item no_decals/bitmaps/Model Table Item base map.tif"]
         for name in maps:
             path = os.path.join(out2, name)
             mark = "ok  " if os.path.exists(path) else "MISS"
@@ -342,7 +342,7 @@ def main():
             return 1
         for name in ("pc", "xbox"):
             tif = os.path.join(out2, "extracted for hek users", name, "data",
-                               "Model Table Item", "bitmaps",
+                               "Model Table Item no_decals", "bitmaps",
                                "Model Table Item slot 1 decal map.tif")
             if not os.path.exists(tif):
                 print("\nFAIL: the slot .tif is missing from the %s bitmaps" % name)
@@ -418,8 +418,8 @@ def main():
 
         flat = ["extracted for max users/Plain Tee colour.png", "extracted for max users/Plain Tee colour.tga",
                 "extracted for blender users/Plain Tee colour.png",
-                "extracted for hek users/pc/data/Plain Tee/bitmaps/Plain Tee colour.tif",
-                "extracted for hek users/xbox/data/Plain Tee/bitmaps/Plain Tee colour.tif"]
+                "extracted for hek users/pc/data/Plain Tee no_decals/bitmaps/Plain Tee colour.tif",
+                "extracted for hek users/xbox/data/Plain Tee no_decals/bitmaps/Plain Tee colour.tif"]
         for name in flat:
             mark = "ok  " if os.path.exists(os.path.join(out3, name)) else "MISS"
             print("  %s %s" % (mark, name))
@@ -436,7 +436,7 @@ def main():
             return 1
 
         with open(os.path.join(out3, "extracted for hek users", "pc", "data",
-                              "Plain Tee", "bitmaps",
+                              "Plain Tee no_decals", "bitmaps",
                               "Plain Tee colour.tif"), "rb") as handle:
             head = handle.read(4)
         if head not in (b"II*\0", b"MM\0*"):
@@ -518,7 +518,7 @@ def main():
 
         def hek_tif(suffix, build="pc"):
             return tiff(os.path.join(out3, "extracted for hek users", build, "data",
-                                     "Plain Tee", "bitmaps",
+                                     "Plain Tee no_decals", "bitmaps",
                                      "Plain Tee %s.tif" % suffix))
 
         ce_tif = hek_tif("multipurpose")
@@ -729,7 +729,7 @@ def main():
             return 1
         for order in ("pc", "xbox"):
             path = os.path.join(out_tint, "extracted for hek users", order,
-                                "data", "Tint Trap", "bitmaps",
+                                "data", "Tint Trap no_decals", "bitmaps",
                                 "Tint Trap base map + decal.tif")
             if not os.path.exists(path):
                 print("\nFAIL: no decal .tif for the %s build" % order)
@@ -738,8 +738,28 @@ def main():
                 print("\nFAIL: the %s decal .tif is empty" % order)
                 return 1
 
-        print("\nPASS: a blank tint mask gives the whole item to mp, nothing to sp,"
-              " no decal alpha - and the decal blends onto a copy of the base map")
+        # A derived amount: the item states no tint mask, so the multiplayer
+        # build's amount comes from the base map's own shading - dark armour
+        # takes the team colour, bright cloth takes a share. A whole-white mask
+        # recoloured the tan suit as hard as the plates.
+        def solid(rgb, size=4):
+            return {"width": size, "height": size,
+                    "rgba": bytes(list(rgb) + [255]) * (size * size)}
+
+        dark = extract_items.derived_amount(solid((40, 50, 30)), 4)
+        bright = extract_items.derived_amount(solid((205, 195, 170)), 4)
+        middle = extract_items.derived_amount(solid((150, 145, 130)), 4)
+        print("  derived amount armour %r cloth %r between %r"
+              % (dark[0], bright[0], middle[0]))
+        if not (dark[0] == 255 and bright[0] == 82
+                and 82 < middle[0] < 255):
+            print("\nFAIL: the derived team-colour amount is not armour-full,"
+                  " cloth-a-share")
+            return 1
+
+        print("\nPASS: a blank tint mask gives mp a derived amount (armour full,"
+              " cloth a share) and sp nothing, no decal alpha - and the decal"
+              " blends onto a copy of the base map")
 
         # Fourth case: two parts in one item, each with its own colour, and the
         # same shader id on both. They must stay two materials with two colours -
@@ -810,9 +830,9 @@ def main():
                   "extracted for max users/%s multipurpose.png", "extracted for max users/%s multipurpose xbox.png",
                   "extracted for max users/%s multipurpose sp.tga", "extracted for max users/%s change colour.png",
                   "extracted for blender users/%s multipurpose.tga",
-                  "extracted for hek users/pc/data/%s/bitmaps/%s multipurpose.tif",
-                  "extracted for hek users/xbox/data/%s/bitmaps/%s multipurpose xbox.tif",
-                  "extracted for hek users/xbox/data/%s/bitmaps/%s change colour.tif")
+                  "extracted for hek users/pc/data/%s no_decals/bitmaps/%s multipurpose.tif",
+                  "extracted for hek users/xbox/data/%s no_decals/bitmaps/%s multipurpose xbox.tif",
+                  "extracted for hek users/xbox/data/%s no_decals/bitmaps/%s change colour.tif")
         for name in containers:
             for pattern in wanted:
                 want = pattern % tuple([name] * pattern.count("%s"))
@@ -862,8 +882,8 @@ def main():
             for pattern in ("extracted for max users/%s.obj", "extracted for max users/%s.mtl", "extracted for max users/%s multipurpose.png",
                             "extracted for max users/%s multipurpose xbox.png",
                             "extracted for max users/%s change colour.tga",
-                            "extracted for hek users/pc/data/%s/bitmaps/%s multipurpose sp.tif",
-                            "extracted for hek users/pc/data/%s/bitmaps/%s multipurpose.tif"):
+                            "extracted for hek users/pc/data/%s no_decals/bitmaps/%s multipurpose sp.tif",
+                            "extracted for hek users/pc/data/%s no_decals/bitmaps/%s multipurpose.tif"):
                 want = pattern % tuple([name] * pattern.count("%s"))
                 found = os.path.exists(os.path.join(out6, want))
                 print("  %s %s" % ("ok  " if found else "MISS", want))
@@ -914,12 +934,12 @@ def main():
         data7 = os.path.join(folder, "extracted for hek users", "xbox", "data")
         folders = sorted(os.listdir(data7)) if os.path.isdir(data7) else []
         print("  hek data folders   -> %r" % (folders,))
-        if folders != ["UNSC Armor"]:
+        if folders != ["UNSC Armor no_decals"]:
             print("\nFAIL: one item's HEK tree was split into %r" % (folders,))
             return 1
         for kind in ("bitmaps", "models", "animations"):
-            if not os.path.isdir(os.path.join(data7, "UNSC Armor", kind)):
-                print("\nFAIL: data\\UNSC Armor\\%s was not made" % kind)
+            if not os.path.isdir(os.path.join(data7, "UNSC Armor no_decals", kind)):
+                print("\nFAIL: data\\UNSC Armor no_decals\\%s was not made" % kind)
                 return 1
 
         print("\nPASS: nameless bins come out as extracted1, extracted2; the GUID keeps its name")
