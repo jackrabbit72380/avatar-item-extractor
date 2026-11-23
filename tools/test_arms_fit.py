@@ -184,9 +184,26 @@ def main():
     turned = module.carry_onto(place(IDENTITY, 1.0), far, want, rebuild, rounds=1)
     check(turned is not None, "the fit refused a sleeve a quarter turn away")
     if turned is not None:
-        check(turn_angle(turned["turn"]) <= 12.0 + 1e-6,
-              "one pass turned %.1f deg, past the 12 deg cap"
+        check(turn_angle(turned["turn"]) <= 20.0 + 1e-6,
+              "one pass turned %.1f deg, past the 20 deg cap"
               % turn_angle(turned["turn"]))
+
+    # 4. The cap is a step size, not a limit on what can be corrected. This is
+    #    the bug a real item found: three passes of twelve left a sleeve 49
+    #    degrees out stopped at 13, and nothing in the report said so.
+    out_far = [1.0, 1.2, 0.0]           # about 50 degrees off the target
+    steep = sleeve(out_far)
+    steep_before = angle_between(widest(steep), want)
+    check(steep_before > 45.0,
+          "the steep test sleeve is only %.1f deg out" % steep_before)
+    brought = module.carry_onto(place(IDENTITY, 1.0), steep, want, rebuild)
+    check(brought is not None, "the fit refused a sleeve 50 deg out")
+    if brought is not None:
+        moved = [module.turn_point(brought["turn"], point) for point in steep]
+        steep_after = angle_between(widest(moved), want)
+        check(steep_after < 0.5,
+              "a sleeve %.1f deg out was only brought to %.1f deg - the fit "
+              "cannot reach past its own cap" % (steep_before, steep_after))
 
     # 4. Nothing to fit means nothing is moved.
     check(module.carry_onto(place(IDENTITY, 1.0), sleeve(want)[:5], want,

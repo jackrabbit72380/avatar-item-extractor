@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v43"
-BUILD = "2026-11-23 hand-items-and-tee-fixed"
+VERSION = "v44"
+BUILD = "2026-11-23 fit-reaches-the-angle"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -1112,6 +1112,13 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
         if fitted is not None:
             place = fitted
             place["twist"], place["glove"] = kept["twist"], kept["glove"]
+            own = arm_axis(sleeve)[0]
+            if own is not None:
+                held = turn_point(place["turn"], own)
+                if sum(held[i] * want[i] for i in range(3)) < 0.0:
+                    held = [-value for value in held]
+                place["fit_left"] = math.degrees(math.acos(
+                    max(-1.0, min(1.0, sum(held[i] * want[i] for i in range(3))))))
     return place
 
 
@@ -1128,7 +1135,7 @@ def limit_turn(turn, most=10.0):
     return turn_about([value / length for value in axis], math.radians(most))
 
 
-def carry_onto(place, points, want, rebuild, rounds=3, most=12.0):
+def carry_onto(place, points, want, rebuild, rounds=8, most=20.0):
     """Turn a placed side until its sleeve runs the way Halo's own does.
 
     The bones say where an arm is jointed; the arm mesh the game draws says
@@ -1142,7 +1149,11 @@ def carry_onto(place, points, want, rebuild, rounds=3, most=12.0):
 
     Only the turn moves, never the size - the size is what puts the glove past
     Halo's fingertips - and each pass is capped, so a side settles onto the
-    angle instead of swinging past it. Fitting the whole arm cloud by nearest
+    angle instead of swinging past it. The cap is a step size, not a limit on
+    what can be corrected: every pass is measured and thrown away unless it
+    really is closer, so a side 50 degrees out is walked in over several passes
+    instead of being left there. Three passes of twelve were too few - a real
+    item 49 degrees out stopped at 13 and nothing in the report said so. Fitting the whole arm cloud by nearest
     point was tried first and was worse at this: it closes the distance by
     rolling a fat sleeve without ever pointing it the right way.
     """
@@ -1967,6 +1978,9 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
              for side, points in side_points.items() if points}
     if not any(carry.values()):
         log("no arm axis could be measured: the arms keep the biped's placement")
+    left = [value.get("fit_left") for value in carry.values()
+            if value and value.get("fit_left") is not None]
+    fit_left = max(left) if left else None
 
     mapping = {}
     if armature_fp is not None:
@@ -2252,6 +2266,9 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
         for position, loop_index in enumerate(old_loops):
             target.data[position].uv = layer.data[loop_index].uv
     arms = bpy.data.objects.new("%s arms" % object_data.name, copy)
+    if fit_left is not None:
+        arms["fit_angle"] = fit_left
+        log("the fit left %.2f deg on the sleeve, by its own measure" % fit_left)
     bpy.context.scene.collection.objects.link(arms)
     for name, pairs in carried.items():
         group = arms.vertex_groups.new(name=name)
@@ -2437,6 +2454,10 @@ def arms_for(merged, armature, armature_fp, bone_name, record):
                 record["arms_angle"] = (
                     "sleeve angle vs Halo's own arm: not measured - the arms do "
                     "not carry the upper arm and forearm skin Halo's arm does")
+            if meta(arms, "fit_angle") is not None:
+                record["arms_fit_angle"] = (
+                    "the fit left %.2f deg on the sleeve, by its own measure"
+                    % meta(arms, "fit_angle"))
             if meta(arms, "fit_worst") is not None:
                 record["arms_fit"] = ("stands in Halo's own arms to within "
                                       "%.2f units (mean %.2f)"
@@ -3065,6 +3086,8 @@ def report_text(options, records, stems, armature, nxe=None):
                 lines.append("              %s" % record["arms_carried"])
             if record.get("arms_angle"):
                 lines.append("              %s" % record["arms_angle"])
+            if record.get("arms_fit_angle"):
+                lines.append("              %s" % record["arms_fit_angle"])
             if record.get("arms_fit"):
                 lines.append("              %s" % record["arms_fit"])
             if record.get("arms_fingers"):
