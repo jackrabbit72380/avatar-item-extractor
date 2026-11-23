@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v45"
-BUILD = "2026-11-23 marine-measured-thumb-kept"
+VERSION = "v46"
+BUILD = "2026-11-23 thumb-follows-its-bones"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -1405,6 +1405,88 @@ def finger_of(name):
     return None
 
 
+def chain_along(point, entries):
+    """Where a vertex sits *along* a finger's chain, as (weight, bone) pairs.
+
+    Distance to a bone's segment is the right measure for a finger and the wrong
+    one for a thumb. Halo's fingers run almost straight and a glove's finger is
+    slim, so the nearest bone is the one the vertex is on. A glove's thumb is a
+    plate standing well off its chain: every vertex of it is roughly as far from
+    all three thumb bones, so "the two nearest" fell to whichever end the plate
+    leans towards. Measured on the Marine glove that gave 7% of the thumb to
+    `thumb low`, 39% to `thumb mid` and 54% to `thumb tip`, against Halo's own
+    hand's 38/30/32 - and the .jms writes two weights a vertex, so the base bone
+    ended up driving no vertex at all. A thumb then bends from its tip instead
+    of folding from its base, which is the kink that reads as a wrong thumb.
+
+    A vertex's place along the chain does not care how far the plate stands off
+    it, so each bone owns its own length along the chain and hands over across a
+    short band at each joint. The band is a fraction of the shorter bone either
+    side, not the whole bone: a band as wide as the bones themselves let the
+    long bone's share reach a third of the way down the next one, which is how
+    the middle bone ended up with 0.71 of a point sitting over its own centre.
+    Two bones on a vertex is all that is left, which is exactly what the .jms
+    can carry.
+    """
+    joints = [entries[0][1]] + [entry[2] for entry in entries]
+    spans = [math.dist(joints[index], joints[index + 1])
+             for index in range(len(entries))]
+    total = sum(spans)
+    if total <= 1e-6:
+        return []
+    best, walked = None, 0.0
+    for index in range(len(entries)):
+        first, second = joints[index], joints[index + 1]
+        length = spans[index]
+        if length > 1e-9:
+            step = [second[k] - first[k] for k in range(3)]
+            along = sum((point[k] - first[k]) * step[k] for k in range(3))
+            along = min(1.0, max(0.0, along / (length * length)))
+            nearest = [first[k] + step[k] * along for k in range(3)]
+            gap = math.dist(point, nearest)
+            if best is None or gap < best[0]:
+                best = (gap, walked + along * length)
+        walked += length
+    if best is None:
+        return []
+    here = best[1]
+    bounds, walked = [], 0.0
+    for span in spans:
+        bounds.append((walked, walked + span))
+        walked += span
+    weights = []
+    for index, (name, _head, _tail, _flat) in enumerate(entries):
+        first, second = bounds[index]
+        band = 0.3 * min(spans[index],
+                         spans[index - 1] if index > 0 else spans[index],
+                         spans[index + 1] if index + 1 < len(spans)
+                         else spans[index])
+        band = max(band, 1e-6)
+        if here < first - band or here > second + band:
+            continue
+        weight = 1.0
+        if index > 0 and here < first + band:
+            weight = 0.5 + (here - first) / (2.0 * band)
+        elif index + 1 < len(entries) and here > second - band:
+            weight = 0.5 + (second - here) / (2.0 * band)
+        weight = min(1.0, max(0.0, weight))
+        if weight > 1e-6:
+            weights.append((weight, name))
+    total = sum(weight for weight, _name in weights)
+    if total <= 0.0:
+        return []
+    shares = [(weight / total, name) for weight, name in weights]
+    # Two weights a vertex is what a .jms carries, and a share under a fiftieth
+    # moves the skin by less than the mesh's own tolerance - the same rule the
+    # finger shares are kept by. Without it a plate just past a joint rode
+    # three bones, and the third was thrown away by the export anyway.
+    kept = [(weight, name) for weight, name in shares if weight >= 0.02]
+    total = sum(weight for weight, _name in kept)
+    if total <= 0.0:
+        return shares
+    return [(weight / total, name) for weight, name in kept]
+
+
 def ride_chain(per, point, armature_fp, side, key, influences=2, power=4.0):
     """Move every finger share of a piece's weight onto one finger's bones.
 
@@ -1426,9 +1508,11 @@ def ride_chain(per, point, armature_fp, side, key, influences=2, power=4.0):
             total += per.pop(name)
     if total <= 0.0:
         return per
-    near = sorted((point_segment_distance(point, head, tail), name)
-                  for name, head, tail, _flat in entries)[:influences]
-    weights = [(1.0 / ((gap + 0.3) ** power), name) for gap, name in near]
+    weights = chain_along(point, entries) if key == "thumb" else None
+    if not weights:
+        near = sorted((point_segment_distance(point, head, tail), name)
+                      for name, head, tail, _flat in entries)[:influences]
+        weights = [(1.0 / ((gap + 0.3) ** power), name) for gap, name in near]
     scale = sum(weight for weight, _name in weights)
     if scale <= 0.0:
         return per
@@ -1490,10 +1574,15 @@ def finger_split(point, armature_fp, side, influences=2, power=4.0):
     reached = near_chain[:2]
     shares = {}
     for chain_gap, chain_key in reached:
-        near = sorted((point_segment_distance(point, first, second), name)
-                      for name, first, second, _flat in chains[chain_key])
-        weights = [(1.0 / ((reach + 0.3) ** power), name)
-                   for reach, name in near[:influences]]
+        if chain_key == "thumb":
+            # A thumb plate is weighted by where it lies along its chain, not by
+            # which bone happens to be nearest - see chain_along.
+            weights = chain_along(point, chains["thumb"])
+        else:
+            near = sorted((point_segment_distance(point, first, second), name)
+                          for name, first, second, _flat in chains[chain_key])
+            weights = [(1.0 / ((reach + 0.3) ** power), name)
+                       for reach, name in near[:influences]]
         total = sum(weight for weight, _name in weights)
         if total <= 0.0:
             continue
@@ -2078,10 +2167,24 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                 split = finger_split(Vector(moved), armature_fp, side)
                 if split is not None and split[0] > 0.0:
                     grip, shares = split
-                    per[wriste] = hand_weight * (1.0 - grip)
+                    # A finger is hand, not forearm. The item gives its glove
+                    # no hand bone at all, so the glove's weight runs up the
+                    # forearm and only the part `hand_share` faded in can be
+                    # given to the fingers - which left the Marine's thumb tip
+                    # 42% on the forearm and upper arm. Halo's own fingers carry
+                    # no forearm weight, and an elbow bend dragged that 42% out
+                    # of the thumb, so the finger's share of the arm bones is
+                    # handed over with the hand's, by the same grip fade.
+                    arm = ("frame %s forearm" % side,
+                           "frame %s upperarm" % side)
+                    held = hand_weight + sum(per.get(name, 0.0) for name in arm)
+                    for name in arm:
+                        if name in per:
+                            per[name] *= 1.0 - grip
+                    per[wriste] = held * (1.0 - grip)
                     for name, share in shares.items():
                         per[name] = (per.get(name, 0.0)
-                                     + hand_weight * grip * share)
+                                     + held * grip * share)
                     fingered.add(side)
         if sum(per.values()) <= 0.0:
             continue
@@ -2155,13 +2258,18 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                 log("%s arm: its glove is too round to say which way round it "
                     "goes, so it keeps the roll the item gave it" % side)
 
-    # The glove's thumb is a plate that stands off the thumb it was modelled
-    # on, and on Halo's hand that leaves Halo's thumb bones a couple of units
-    # outside it - a weapon grip would then pull the thumb from outside the
-    # glove, the one place it reads wrong in first person. The plate keeps its
-    # shape and is walked onto Halo's thumb until it sits on it the way the
-    # other fingers sit on theirs, feathered by how much of the thumb each
-    # vertex is, so the base of the thumb still belongs to the hand.
+    # The glove's thumb is the item's own guard, and it does not sit where
+    # Halo's thumb does: measured on the Marine it runs 31-36 degrees off
+    # Halo's thumb chain and its middle stands 1.5 units past the chain's end,
+    # which is why it reads as a fat finger lying along the index. That is the
+    # item's shape, and it is reported rather than moved. Turning the guard onto
+    # the chain was tried both ways and is worse both times: about the chain's
+    # joint it swung the whole guard off the bones (all three thumb bones 1.5
+    # units outside it), and about its own base, re-centred on the chain, it tore
+    # the glove where the guard joins it (24 edges past x3) and still left the
+    # base bones outside. What makes a thumb read wrong in game is the weight it
+    # deforms with, and that is fixed above: it is weighted along its own chain,
+    # so its base moves with its base bone, and none of it rides the forearm.
     if armature_fp is not None:
         for side in ("l", "r"):
             entries = finger_chains(armature_fp, side).get("thumb")
@@ -2183,60 +2291,23 @@ def arm_region(object_data, armature=None, armature_fp=None, names=ARM_WEIGHTS):
                     mine.append((index, min(1.0, held)))
             if len(mine) < 8:
                 continue
-            def spread():
-                """How far the thumb bones sit from the plate: worst, then mean."""
-                gaps = []
-                for point in points:
-                    gaps.append(min(math.dist(point, coords[slot[index]])
-                                    for index, _weight in mine))
-                return max(gaps), sum(gaps) / len(gaps)
-
-            before = spread()
-            kept_at = [coords[slot[index]] for index, _weight in mine]
-            # One offset for the plate, averaged over the vertices that are
-            # mostly thumb, then feathered by how much thumb each vertex is so
-            # the base still belongs to the hand. Averaging over every vertex
-            # cancelled itself out - the drifts point opposite ways round a
-            # bone - and stepping each vertex its own way tore the glove (136
-            # edges stretched, worst x20). One coherent offset closes the gap
-            # at the tip without pulling the plate apart.
-            walked = 0.0
-            for _pass in range(6):
-                drift = [0.0, 0.0, 0.0]
-                total = 0.0
-                for index, weight in mine:
-                    if weight < 0.5:
-                        continue
-                    point = coords[slot[index]]
-                    near = min(points, key=lambda place: sum(
-                        (place[k] - point[k]) ** 2 for k in range(3)))
-                    for k in range(3):
-                        drift[k] += (near[k] - point[k]) * weight
-                    total += weight
-                if total <= 1e-6:
-                    break
-                drift = [value / total for value in drift]
-                reach = math.sqrt(sum(value * value for value in drift))
-                if reach < 0.02 or walked + reach > 3.5:
-                    break
-                walked += reach
-                for index, weight in mine:
-                    point = coords[slot[index]]
-                    coords[slot[index]] = tuple(point[k] + drift[k] * weight
-                                                for k in range(3))
-            after = spread()
-            if after[0] > before[0] + 1e-6:
-                # The plate does not fit the thumb it was given: putting it
-                # back is better than a thumb that hangs off its own bones.
-                for (index, _weight), point in zip(mine, kept_at):
-                    coords[slot[index]] = point
-                log("%s thumb: kept where the item put it - walking it onto "
-                    "Halo's thumb made the worst gap %.2f units instead of %.2f"
-                    % (side, after[0], before[0]))
-            else:
-                log("%s thumb: %d vert(s) walked onto Halo's thumb by %.2f "
-                    "units, worst gap %.2f -> %.2f"
-                    % (side, len(mine), walked, before[0], after[0]))
+            gaps = [min(math.dist(point, coords[slot[index]])
+                        for index, _weight in mine) for point in points]
+            solid = [index for index, weight in mine if weight >= 0.5]
+            lying = (arm_direction([tuple(coords[slot[index]]) for index in solid])
+                     if len(solid) >= 12 else None)
+            base = points[0]
+            want = [points[-1][k] - base[k] for k in range(3)]
+            reach = math.sqrt(sum(value * value for value in want))
+            off = 0.0
+            if lying is not None and reach > 1e-6:
+                want = [value / reach for value in want]
+                off = math.degrees(math.acos(max(-1.0, min(1.0, sum(
+                    lying[k] * want[k] for k in range(3))))))
+            log("%s thumb: %d vert(s) weighted along its own chain, guard %.1f "
+                "degrees off Halo's thumb chain, worst bone gap %.2f units - "
+                "left where the item put it"
+                % (side, len(mine), off, max(gaps)))
 
     faces, flips = [], []
     turned_out = 0

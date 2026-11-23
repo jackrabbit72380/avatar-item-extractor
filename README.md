@@ -192,20 +192,38 @@ from the body and the player sees the arms, not the body's:
   reports success, so the two are reported together and the check beside them
   (`tools/test_arms_fit.py`) measures against a direction it chooses itself.
 
-  The glove's thumb is a plate that stands off the thumb it was modelled on,
-  which on Halo's hand left its thumb bones two units outside the glove - a
-  weapon grip would have pulled the thumb from beside it. The plate keeps its
-  shape and is walked onto Halo's thumb bones by the gap measured between them,
-  feathered by how much of the thumb each vertex is so the base still belongs to
-  the hand, and capped so a plate that does not fit is not dragged off the hand
-  it belongs to. The offset is one offset for the plate, averaged over the
-  vertices that are mostly thumb: averaged over all of them the drifts point
-  opposite ways round the bone and cancel out (2.13 units asked for, 0.07 of gap
-  closed), and stepping each vertex its own way tore the glove - 136 edges
-  stretched, worst x20. On the Marine the walk does not improve the gap, so it
-  puts the plate back and the report says so; that is the version whose worst
-  thumb bone sits 0.93 units outside the glove with no stretched edges, against
-  1.55 units and 8 stretched edges when the plate was moved.
+  The glove's thumb is the item's own guard, and it is weighted differently
+  from the other fingers because it is a different shape: a plate standing well
+  off the bones it was modelled on, not a slim finger lying along them. Distance
+  to the nearest bone is no guide there - every vertex of a guard like the
+  Marine's is about as far from all three thumb bones - so it is weighted by
+  where it lies **along** its own chain, each bone owning its length and handing
+  over across a short band at the joint. Measured on the Marine, nearest-bone
+  weighting gave `thumb low` 7% of the thumb, `thumb mid` 39% and `thumb tip`
+  54% against Halo's own hand's 38/30/32, and because a .jms carries two weights
+  a vertex the base bone was dropped everywhere and drove nothing at all: the
+  thumb bent from its tip instead of folding from its base. It now holds 9-13
+  vertices, and every thumb vertex is on two bones or fewer, so nothing is
+  thrown away on export.
+
+  A finger is hand, not forearm. The item gives its glove no hand bone at all, so
+  the glove's weight ran up the forearm and only the part faded in at the wrist
+  could be given to the fingers - which left the Marine's thumb tip 42% on the
+  forearm and upper arm. Halo's own fingers carry no forearm weight, and an elbow
+  bend dragged that 42% out of the thumb, so the finger's share of the forearm
+  and upper arm is handed over with the hand's, by the same grip fade. The thumb
+  tip now carries none.
+
+  The guard itself is left where the item put it, and the report says where that
+  is: on the Marine it runs 31-36 degrees off Halo's thumb chain and its middle
+  stands 1.5 units past the chain's end, which is why it reads as a fat finger
+  lying along the index rather than a thumb set apart from the fingers. Moving it
+  onto the chain was tried both ways and is worse both times. Turned about the
+  chain's joint it swung the whole guard off the bones (all three thumb bones 1.5
+  units outside it); turned about its own base and re-centred on the chain it tore
+  the glove where the guard joins it (24 edges past x3) and still left the base
+  bones outside. A guard that does not fit the thumb it was given is the item's
+  shape, and the one thing that cannot be fixed without re-modelling it.
 
   Its vertex groups are renamed to Halo's (`frame l upperarm`,
   `frame l forearm`, `frame l wriste`), and a glove the item weighted to its
@@ -214,7 +232,8 @@ from the body and the player sees the arms, not the body's:
   swinging from the elbow, and its fingers end where Halo's own do. Past the
   knuckles each glove vertex is weighted onto the two nearest bones of **its own
   finger's chain** - `frame l index`, `middle`, `ring`, `pinky` or `thumb`, each in
-  its low/mid/tip bones - so the glove closes round a rifle the way the game's
+  its low/mid/tip bones (the thumb by its place along the chain, see above) - so
+  the glove closes round a rifle the way the game's
   hand does, and no weight reaches across to the finger next door. The weight is
   measured along that finger, not along Halo's hand: a glove's fingers stop short
   of Halo's, and measured from the wrist the half of every glove finger nearest
@@ -238,7 +257,7 @@ from the body and the player sees the arms, not the body's:
   vertex belongs to the thumb when it is nearer the thumb chain than the hand
   bone or any other finger, and it eases in over the first part of the thumb's
   length so it still joins the glove's palm smoothly. Halo's thumb bones sit
-  outside the Marine's bulky thumb guard by 0.75-1.94 units - `report.txt` names
+  outside the Marine's bulky thumb guard by 0.68-0.96 units - `report.txt` names
   that per bone - so the guard follows the thumb from outside it, as armour over
   a joint does, rather than being left behind.
   Weights cannot tear anything: the geometry is already carried whole. The
