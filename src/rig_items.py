@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v52"
-BUILD = "2026-11-23 thumb-chain-carried-into-the-palm"
+VERSION = "v54"
+BUILD = "2026-11-23 biped-fitted-joint-by-joint"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -456,6 +456,20 @@ def garment_anchor(object_data, armature, authored=AUTHORED_BODY_HEIGHT):
     return ("high", waist, "waistband at the waist")
 
 
+def whole_body(object_data, authored=AUTHORED_BODY_HEIGHT):
+    """Is this item a body of its own, rather than a garment or a prop?
+
+    A body spans the avatar from its feet to its helmet, so there is no edge to
+    hang it from and no single scale that lands its joints on the bones. A hat,
+    a tee or a pair of boots is not that: it is worn on a body, and the fit above
+    is what puts it on the right part of one.
+    """
+    ys = [vertex.co.y for vertex in object_data.data.vertices]
+    if not ys:
+        return False
+    return max(ys) - min(ys) >= 0.8 * authored
+
+
 def to_halo_space(object_data, fit=1.0, keep_position=False, anchor=None):
     """Avatar items are y-up metres; the biped is z-up Halo units.
 
@@ -505,6 +519,302 @@ def to_halo_space(object_data, fit=1.0, keep_position=False, anchor=None):
     tallest = max(point[2] for point in placed)
     log("%s in Halo units: %.1f tall, from %.1f to %.1f (scale %.3f, fit %.2f)"
         % (object_data.name, tallest - lowest, lowest, tallest, scale, fit))
+
+# ------------------------------------------------------------ fitting a body
+
+# Which of the avatar's joints each part of Halo's biped is, and the joint that
+# lies beyond it on the same bone. Avatar items are authored on the NXE skeleton
+# in metres, so its joints are where the item's own joints are; Halo's biped is
+# where the game's animations put them.
+#
+# Which way the fit goes is decided by the game, not by taste. Halo's animations
+# carry a node transform for every frame, so a skeleton scaled down to a short
+# item would be put back the moment the biped animates: the bones cannot be
+# fitted to the mesh. The mesh is fitted to the bones instead - every joint is
+# carried onto its bone, the bone between two joints turns the mesh with it, and
+# the item keeps its own size everywhere else.
+BODY_JOINTS = (
+    (0, "bip01 pelvis", 1),
+    (1, "bip01 spine", 5),
+    (5, "bip01 spine1", 14),
+    (14, "bip01 neck", 19),
+    (19, "bip01 head", None),
+    (12, "bip01 l clavicle", 20),
+    (20, "bip01 l upperarm", 25),
+    (25, "bip01 l forearm", 33),
+    (33, "bip01 l hand", None),
+    (16, "bip01 r clavicle", 22),
+    (22, "bip01 r upperarm", 28),
+    (28, "bip01 r forearm", 36),
+    (36, "bip01 r hand", None),
+    (2, "bip01 l thigh", 6),
+    (6, "bip01 l calf", 11),
+    (11, "bip01 l foot", None),
+    (3, "bip01 r thigh", 8),
+    (8, "bip01 r calf", 15),
+    (15, "bip01 r foot", None),
+)
+
+# A leaf joint - the head, a hand, a foot - has no joint beyond it, so its own
+# geometry would fall to the bone above it and the helmet would ride the neck.
+# Each leaf carries a cap along its own bone, as long as the geometry nearest
+# that joint actually reaches: measured from the mesh, not guessed.
+BODY_FIT_INFLUENCES = 4
+
+
+def halo_point(joint, fit=1.0):
+    """One of the avatar's joints, in Halo's axes and units.
+
+    ``to_halo_space`` maps (x, y, z) to (z, x, y) and scales by the fit, and the
+    source joints have to be carried the same way or the fit would compare two
+    different spaces - the same mistake that once bound every NXE item to the
+    joints nearest the floor.
+    """
+    _parent, x, y, z = joint[:4]
+    scale = HALO_UNITS_PER_METRE * fit
+    return (z * scale, x * scale, y * scale)
+
+
+def fit_unit(vector):
+    size = math.sqrt(sum(value * value for value in vector))
+    if size <= 1e-9:
+        return None
+    return tuple(value / size for value in vector)
+
+
+def fit_length(vector):
+    return math.sqrt(sum(value * value for value in vector))
+
+
+def fit_between(first, second):
+    return tuple(second[i] - first[i] for i in range(3))
+
+
+def fit_shift(point, offset):
+    return tuple(point[i] + offset[i] for i in range(3))
+
+
+def fit_turn(first, second):
+    """The 3x3 turn that carries one direction onto another."""
+    a, b = fit_unit(first), fit_unit(second)
+    if a is None or b is None:
+        return ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    dot = max(-1.0, min(1.0, sum(a[i] * b[i] for i in range(3))))
+    if dot > 1.0 - 1e-9:
+        return ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    if dot < -1.0 + 1e-9:
+        # Opposite directions: any axis square to `a` gives the same half turn.
+        helper = (1.0, 0.0, 0.0) if abs(a[0]) < 0.9 else (0.0, 1.0, 0.0)
+        axis = fit_unit((a[1] * helper[2] - a[2] * helper[1],
+                         a[2] * helper[0] - a[0] * helper[2],
+                         a[0] * helper[1] - a[1] * helper[0]))
+        angle = math.pi
+    else:
+        axis = fit_unit((a[1] * b[2] - a[2] * b[1],
+                         a[2] * b[0] - a[0] * b[2],
+                         a[0] * b[1] - a[1] * b[0]))
+        angle = math.acos(dot)
+    x, y, z = axis
+    cosine, sine = math.cos(angle), math.sin(angle)
+    other = 1.0 - cosine
+    return ((other * x * x + cosine, other * x * y - sine * z,
+             other * x * z + sine * y),
+            (other * x * y + sine * z, other * y * y + cosine,
+             other * y * z - sine * x),
+            (other * x * z - sine * y, other * y * z + sine * x,
+             other * z * z + cosine))
+
+
+def fit_turned(turn, point):
+    return tuple(sum(turn[row][column] * point[column] for column in range(3))
+                 for row in range(3))
+
+
+def fit_gap(point, first, second):
+    """Distance from a point to a segment, in plain numbers."""
+    along = fit_between(first, second)
+    length_sq = sum(value * value for value in along)
+    if length_sq < 1e-9:
+        return fit_length(fit_between(first, point))
+    offset = fit_between(first, point)
+    factor = max(0.0, min(1.0, sum(offset[i] * along[i] for i in range(3)) / length_sq))
+    return fit_length(fit_between(
+        point, fit_shift(first, tuple(value * factor for value in along))))
+
+
+def body_fit_plan(armature, fit=1.0, points=None):
+    """Where each joint is now, where its bone is, and the turn between them.
+
+    ``points`` are the mesh's own vertices, in the same space; they are only
+    used to measure how far a leaf joint's geometry reaches, so a head can own
+    its helmet instead of handing it to the neck.
+    """
+    if not armature or not armature.data.bones:
+        return []
+    matrix = armature.matrix_world
+    plan = []
+    for nxe, bone_name, beyond in BODY_JOINTS:
+        bone = armature.data.bones.get(bone_name)
+        if bone is None:
+            return []
+        plan.append({"joint": nxe, "bone": bone_name, "beyond": beyond,
+                     "source": halo_point(NXE_JOINTS[nxe], fit),
+                     "target": tuple(matrix @ bone.head_local), "turn": None,
+                     "axis": None, "axial": None, "cap": 0.0})
+    by_joint = {entry["joint"]: entry for entry in plan}
+    for entry in plan:
+        beyond = entry["beyond"]
+        if beyond is None or beyond not in by_joint:
+            continue
+        first = fit_between(entry["source"], by_joint[beyond]["source"])
+        second = fit_between(entry["target"], by_joint[beyond]["target"])
+        entry["turn"] = fit_turn(first, second)
+        entry["axis"] = fit_unit(first)
+        if entry["axis"] is not None and fit_length(first) > 1e-9:
+            # How much longer Halo's bone is than the item's. This is what
+            # carries a joint onto the *next* joint's bone rather than only onto
+            # its own, and it is why a short avatar's elbows and knees land on
+            # Halo's: without it every joint stops at its own bone and the one
+            # past it misses by the difference in length.
+            entry["axial"] = fit_length(second) / fit_length(first)
+    # A leaf follows the bone it ends, so a glove or a boot keeps the angle it
+    # was modelled at instead of being stood on end by its own bone's direction.
+    for leaf, above in ((33, 25), (36, 28), (11, 6), (15, 8)):
+        if leaf in by_joint and above in by_joint:
+            by_joint[leaf]["turn"] = by_joint[above]["turn"]
+    if 19 in by_joint:
+        by_joint[19]["turn"] = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    for entry in plan:
+        if entry["turn"] is None:
+            entry["turn"] = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    leaves = [entry for entry in plan if entry["beyond"] is None]
+    for entry in leaves:
+        entry["cap"] = 0.0
+    for point in points or []:
+        nearest = min(plan, key=lambda entry: fit_length(
+            fit_between(entry["source"], point)))
+        if nearest["beyond"] is None:
+            nearest["cap"] = max(nearest["cap"], fit_length(
+                fit_between(nearest["source"], point)))
+    return plan
+
+
+def fit_body_points(points, edges, plan):
+    """Carry every point onto the plan's bones. Returns (points, scale, worst).
+
+    Each point is shared between the four nearest joints rather than split at
+    the nearest one, so the mesh between two joints bends instead of stepping
+    from one bone's frame to another's - which is what a shoulder does when the
+    arm comes down from the item's pose into Halo's.
+    """
+    by_joint = {entry["joint"]: entry for entry in plan}
+    head = by_joint.get(19)
+    scale = 1.0
+    if head and abs(head["source"][2]) > 1e-9:
+        # The item's own head joint goes on Halo's head node. That is the one
+        # size the two skeletons share - one body's head on another's - so the
+        # armour keeps the scale it was drawn at while its joints are moved.
+        scale = head["target"][2] / head["source"][2]
+    segments = {}
+    for entry in plan:
+        if entry["beyond"] is not None and entry["beyond"] in by_joint:
+            segments[entry["joint"]] = (entry["source"],
+                                        by_joint[entry["beyond"]]["source"])
+            continue
+        parent = NXE_JOINTS[entry["joint"]][0]
+        direction = None
+        if 0 <= parent < len(NXE_JOINTS):
+            direction = fit_unit(fit_between(halo_point(NXE_JOINTS[parent]),
+                                             entry["source"]))
+        if direction is None:
+            direction = (0.0, 0.0, 1.0)
+        length = max(entry["cap"], 1e-3)
+        segments[entry["joint"]] = (
+            entry["source"],
+            fit_shift(entry["source"], tuple(value * length
+                                             for value in direction)))
+
+    def weights_of(point):
+        scored = sorted(((fit_gap(point, first, second), joint)
+                         for joint, (first, second) in segments.items()),
+                        key=lambda pair: pair[0])[:BODY_FIT_INFLUENCES]
+        shares = [(joint, 1.0 / max(gap, 1e-4) ** 2) for gap, joint in scored]
+        total = sum(share for _joint, share in shares) or 1.0
+        return [(joint, share / total) for joint, share in shares]
+
+    placed = []
+    for point in points:
+        moved = [0.0, 0.0, 0.0]
+        for joint, share in weights_of(point):
+            entry = by_joint[joint]
+            offset = fit_between(entry["source"], point)
+            bone_axis = entry["axis"] or (0.0, 0.0, 1.0)
+            axial = entry["axial"] if entry["axial"] is not None else scale
+            along = sum(offset[i] * bone_axis[i] for i in range(3))
+            stretched = tuple(bone_axis[i] * along * axial
+                              + (offset[i] - bone_axis[i] * along) * scale
+                              for i in range(3))
+            turned = fit_turned(entry["turn"], stretched)
+            for axis in range(3):
+                moved[axis] += share * (entry["target"][axis] + turned[axis])
+        placed.append(tuple(moved))
+    # The soles belong on the floor. A joint is placed on its bone and the boot
+    # hangs below the ankle, so the lowest vertex can land a centimetre under.
+    low = min(point[2] for point in placed)
+    if low < 0.0:
+        placed = [(x, y, z - low) for x, y, z in placed]
+    worst = 1.0
+    for first, second in edges:
+        was = fit_length(fit_between(points[first], points[second]))
+        if was <= 1e-6:
+            continue
+        now = fit_length(fit_between(placed[first], placed[second]))
+        worst = max(worst, now / was, was / max(now, 1e-6))
+    return placed, scale, worst
+
+
+def retarget_body(object_data, armature, fit=1.0):
+    """Fit a whole body's mesh onto the biped, joint by joint.
+
+    A garment is placed by its own edge and grown by one uniform factor, which
+    is right for a hat or a tee: it is worn on a body and only has to reach the
+    same part of it. A body is different. The armour has the avatar's skeleton
+    inside it, and every joint of that skeleton has to end up on the matching
+    bone, or the bones animate something the armour is not.
+
+    Returns a report dict, or None when the rig is not the biped this table is
+    written for.
+    """
+    mesh = object_data.data
+    points = [tuple(vertex.co) for vertex in mesh.vertices]
+    if not points:
+        return None
+    plan = body_fit_plan(armature, fit, points)
+    if not plan:
+        return None
+    edges = [tuple(edge.vertices) for edge in mesh.edges]
+    placed, scale, worst = fit_body_points(points, edges, plan)
+    for vertex, point in zip(mesh.vertices, placed):
+        vertex.co = point
+    mesh.update()
+    tallest = max(point[2] for point in placed)
+    line = ("%d joints carried onto their bones, x%.3f, %.2f m tall, "
+            "worst edge x%.2f" % (len(plan), scale,
+                                  tallest / HALO_UNITS_PER_METRE, worst))
+    log("fitted %s to the biped's bones: %s" % (object_data.name, line))
+    return {"scale": scale, "height": tallest / HALO_UNITS_PER_METRE,
+            "worst": worst, "joints": len(plan), "lines": ["biped fit : " + line]}
+
+
+def rebind(object_data, armature, rigid=False):
+    """Skin again from scratch, so a re-fitted mesh does not keep old weights."""
+    for group in list(object_data.vertex_groups):
+        object_data.vertex_groups.remove(group)
+    for modifier in list(object_data.modifiers):
+        if modifier.type == "ARMATURE":
+            object_data.modifiers.remove(modifier)
+    return skin(object_data, armature, rigid=rigid)
+
 
 # ------------------------------------------------------------------- skinning
 
@@ -3164,6 +3474,10 @@ def halo_note(stem, mesh, armature, arms=False):
         "version   : %s" % VERSION,
         "build     : %s" % BUILD,
     ]
+    if not arms:
+        fitted = meta(mesh, "biped_fit")
+        if fitted:
+            lines.insert(4, "fit       : %s" % fitted)
     if arms:
         worst = meta(mesh, "carried_units")
         moved = meta(mesh, "carried_verts") or 0
@@ -3263,6 +3577,9 @@ def report_text(options, records, stems, armature, nxe=None):
             lines.append("  jms check : %s" % ("ok" if not count else
                                                "%d problem(s)" % count))
         lines.append("  placement : %s" % (record.get("placement") or "as authored"))
+        if record.get("biped_fit"):
+            for line in record["biped_fit"]["lines"]:
+                lines.append("  %s" % line)
         lines.append("  nxe rig   : %s" % (record.get("nxe_binding") or "not skinned"))
         lines.append("  bound to  : %s" % (record.get("binding") or "not skinned"))
         if record.get("halo_file"):
@@ -3526,10 +3843,13 @@ def main():
         if armature:
             prop = is_prop(merged, 3.0 / HALO_UNITS_PER_METRE)
             anchor = None if prop else garment_anchor(merged, armature)
+            body = bool(not prop and anchor is None and whole_body(merged))
             if prop:
                 record["placement"] = "kept where the file puts it, grown in place"
             elif anchor:
                 record["placement"] = anchor[2]
+            elif body:
+                record["placement"] = "fitted to the biped's bones, joint by joint"
             else:
                 record["placement"] = "body height, grown from the floor"
             to_halo_space(merged, fit, keep_position=prop, anchor=anchor)
@@ -3542,6 +3862,16 @@ def main():
             if armature_fp:
                 arms_item, arms_rig = arms_for(merged, armature, armature_fp,
                                                bone_name, record)
+            # A whole body is fitted to the bones after its arms are cut, so the
+            # first-person set keeps the geometry it was measured on: it is the
+            # set that was tuned to Halo's fingers, and a re-fitted sleeve would
+            # move every glove away from them.
+            if body:
+                fitted = retarget_body(merged, armature, fit)
+                if fitted:
+                    record["biped_fit"] = fitted
+                    merged["biped_fit"] = fitted["lines"][0]
+                    record["binding"] = rebind(merged, armature)
             if arms_item is None and armature_fp:
                 # Nothing on an arm bone (a hat, a badge). The second set still
                 # exists so every item has the pair tool.exe users expect, and

@@ -353,7 +353,45 @@ The Halo copies are grown to the biped, which is a 1.91 m Spartan against the
 biped's own floor-to-head height, lifts a beret onto the head and a tee's top to
 `spine1`. Cloth grows from the floor. A solid prop grows where it stands: its
 position belongs to the hand wearing it, and growing it from the ground would
-push it sideways, off the hand and onto an arm.
+push it sideways, off the hand and onto an arm. A whole body is not grown that
+way at all - it is fitted to the bones, joint by joint, as the next paragraphs
+describe.
+
+A body is the one case a single scale cannot fit, because it is not worn on the
+biped: it *is* the thing the bones animate. The Marine armour is a whole avatar
+body - 1.51 m of it, modelled in the avatar's T-pose on the avatar's own
+skeleton - and its shoulders sit 0.72 m below the biped's. Growing it would
+lift the figure and still leave every joint short of its bone, with the biped's
+arms hanging through the middle of its chest. So an item that spans more than
+0.8 of the 1.4 m body (a whole body, not a hat or a tee) is fitted joint by
+joint instead: each of the avatar's 19 joints is carried onto the Halo bone it
+belongs to, the bone between two joints is stretched to Halo's own length so the
+joint past it lands too, and the mesh around each joint turns with it - which is
+how an arm modelled straight out comes down into the pose Halo's skeleton
+holds. It is the mesh that is fitted to the skeleton, never the other way round:
+Halo's animations carry a node transform for every frame, so a skeleton shrunk
+to a short item would be put straight back by the first frame of the game's own
+animation.
+
+One size is kept from the item, the one the two skeletons share: its own head
+joint goes on Halo's head node. On the Marine that is x1.63 from the item's own
+metres (x1.20 on top of the x1.36 fit), which puts the armour at 2.46 m - the
+biped's own height, because the armour is a child avatar's body and its helmet
+is proportionally large. Its 19 bones all end up inside the armour, the nearest
+surface 0.2-5.4 units away, and the worst edge anywhere is x6.45, at the
+armpit, where an arm modelled out to the side is turned 79 degrees down. Nothing
+is cut and nothing is re-modelled: it is the same 5,294 vertices.
+`tools/test_body_fit.py` stands a body on the avatar's own joints and pins it:
+every joint lands on its bone to the last decimal, every bone ends Halo's length
+to within 1%, both arms lie along Halo's arm bones, the helmet rides the head and
+the soles end on the floor - and each check is run again against a fit that
+drops the turn, the length stretch or the leaf caps, and has to fail there.
+`report.txt` records it as `biped fit : 19 joints carried onto their bones,
+x1.195, 2.46 m tall, worst edge x6.45`.
+
+The first-person arms are cut from the body as it was before the fit, so the set
+that was tuned to Halo's fingers keeps the geometry it was measured on: fitting
+the body first would have moved every glove away from the bones it rides.
 
 Halo's body and hands are separate models, and the fingers exist only on the
 arms. An item whose nearest bone is a hand - a ring, a wristband - therefore also
