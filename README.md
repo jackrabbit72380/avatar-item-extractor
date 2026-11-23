@@ -233,6 +233,16 @@ from the body and the player sees the arms, not the body's:
   made the one view better and the other nine worse, so it stays where the
   item put it and the weights carry the fix.
 
+  Two more ways of moving it were built and measured before settling on
+  that. Sliding the guard down with no tilt at all (0.0 degrees) opens the
+  same cavity, and on the right hand it stretches its edges x1.79 - past the
+  1.6 limit, so that side refused the move. Wrapping the guard onto Halo's
+  own thumb surface vertex by vertex moves 51 of its 59 vertices and keeps
+  its edges to x1.42, but a flat plate cannot be folded onto a round thumb:
+  it collapses into a horn with a hole at its root, worse from every angle
+  than leaving it alone. The guard is a plate and Halo's thumb is a tube,
+  and no displacement of one becomes the other.
+
   Its vertex groups are renamed to Halo's (`frame l upperarm`,
   `frame l forearm`, `frame l wriste`), and a glove the item weighted to its
   forearm alone - an avatar rig has no finger bones - hands over to
