@@ -65,8 +65,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v40"
-BUILD = "2026-11-23 fp-arms-fit-to-halos-arms"
+VERSION = "v41"
+BUILD = "2026-11-23 fp-arms-sleeve-angle"
 
 # How far past Halo's own fingertips an arm's end is laid, in Halo units. A
 # glove that stops exactly at a finger bone's tip leaves that tip standing out
@@ -1044,12 +1044,16 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
     # each pass, so the glove stays on Halo's hand while the sleeve finds the
     # arm the game wears.
     want = halo_arm_axis(armature_fp, side)
-    # Measured the way Halo's own arm is measured - the skin its upper arm,
-    # forearm and hand bones hold - so the two axes are the same measurement
-    # and the angle between them is the angle a player sees.
-    worn = arm_centre(points, weights, side)
-    sleeve = worn if len(worn) >= 12 else [point for point, t in zip(points, along)
-                                           if t <= cuff]
+    # Measured by the same rule as Halo's own arm: the skin the arm's bones
+    # hold at full weight. `arm_centre` was used here first and stopped a
+    # degree short, because it counts a vertex the arm bones share with the
+    # chest as the arm's and Halo's side does not - one measurement on both
+    # sides is what makes the angle between them the angle a player sees.
+    own_bones = ("bip01 %s upperarm" % side, "bip01 %s forearm" % side)
+    sleeve = [point for point, per in zip(points, weights)
+              if max(per.get(name, 0.0) for name in own_bones) > 0.5]
+    if len(sleeve) < 12:
+        sleeve = [point for point, t in zip(points, along) if t <= cuff]
     if want is not None and len(sleeve) >= 12:
         kept = {"twist": place.get("twist", 0.0),
                 "glove": place.get("glove", "none")}
@@ -1058,98 +1062,6 @@ def side_carry(armature, armature_fp, side, points, weights, middle=None,
             place = fitted
             place["twist"], place["glove"] = kept["twist"], kept["glove"]
     return place
-
-
-def biggest_eigen(grid, size=4):
-    """The largest eigenvector of a small symmetric matrix, by Jacobi sweeps.
-
-    Four by four and symmetric, so a handful of plane turns diagonalises it
-    exactly. Power iteration was tried first and answered with the wrong
-    vector often enough to move an arm the wrong way, and shifting it to fix
-    that only made it crawl.
-    """
-    work = [list(row) for row in grid]
-    vectors = [[1.0 if row == col else 0.0 for col in range(size)]
-               for row in range(size)]
-    for _sweep in range(40):
-        off = sum(work[row][col] ** 2 for row in range(size)
-                  for col in range(size) if row != col)
-        if off < 1e-20:
-            break
-        for first in range(size):
-            for second in range(first + 1, size):
-                pair = work[first][second]
-                if abs(pair) < 1e-20:
-                    continue
-                theta = (work[second][second] - work[first][first]) / (2.0 * pair)
-                sign = 1.0 if theta >= 0.0 else -1.0
-                turn = sign / (abs(theta) + math.sqrt(theta * theta + 1.0))
-                cosine = 1.0 / math.sqrt(turn * turn + 1.0)
-                sine = turn * cosine
-                # Every row and column but the pair itself, then the pair
-                # itself in one go: turning those four entries twice as the
-                # loops would have done left the sweep half-finished, and the
-                # best turn came back a couple of degrees short.
-                for row in range(size):
-                    if row in (first, second):
-                        continue
-                    one, two = work[row][first], work[row][second]
-                    work[row][first] = cosine * one - sine * two
-                    work[row][second] = sine * one + cosine * two
-                    one, two = work[first][row], work[second][row]
-                    work[first][row] = cosine * one - sine * two
-                    work[second][row] = sine * one + cosine * two
-                one, two = work[first][first], work[second][second]
-                work[first][first] = (cosine * cosine * one
-                                      - 2.0 * sine * cosine * pair
-                                      + sine * sine * two)
-                work[second][second] = (sine * sine * one
-                                        + 2.0 * sine * cosine * pair
-                                        + cosine * cosine * two)
-                work[first][second] = work[second][first] = 0.0
-                for row in range(size):
-                    one, two = vectors[row][first], vectors[row][second]
-                    vectors[row][first] = cosine * one - sine * two
-                    vectors[row][second] = sine * one + cosine * two
-    best = max(range(size), key=lambda index: work[index][index])
-    return [vectors[row][best] for row in range(size)], work[best][best]
-
-
-def best_turn(pairs, here, there):
-    """The one turn taking the first points onto the second, as a 3x3.
-
-    Horn's answer, by power iteration on the 4x4 the cross-covariance builds:
-    no library, and the largest eigenvector is the quaternion of the best turn
-    whether or not the points are a mirror of each other.
-    """
-    cross = [[0.0] * 3 for _ in range(3)]
-    for first, second in pairs:
-        for row in range(3):
-            one = first[row] - here[row]
-            for col in range(3):
-                cross[row][col] += one * (second[col] - there[col])
-    grid = [
-        [cross[0][0] + cross[1][1] + cross[2][2],
-         cross[1][2] - cross[2][1], cross[2][0] - cross[0][2],
-         cross[0][1] - cross[1][0]],
-        [cross[1][2] - cross[2][1],
-         cross[0][0] - cross[1][1] - cross[2][2],
-         cross[0][1] + cross[1][0], cross[2][0] + cross[0][2]],
-        [cross[2][0] - cross[0][2], cross[0][1] + cross[1][0],
-         -cross[0][0] + cross[1][1] - cross[2][2],
-         cross[1][2] + cross[2][1]],
-        [cross[0][1] - cross[1][0], cross[2][0] + cross[0][2],
-         cross[1][2] + cross[2][1],
-         -cross[0][0] - cross[1][1] + cross[2][2]],
-    ]
-    held, _value = biggest_eigen(grid)
-    length = math.sqrt(sum(value * value for value in held))
-    if length < 1e-12:
-        return None
-    w, x, y, z = [value / length for value in held]
-    return (1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y),
-            2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
-            2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y))
 
 
 def limit_turn(turn, most=10.0):
@@ -1228,8 +1140,11 @@ def halo_arm_axis(armature_fp, side):
     than pinned on - and it is not quite the bone line, which is why lining up
     with the bones alone left the arms visibly tilted.
     """
-    names = {"frame %s upperarm" % side, "frame %s forearm" % side,
-             "frame %s wriste" % side}
+    # Upper arm and forearm, never the hand: the glove is weighted onto the
+    # finger bones once it is carried, so a hand counted here would be in
+    # Halo's measure and out of the item's, and the two axes would never be the
+    # same measurement. The sleeve is what leans, and it is what a player sees.
+    names = {"frame %s upperarm" % side, "frame %s forearm" % side}
     points = []
     for item in halo_arms(armature_fp):
         groups = {group.name: group.index
@@ -3076,7 +2991,8 @@ def share_files(source, target, endings=None):
         path = os.path.join(source, name)
         if not os.path.isfile(path):
             continue
-        if endings is not None and not name.lower().endswith(endings):
+        if endings is not None and not name.lower().endswith(
+                tuple(ending.lower() for ending in endings)):
             continue
         shutil.copyfile(path, os.path.join(target, name))
         copied += 1
@@ -3302,8 +3218,12 @@ def main():
             os.makedirs(folder, exist_ok=True)
         # The arms are textured with the item's own maps, so the folder they
         # are built from carries them too rather than pointing back at the
-        # body's.
-        share_files(os.path.join(item_dir, "bitmaps"), fp_bitmaps)
+        # body's - each channel order taking its own, because the pc and xbox
+        # masks are not the same bytes.
+        for order in ("pc", "xbox"):
+            order_dir = os.path.join(out, HEK_DIR, order, "data", stem)
+            share_files(os.path.join(order_dir, "bitmaps"),
+                        os.path.join(order_dir, "fp", "bitmaps"))
         # Halo rig: the item on the biped, arms loaded, as a .blend that opens
         # straight onto it so it can simply be exported from there. The .jms is
         # Halo's own text model, and the .fbx is the same thing for anything
