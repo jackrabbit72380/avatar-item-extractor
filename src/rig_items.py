@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v82"
-BUILD = "2026-11-24 rig-audit"
+VERSION = "v83"
+BUILD = "2026-11-24 banded-tone"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -742,6 +742,8 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
     # sheet is painted in, and every sheet is brought to it.
     tone = None
     measured = []
+    sheet_tone = {}
+    tone = None
     tone_masks = {}
     decoded = {}
     sheets = [mesh for mesh in kept
@@ -769,6 +771,7 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
             if painted:
                 measured.append(painted)
                 tone_masks[mesh["image"]] = mask
+                sheet_tone[mesh["image"]] = painted
         if len(measured) > 1 and len(set(measured)) > 1:
             tone = tuple(sum(each[channel] for each in measured) // len(measured)
                          for channel in range(3))
@@ -777,13 +780,67 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
                 % (len(measured), ", ".join(str(each) for each in measured), tone))
     # The two halves of the head are painted on two sheets that were graded
     # differently, and the whole-sheet gain in port_material brings both to one
-    # tone. It must be that and nothing else: copying one sheet's paint across,
-    # or baking a per-point gain field across, both resample two different texel
-    # grids at the resolution of the head's vertices - one colour per ~500
-    # texels - and an eye is 30x15 texels with 1-3 texel lashes, so the copy came
-    # back as a dash and the field as a step. A gain that is a single number per
-    # sheet cannot do either: it moves every texel by the same factor, so the
-    # eyes stay exactly as the artist drew them.
+    # tone: it measures each sheet's paint and scales it to the mean of the two,
+    # so both halves end at the same measured tone by construction. Copying one
+    # half's paint across, or baking a per-point gain field, both resample two
+    # different texel grids at the resolution of the head's vertices - an eye is
+    # 30x15 texels with 1-3 texel lashes, and it came back as a dash. A gain that
+    # is one number per sheet cannot do that: it moves every texel by the same
+    # factor. What is measured here is the join itself, so a build that ships a
+    # two-tone face says so in the log and in report.txt instead of being found
+    # in game.
+    # The gain port_material is about to apply to each sheet, so the join can be
+    # measured as it will ship rather than as the files arrived.
+    sheet_gain = {}
+    for image, tone_here in sheet_tone.items():
+        if tone:
+            sheet_gain[image] = tuple(
+                tone[channel] / float(tone_here[channel])
+                if tone_here[channel] else 1.0 for channel in range(3))
+    halves = [mesh for mesh in sheets if mesh["image"] in decoded]
+    joins = []
+    if len(halves) > 1:
+        ref = halves[0]
+        ref_pixels, ref_w, ref_h = decoded[ref["image"]]
+        for other in halves[1:]:
+            if other["image"] == ref["image"]:
+                continue
+            pixels, width, height = decoded[other["image"]]
+            result = glb_model.tone_bands(
+                pixels, width, height, other, ref_pixels, ref_w, ref_h, ref)
+            if result:
+                out_pixels, was, now, bands = result
+                model["images"][other["image"]]["data"] = face_eyes.png_bytes(
+                    out_pixels, width, height)
+                decoded[other["image"]] = (out_pixels, width, height)
+                toned = True
+                join = ("%d band(s) of 32 texels: the two halves differ by %.1f "
+                        "level(s) where the eye reads a join, from %.1f before "
+                        "the correction" % (bands, now, was))
+                joins.append(join)
+                if now > 6.0:
+                    log("port: %s - the correction could not close it, so the "
+                        "join will show" % join)
+                else:
+                    log("port: %s - one tone" % join)
+                continue
+            gap = glb_model.join_difference(
+                pixels, width, height, other, ref_pixels, ref_w, ref_h, ref,
+                gain=sheet_gain.get(other["image"]),
+                ref_gain=sheet_gain.get(ref["image"]))
+            if not gap:
+                continue
+            middle, ninety, samples = gap
+            join = ("after the gain the two halves differ by %.1f level(s) at "
+                    "the median across %d point(s) (%0.f at the 90th) where the "
+                    "eye reads a join" % (middle, samples, ninety))
+            joins.append(join)
+            if middle > 12.0:
+                log("port: %s - that is two paint jobs, not one graded twice, so "
+                    "the join will show; a gain cannot fix it without erasing one "
+                    "half's art" % join)
+            else:
+                log("port: %s - one tone" % join)
     # What every mesh on a sheet reads, added up: a head painted on one sheet
     # for both halves has two islands, and laying skin over "everything this
     # half does not read" would paint the other half's face out - one eye, the
@@ -868,8 +925,10 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
                     half = glb_model.decode_png(
                         model["images"][mesh["image"]]["data"])
                 scalp = skull_uvs(mesh, half[0], half[1], half[2])
+            face = "face" in mesh["material"].lower()
             material, written = port_material(
-                shot, stem, out, model, eyes_forward=eyes_forward, tone=tone,
+                shot, stem, out, model, eyes_forward=eyes_forward,
+                tone=(None if toned and face else tone),
                 hair_tone=hair_tone, scalp_uvs=scalp, scalp_tone=scalp_tone,
                 tone_mask=tone_masks.get(mesh.get("image")),
                 outside_mask=outside.get(mesh.get("image")))
@@ -916,6 +975,7 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
     body_mesh = next((mesh for mesh in kept
                       if glb_model.flatten(mesh["name"]) == glb_model.BODY_SLOT), None)
     return {"objects": objects, "textures": textures, "lines": lines,
+            "join": joins,
             "material_objects": list(made.values()), "box": box,
             "costume": costume,
             "body_material": (made.get((body_mesh["material"], body_mesh.get("image")))
@@ -4502,6 +4562,8 @@ def report_text(options, records, stems, armature, nxe=None):
         lines.append("  bound to  : %s" % (record.get("binding") or "not skinned"))
         if record.get("rig"):
             lines.append("  rig check : %s" % record["rig"])
+        if record.get("join"):
+            lines.append("  join      : %s" % record["join"])
         if record.get("halo_file"):
             lines.append("  halo file : %s" % record["halo_file"])
         lines.append("  hek builds: data\\%s sp\\ (its own colours) and data\\%s"
@@ -4930,6 +4992,8 @@ def main():
                 if ported["objects"]:
                     meshes = meshes + ported["objects"]
                     record["port"] = ported["lines"]
+                    if ported.get("join"):
+                        record["join"] = "; ".join(ported["join"])
                     port_textures[item_stem(record)] = ported["textures"]
                     ported_materials = ported["material_objects"]
                     ported_head_material = ported["head_material"]

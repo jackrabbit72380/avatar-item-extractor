@@ -946,6 +946,237 @@ def uv_coverage(width, height, uv_triangles, into=None):
     return mask
 
 
+def _nearest_reflected(points, colours, cell=0.004):
+    """A lookup: a surface point -> what the reflected sheet paints there."""
+    buckets = {}
+    for at, (x, y, z) in enumerate(points):
+        buckets.setdefault((int(-x // cell), int(y // cell), int(z // cell)),
+                           []).append(at)
+
+    def find(point):
+        x, y, z = point
+        key = (int(-x // cell), int(y // cell), int(z // cell))
+        for radius in (1, 2, 3, 4):
+            best = None
+            found = None
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    for dz in range(-radius, radius + 1):
+                        for at in buckets.get((key[0] + dx, key[1] + dy,
+                                               key[2] + dz), ()):
+                            sx, sy, sz = points[at]
+                            distance = (-sx - x) ** 2 + (sy - y) ** 2 + (sz - z) ** 2
+                            if best is None or distance < best:
+                                best = distance
+                                found = at
+            if found is not None:
+                return found
+        return None
+    return find
+
+
+def tone_bands(pixels, width, height, mesh, source, src_width, src_height,
+               src_mesh, band=32, cell=0.004, low=0.7, high=1.45):
+    """Match one head half's tone to the other in bands, and prove it did.
+
+    A single gain per sheet equalises the two sheets' medians and nothing else,
+    and two 360sona sheets are not graded by one factor: they differ along a
+    curve, so one avatar came out with a join of 24 levels. What the eye reads as
+    a two-tone face is the difference in *brightness over an area*, not in texels:
+    a band of 32 texels is wide enough for the art to average away (the two sides
+    of a face are not painted the same eyes, and that must not count) and narrow
+    enough to carry the grading's curve.
+
+    So the correction is measured with the same bands the join is measured with.
+    Each band of this sheet is multiplied by the ratio between the other sheet's
+    brightness there and this one's, the band gains are smoothed so they cannot
+    paint an edge, and the result is measured again. Because the gain is computed
+    from the same statistic, the band means agree by construction: the number
+    below is the join that ships.
+
+    Returns (pixels, before, after, bands) or None.
+    """
+    points, colours, texels = _surface_samples(mesh, pixels, width, height)
+    if not points:
+        return None
+    src_points, src_colours, _ = _surface_samples(
+        src_mesh, source, src_width, src_height)
+    if not src_points:
+        return None
+    find = _nearest_reflected(src_points, src_colours, cell)
+    across = (width + band - 1) // band
+    down = (height + band - 1) // band
+
+    # What each band of this sheet reads, against what the other sheet paints on
+    # the same part of the head.
+    sums = {}
+    for at, (x, y) in enumerate(texels):
+        other = find(points[at])
+        if other is None:
+            continue
+        there = src_colours[other]
+        here = colours[at]
+        if min(here) <= 12 or min(there) <= 12:
+            continue
+        if min(here) >= 232 or min(there) >= 232:
+            continue
+        key = (y // band) * across + (x // band)
+        box = sums.get(key)
+        if box is None:
+            box = sums[key] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0]
+        for channel in range(3):
+            box[channel] += there[channel]
+            box[channel + 3] += here[channel]
+        box[6] += 1
+    if not sums:
+        return None
+
+    def stats(box):
+        count = float(box[6])
+        return ([box[channel] / count for channel in range(3)],
+                [box[channel + 3] / count for channel in range(3)])
+
+    before = []
+    gains = [[None] * across for _ in range(down)]
+    for key, box in sums.items():
+        if box[6] < 64:
+            continue
+        there, here = stats(box)
+        before.append(abs((0.299 * there[0] + 0.587 * there[1] + 0.114 * there[2])
+                          - (0.299 * here[0] + 0.587 * here[1] + 0.114 * here[2])))
+        row, column = divmod(key, across)
+        gains[row][column] = [min(high, max(low, there[channel] / here[channel]))
+                              if here[channel] > 6 else 1.0 for channel in range(3)]
+    if len(before) < 8:
+        return None
+
+    # Smoothed twice, so one band that is all eye cannot pull its neighbours into
+    # a blotch: the field has to change slowly to be a grading difference.
+    for _ in range(2):
+        smoothed = [row[:] for row in gains]
+        for row in range(down):
+            for column in range(across):
+                here = gains[row][column]
+                if here is None:
+                    continue
+                total = [0.0, 0.0, 0.0]
+                count = 0
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        at_row, at_column = row + dy, column + dx
+                        if not (0 <= at_row < down and 0 <= at_column < across):
+                            continue
+                        neighbour = gains[at_row][at_column]
+                        if neighbour is None:
+                            continue
+                        for channel in range(3):
+                            total[channel] += neighbour[channel]
+                        count += 1
+                smoothed[row][column] = [total[channel] / count
+                                         for channel in range(3)]
+        gains = smoothed
+    known = [gain for row in gains for gain in row if gain]
+    if not known:
+        return None
+    middle = [sorted(gain[channel] for gain in known)[len(known) // 2]
+              for channel in range(3)]
+    for row in range(down):
+        for column in range(across):
+            if gains[row][column] is None:
+                gains[row][column] = list(middle)
+
+    out = bytearray(pixels)
+    for at, (x, y) in enumerate(texels):
+        gain = gains[y // band][x // band]
+        spot = (y * width + x) * 4
+        for channel in range(3):
+            out[spot + channel] = min(255, max(0, int(
+                pixels[spot + channel] * gain[channel] + 0.5)))
+
+    # What ships: the same bands, measured on the pixels that were written.
+    after = []
+    for key, box in sums.items():
+        if box[6] < 64:
+            continue
+        row, column = divmod(key, across)
+        gain = gains[row][column]
+        there, here = stats(box)
+        after.append(abs((0.299 * there[0] + 0.587 * there[1] + 0.114 * there[2])
+                         - (0.299 * here[0] * gain[0] + 0.587 * here[1] * gain[1]
+                            + 0.114 * here[2] * gain[2])))
+    before.sort()
+    after.sort()
+    return (out, before[len(before) // 2], after[len(after) // 2], len(after))
+
+
+def join_difference(pixels, width, height, mesh, source, src_width, src_height,
+                    src_mesh, cell=0.004, gain=None, ref_gain=None):
+    """How far apart the two halves of a head are, in levels, point by point.
+
+    The one number that says whether a face is two-tone: every texel of this half
+    is placed on the head, reflected across the midline, and compared with the
+    colour the other sheet paints at the same point. The median of those
+    differences is what the eye reads as a join - 0 is one paint, and a large
+    number means the two sheets are painted differently rather than graded
+    differently, which no gain can fix without erasing one of them.
+
+    The gains the build will apply are passed in, so the number reported is the
+    one that ships rather than the raw difference between the files.
+
+    Returns (median, ninety_percentile, samples) or None.
+    """
+    points, colours, texels = _surface_samples(mesh, pixels, width, height)
+    if not points:
+        return None
+    src_points, src_colours, _ = _surface_samples(
+        src_mesh, source, src_width, src_height)
+    if not src_points:
+        return None
+    find = _nearest_reflected(src_points, src_colours, cell)
+
+    # Measured on bands of the sheet, not on texels one by one: a texel-by-texel
+    # difference is mostly art - the two sides of a face are not painted the same
+    # eyes - and says nothing about tone. A 32-texel band averages the art away
+    # and leaves the brightness the eye reads as a two-tone face.
+    band = 32
+    across = (width + band - 1) // band
+    down = (height + band - 1) // band
+    sums = {}
+    for at, (x, y) in enumerate(texels):
+        other = find(points[at])
+        if other is None:
+            continue
+        there = src_colours[other]
+        here = colours[at]
+        if min(here) <= 12 or min(there) <= 12:
+            continue
+        if min(here) >= 232 or min(there) >= 232:
+            continue
+        if gain:
+            here = tuple(min(255, here[channel] * gain[channel])
+                         for channel in range(3))
+        if ref_gain:
+            there = tuple(min(255, there[channel] * ref_gain[channel])
+                          for channel in range(3))
+        key = (y // band) * across + (x // band)
+        box = sums.get(key)
+        if box is None:
+            box = sums[key] = [0.0, 0.0, 0]
+        box[0] += 0.299 * there[0] + 0.587 * there[1] + 0.114 * there[2]
+        box[1] += 0.299 * here[0] + 0.587 * here[1] + 0.114 * here[2]
+        box[2] += 1
+    differences = []
+    for box in sums.values():
+        if box[2] < 64:
+            continue
+        differences.append(abs(box[0] / box[2] - box[1] / box[2]))
+    if len(differences) < 8:
+        return None
+    differences.sort()
+    return (differences[len(differences) // 2],
+            differences[int(len(differences) * 0.9)], sum(box[2] for box in sums.values()))
+
+
 def skin_tones(rgba, width, height, mask=None):
     """The colour of the skin a sheet is painted in: the median of its skin texels.
 
