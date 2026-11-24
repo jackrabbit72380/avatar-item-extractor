@@ -859,7 +859,9 @@ pages are the ones that apply.
 
 Each item arrives as one data folder per channel order, and the extractor writes
 `Compile <item> Avatar.bat` beside them - for the Marine armour that is
-`Compile UNSC Marine Armor Avatar.bat`. Run it and it looks for the editing kit
+`Compile UNSC Marine Armor Avatar.bat`, in the output folder's root, next to
+`extracted for hek users`. The same file is at the repository root, so it can be
+read without running the extractor first; the two are kept byte-identical. Run it and it looks for the editing kit
 unpacked near it (tool.exe beside the script, one folder up, one folder down or
 in a folder next to it) and only asks where the kit is when none of those has
 one. It copies the folders into the kit's `data\`, compiles the bitmaps and the
