@@ -8,10 +8,12 @@ the avatar glances sideways in every frame while the head geometry looks
 straight ahead. Nothing in the mesh or the UVs causes it and nothing in the mesh
 or the UVs can fix it: the ink has to move.
 
-``centre_pupils`` moves each eye's pupil horizontally until it is centred in
-that eye, taking the skin it covers with it - the vacated pixels are filled from
-the same row just outside the eye, so the tone stays the face's own and no seam
-appears. The eyelid line and everything else are left exactly as they are.
+``centre_pupils`` rebuilds each eye: the lid is folded about that eye's own
+middle - the drawings are swept arcs, so a pupil merely moved into the middle
+of the box ends up under one side of the lid and the pair stops matching - and
+the pupil is drawn as an iris under the fold, in the face's own ink, with the
+skin tone sampled from the ring around the eye. Everything outside the two eyes
+is left exactly as it is.
 
 Nothing here imports ``bpy``; the pixels and the PNG are plain Python so
 ``tools/test_face_eyes.py`` can pin the behaviour without Blender.
@@ -182,35 +184,54 @@ def centre_pupils(rgba, width, height, force=False):
                   key=lambda colour: sum(colour))
         ink = (min(skin[0], ink[0]), min(skin[1], ink[1]), min(skin[2], ink[2]))
 
-        # Take the lid line away, then put it back as it was: only the swelling
-        # moves, so the eye keeps the arc it was drawn with.
-        lid = {x: top[x] for x in where}
+        # The lid is drawn as a swept arc, so a pupil in the middle of the box
+        # sits under one side of it - and on a mirrored pair of eyes that reads
+        # as two different eyes, one brow-heavy and one not. The arc is folded
+        # about the eye's own middle before it is drawn again, and the pupil
+        # hangs under the fold, so both eyes come out the same shape.
+        folded = {}
+        for x in range(left, right + 1):
+            here = top.get(x)
+            there = top.get(int(round(2 * middle - x)))
+            if here is None and there is None:
+                continue
+            # Column by column, not offset by offset: an eye centred on a
+            # half pixel would otherwise round two offsets onto one column and
+            # leave its neighbour blank, which draws the lid as a comb.
+            folded[x] = int(round(((here if here is not None else there)
+                                   + (there if there is not None else here)) / 2.0))
+
+        # Clear the eye, fringe and all, so nothing of the old arc is left to
+        # disagree with the new one.
         for x in range(left, right + 1):
             if x not in top:
                 continue
-            for y in range(top[x] + 1, last + 1):
+            for y in range(top[x], last + 1):
                 at = (y * width + x) * 4
-                luma = _luma(rgba, width, x, y)
-                cover = min(1.0, max(0.0, (skin_luma - luma)
+                cover = min(1.0, max(0.0, (skin_luma - _luma(rgba, width, x, y))
                                     / max(1.0, skin_luma - 40.0)))
                 for channel in range(3):
                     pixels[at + channel] = int(round(
                         skin[channel] * (1 - cover) + skin[channel] * cover))
 
-        # Put the eye back as an iris in the middle, under the lid line it was
-        # drawn with: round, hanging just below the apex, so the gaze is level.
         radius = max(3.0, (last - first + 1) * 0.45)
-        centre_x = middle
         centre_y = (first + last + 1) / 2.0
-        for y in range(max(0, int(centre_y - radius) - 1),
-                       min(height, int(centre_y + radius) + 2)):
-            for x in range(max(0, int(centre_x - radius) - 1),
-                           min(width, int(centre_x + radius) + 2)):
-                dx = (x - centre_x) / radius
-                dy = (y - centre_y) / radius
-                if x in lid and y < lid[x]:
-                    # The iris sits under the lid line, never over it.
+        for x in sorted(folded):
+            lid_row = folded[x]
+            offset = x - middle
+            # The lid line, two rows deep as it was drawn.
+            for y, cover in ((lid_row, 1.0), (lid_row + 1, 0.45)):
+                if y < 0 or y >= height:
                     continue
+                at = (y * width + x) * 4
+                for channel in range(3):
+                    base = pixels[at + channel]
+                    pixels[at + channel] = int(round(
+                        base * (1 - cover) + ink[channel] * cover))
+            # The pupil, an iris under the middle of that lid.
+            for y in range(lid_row + 2, min(last, int(centre_y + radius)) + 1):
+                dx = offset / radius
+                dy = (y - centre_y) / radius
                 reach = (dx * dx + dy * dy) ** 0.5
                 cover = min(1.0, max(0.0, (1.0 - reach) * radius + 0.5))
                 if cover <= 0.0:
@@ -220,18 +241,8 @@ def centre_pupils(rgba, width, height, force=False):
                     base = pixels[at + channel]
                     pixels[at + channel] = int(round(
                         base * (1 - cover) + ink[channel] * cover))
-
-        # The lid line goes back on top, as drawn: the iris is what sits under
-        # it, never a black lid of its own.
-        for x in range(left, right + 1):
-            if x not in top:
-                continue
-            for y in range(top[x], min(last, top[x] + 1) + 1):
-                at = (y * width + x) * 4
-                for channel in range(3):
-                    pixels[at + channel] = rgba[at + channel]
-        notes.append("face: eye %d swelling was %.0f%% across, regrown at 50%% in "
-                     "the middle of the eye"
+        notes.append("face: eye %d swelling was %.0f%% across, level iris drawn "
+                     "under a lid folded about the eye's middle"
                      % (index, 100 * (swelling_at - left) / max(1, right - left)))
     return pixels, notes
 

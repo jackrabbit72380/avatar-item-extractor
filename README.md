@@ -726,12 +726,17 @@ across each eye, both toward the same side, so under a helmet the avatar looks
 off to one side in every frame while his head geometry faces straight ahead.
 Nothing in the mesh or the UVs causes it, and nothing in them can fix it.
 
-`--eyes-forward` (or an `eyes_forward.txt` beside the `.bat`) redraws the pupil
-in the middle of each eye before the face map is written. It is deliberately
-small: the eyelid line stays exactly where it was drawn, the skin tone is the
-face's own, and only the swelling moves, so both eyes come out level. It is
-off unless asked for, because it edits the avatar's own art rather than the
-item's.
+`--eyes-forward` (or an `eyes_forward.txt` beside the `.bat`) rebuilds each eye
+before the face map is written: the eyelid is folded about the eye's own middle
+and the pupil drawn under the middle of that fold, in the face's own ink and
+skin tone. All three numbers matter, and each was got wrong first: moving the
+pupil alone leaves the lid swept one way and the two eyes looking unalike, and
+drawing column by column rather than offset by offset is what keeps the lid a
+line instead of a comb. It is off unless asked for, because it edits the
+avatar's own art rather than the item's.
+
+Both eyes come out mirror images of each other to within a pixel, measured
+across all 71 columns of each.
 
 ```
 python rig_items.py --items extracted --out extracted \

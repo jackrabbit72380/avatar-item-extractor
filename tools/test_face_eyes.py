@@ -103,24 +103,39 @@ def main():
            and abs(after - 0.5) <= 0.12, " (%.2f)" % (after or 0))
     report("both eyes reported", len(notes) == 2, " (%d notes)" % len(notes))
 
-    # The lid line: every column's highest ink must be the row it was drawn on.
-    def lid_rows(pixels):
+    # The lid: folded about each eye's own middle, so the two eyes are mirror
+    # images of one another - and no column is left blank, which is how a lid
+    # drawn offset by offset on a half-pixel centre comes out as a comb.
+    def lid_rows(pixels, left, right):
         rows = {}
-        for left, right in ((40, 110), (146, 216)):
-            for x in range(left, right + 1):
-                for y in range(90, 140):
-                    at = (y * width + x) * 4
-                    if 0.299 * pixels[at] + 0.587 * pixels[at + 1] + 0.114 * pixels[at + 2] < 140:
-                        rows[x] = y
-                        break
+        for x in range(left, right + 1):
+            for y in range(88, 140):
+                at = (y * width + x) * 4
+                if 0.299 * pixels[at] + 0.587 * pixels[at + 1] + 0.114 * pixels[at + 2] < 140:
+                    rows[x] = y
+                    break
         return rows
 
-    before_lid = lid_rows(face)
-    after_lid = lid_rows(fixed)
-    kept = sum(1 for x in before_lid if before_lid[x] == after_lid.get(x))
-    report("the lid line is still drawn where it was",
-           kept >= 0.95 * len(before_lid),
-           " (%d of %d columns unchanged)" % (kept, len(before_lid)))
+    left_eye = lid_rows(fixed, 40, 110)
+    right_eye = lid_rows(fixed, 146, 216)
+    report("every column still has its lid",
+           len(left_eye) == 71 and len(right_eye) == 71,
+           " (%d and %d of 71 columns)" % (len(left_eye), len(right_eye)))
+    mirrored = 0
+    compared = 0
+    for offset in range(0, 36):
+        here = left_eye.get(75 + offset)
+        there = right_eye.get(181 - offset)
+        if here is None or there is None:
+            continue
+        compared += 1
+        if abs(here - there) <= 1:
+            mirrored += 1
+    report("the two eyes mirror each other", compared >= 30 and mirrored == compared,
+           " (%d of %d mirror columns agree within a pixel)" % (mirrored, compared))
+    apex = min(left_eye.values())
+    report("the lid still sits on its own rows", 90 <= apex <= 104,
+           " (apex row %d)" % apex)
 
     # A face whose eyes are already level: nothing may change, not one byte.
     level = canvas(width, height)
