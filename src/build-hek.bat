@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-title Build an avatar item in Halo's editing kit
+title %~n0
 
 rem ===========================================================================
 rem  Runs the two tool.exe verbs over each build folder the extractor wrote:
@@ -8,14 +8,15 @@ rem
 rem    tool bitmaps "<build>\bitmaps"    .tif -> .bitmap tags
 rem    tool model   "<build>"            .jms -> .gbxmodel
 rem
-rem  Put this file in the item's output folder - beside "extracted for hek
-rem  users" - and run it. A kit that is already unpacked near it is found on its
-rem  own: the folder holding tool.exe beside this file, one folder up, one folder
-rem  down, or next to this folder is used without asking anything. The folder's
+rem  This file is written beside the builds as "Compile <item> Avatar.bat", named
+rem  after the item it compiles, and it runs from there. A kit already unpacked
+rem  near it is found on its own: the folder holding tool.exe beside this file,
+rem  one folder up, one folder down, or next to this folder is used without
+rem  asking anything. The folder's
 rem  name is never looked at - H1-EK, HCEEK, hcex, whatever yours is called is a
 rem  kit because tool.exe is in it. hek_path.txt is only the fallback for a kit
-rem  somewhere else. Everything it does is logged to build-hek.log, which is what
-rem  to paste if something fails.
+rem  somewhere else. Everything it does is logged to a .log file of the same name
+rem  beside it, which is what to paste if something fails.
 rem
 rem  One data folder is built per channel order: data\<item>\ - the item's own
 rem  colours with the team-colour mask bound and any decal blended into the base
@@ -32,13 +33,13 @@ rem  will ask for one if it cannot find it. Make that shader once (README.md,
 rem  "Building it in Halo's editing kit") and run this again: the shader is the
 rem  same for every copy of the item, so it is a one-time step.
 rem
-rem  Usage: build-hek.bat [pc|xbox]     (pc when nothing is given)
+rem  Usage: "Compile <item> Avatar.bat" [pc|xbox]     (pc when nothing is given)
 rem ===========================================================================
 
 set "ORDER=%~1"
 if not defined ORDER set "ORDER=pc"
 set "OUT=%~dp0"
-set "LOG=%OUT%build-hek.log"
+set "LOG=%OUT%%~n0.log"
 rem  The kit is usually right here - unpacked beside the builds under whatever
 rem  name its folder has, or with this file dropped into it - so look around
 rem  before asking: beside this file, one folder up, one folder down, and the

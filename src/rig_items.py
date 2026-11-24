@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v94"
-BUILD = "2026-11-24 kit-found-around-the-script"
+VERSION = "v95"
+BUILD = "2026-11-24 compile-script-named-after-the-item"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -5291,14 +5291,19 @@ def main():
     beside = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "build-hek.bat")
     if built and os.path.exists(beside):
-        target = os.path.join(out, "build-hek.bat")
-        if not os.path.exists(target) or open(target, "rb").read() != open(beside, "rb").read():
-            with open(beside, "rb") as handle:
-                data = handle.read()
-            with open(target, "wb") as handle:
-                handle.write(data)
-            log("wrote build-hek.bat beside the builds: run it to compile the .jms "
-                "and .tif files into tags with tool.exe")
+        data = open(beside, "rb").read()
+        for stem in sorted(set(stems)):
+            # Named after the item, because the item is what the player is
+            # compiling: "Compile UNSC Marine Armor Avatar.bat" beside the
+            # builds. The script is the same wherever it goes - it reads data\
+            # - so the only thing that carries the item is its name.
+            name = "Compile %s Avatar.bat" % stem
+            target = os.path.join(out, name)
+            if not os.path.exists(target) or open(target, "rb").read() != data:
+                with open(target, "wb") as handle:
+                    handle.write(data)
+                log("wrote %s beside the builds: run it to compile the .jms "
+                    "and .tif files into tags with tool.exe" % name)
     if built:
         log("wrote %d HEK build(s), one per channel order" % len(built))
 

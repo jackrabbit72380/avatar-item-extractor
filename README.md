@@ -856,19 +856,20 @@ docs](https://learn.microsoft.com/en-us/halo-master-chief-collection/) cover
 Halo 2 and Halo 3 tooling; they have no Halo 1 tool reference, so the H1-EK
 pages are the ones that apply.
 
-Each item arrives as three data folders, and `build-hek.bat` (next to this
-README, or copied beside the item's output folder) runs the two verbs over all
-three: it asks once where the editing kit is, copies the folders into its
-`data\`, compiles the bitmaps and the models, and logs everything to
-`build-hek.log`. `build-hek.bat xbox` does the same for the Xbox channel order.
-What it does, step by step:
+Each item arrives as one data folder per channel order, and the extractor writes
+`Compile <item> Avatar.bat` beside them - for the Marine armour that is
+`Compile UNSC Marine Armor Avatar.bat`. Run it and it looks for the editing kit
+unpacked near it (tool.exe beside the script, one folder up, one folder down or
+in a folder next to it) and only asks where the kit is when none of those has
+one. It copies the folders into the kit's `data\`, compiles the bitmaps and the
+models, and logs everything to a `.log` of the same name beside it. Passing
+`xbox` does the same for the Xbox channel order. What it does, step by step:
 
-1. **Put the build where the tool looks.** Copy any of
-   `extracted for hek users\pc\data\<stem> sp`, `<stem> sp-decals`,
-   `<stem> mp` and `<stem> mp-decals` (or the `xbox` four) into the editing
-   kit's `data\` folder. The folder name is the tag path, and it is the only
-   thing that has to move. `sp` is the faithful build; `-decals` adds the baked
-   decal; `mp` binds the team-colour mask.
+1. **Put the build where the tool looks.** Copy
+   `extracted for hek users\pc\data\<stem>` (or its `xbox` twin) into the
+   editing kit's `data\` folder. The folder name is the tag path, and it is the
+   only thing that has to move. There is one build per channel order, and it is
+   the one that takes the team colour, with any decal already in its base map.
 2. **Bitmaps.** `tool bitmaps "<stem> sp\bitmaps"` - H1A Tool also takes a type
    argument (`2d`), the legacy HEK reads it from the tag. Each `.tif` becomes
    `tags\<stem> sp\bitmaps\<name>.bitmap`, named after the file, so every map a
