@@ -329,85 +329,80 @@ def _open_eye(span, rows, skin, ink, iris=None):
     """One open eye, looking straight ahead, on a grid span x rows texels.
 
     The avatars are drawn with the eye shut - a crescent lid with the pupil
-    tucked under one corner, both pupils on the same side of the face, so the
-    model stares off to the side in every frame. A gaze is not something that can
-    be moved by a gain or a copy: the eye itself has to be open. This draws it:
+    tucked under one corner - and a gaze cannot be moved by a gain or a copy, so
+    the eye is drawn open here: an almond opening, a sclera, one iris and one
+    pupil centred on the middle of it.
 
-      * an almond opening, superellipse so the corners come to points, filled
-        with sclera and edged with the stroke the avatar was painted with,
-      * an iris and a pupil as circles centred on the middle of the opening -
-        level, both eyes, whatever the drawing did before,
-      * the lid line along the top of the opening only, thickest in the middle
-        and tapering at both corners, so it reads as a lid rather than a bar,
-      * SAMPLES per texel in each direction, averaged down, because the eye is
-        about seventy texels wide and a texel-at-a-time circle is a staircase.
+    The eye is about seventy texels wide on a 512-texel face, and that decides
+    the drawing. A shape antialiased against skin turns into a rim of olive-grey
+    texels and reads as a smudge once the head is on screen, so the opening is
+    rasterised as a solid mask and its edge is a one-texel line of the avatar's
+    own ink - a measured ring, not a blend - with flat colours inside: white
+    sclera, one iris, one pupil, one highlight texel. The lid is that edge along
+    the top of the opening, one texel thicker across the middle.
 
-    The grid is stamped into both eyes by the caller, the second one mirrored, so
-    the pair matches across the nose.
+    The grid is stamped into both eyes by the caller, the second mirrored.
     """
     centre_x = (span - 1) / 2.0
-    radius_x = max(2.0, span / 2.0)
-    centre_y = rows * 0.50
-    radius_y = max(2.0, rows * 0.44)
-    power = 1.9
-    pupil = max(1.6, rows * 0.17)
-    ring = max(pupil + 1.4, rows * 0.29)
-    white = (246, 243, 238)
-    colour_iris = iris or (92, 64, 46)
-    skin_r, skin_g, skin_b = skin[:3]
-    ink_r, ink_g, ink_b = ink[:3]
+    radius_x = max(2.0, (span - 1) / 2.0)
+    centre_y = (rows - 1) / 2.0
+    radius_y = max(2.0, (rows - 1) / 2.0)
+    power = 1.8
+    iris_radius = max(2.0, rows * 0.22)
+    pupil_radius = max(1.2, rows * 0.10)
+    white = (247, 244, 240)
+    iris_colour = iris or (96, 66, 46)
+    ink = tuple(ink[:3])
+    skin = tuple(skin[:3])
 
-    def inside(px, py, rx, ry, p):
-        return (abs((px - centre_x) / rx) ** p
-                + abs((py - centre_y) / ry) ** p) <= 1.0
+    def inside(px, py):
+        return (abs((px - centre_x) / radius_x) ** power
+                + abs((py - centre_y) / radius_y) ** power) <= 1.0
 
-    def lid_top(px):
-        u = min(1.0, abs((px - centre_x) / radius_x))
-        return centre_y - radius_y * (1.0 - u ** power) ** (1.0 / power)
-
-    def lid_bottom(px):
-        u = min(1.0, abs((px - centre_x) / radius_x))
-        return centre_y + radius_y * (1.0 - u ** power) ** (1.0 / power)
-
-    grid = {}
-    step = 1.0 / SAMPLES
+    # The opening as a solid mask at texel centres, then its edge by erosion:
+    # that is the only way to get a ring that is one texel wide all the way
+    # round, on a shape whose rim is nearly flat at the top and bottom.
+    opening = set()
     for x in range(span):
         for y in range(rows):
-            red = green = blue = 0.0
-            for sx in range(SAMPLES):
-                for sy in range(SAMPLES):
-                    px = x + (sx + 0.5) * step - 0.5
-                    py = y + (sy + 0.5) * step - 0.5
-                    if not inside(px, py, radius_x, radius_y, power):
-                        red += skin_r
-                        green += skin_g
-                        blue += skin_b
-                        continue
-                    # A lid is a line over the opening, not a fill: its weight
-                    # follows the curve, thick in the middle, gone at the corners.
-                    u = min(1.0, abs((px - centre_x) / radius_x))
-                    weight = 1.0 + 0.8 * (1.0 - u ** 1.4)
-                    if py < lid_top(px) + weight or py > lid_bottom(px) - 0.7:
-                        red += ink_r
-                        green += ink_g
-                        blue += ink_b
-                        continue
-                    reach = math.hypot(px - centre_x, py - centre_y)
-                    if reach <= pupil:
-                        red += ink_r
-                        green += ink_g
-                        blue += ink_b
-                    elif reach <= ring:
-                        red += colour_iris[0]
-                        green += colour_iris[1]
-                        blue += colour_iris[2]
-                    else:
-                        red += white[0]
-                        green += white[1]
-                        blue += white[2]
-            total = float(SAMPLES * SAMPLES)
-            grid[(x, y)] = (int(round(red / total)), int(round(green / total)),
-                            int(round(blue / total)), 255)
+            if inside(x, y):
+                opening.add((x, y))
+    edge = {(x, y) for (x, y) in opening
+            if any((x + dx, y + dy) not in opening
+                   for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)))}
+
+    grid = {}
+    for x in range(span):
+        for y in range(rows):
+            if (x, y) not in opening:
+                colour = skin
+            elif (x, y) in edge:
+                colour = ink
+            else:
+                reach = math.hypot(x - centre_x, y - centre_y)
+                high_x = centre_x - iris_radius * 0.40
+                high_y = centre_y - iris_radius * 0.40
+                if math.hypot(x - high_x, y - high_y) <= max(0.9, rows * 0.06):
+                    colour = (255, 255, 255)
+                elif reach <= pupil_radius:
+                    colour = ink
+                elif reach <= iris_radius:
+                    colour = iris_colour
+                else:
+                    colour = white
+            grid[(x, y)] = colour + (255,)
+
+    # The lid: the top of that edge, one texel thicker across the middle, so the
+    # eye reads as lidded rather than as an outline all the way round.
+    top = min(y for (_x, y) in opening)
+    for x in range(span):
+        column = [y for (_x, y) in opening if _x == x]
+        if not column:
+            continue
+        first, last = min(column), max(column)
+        thickness = 1 if abs((x - centre_x) / radius_x) > 0.55 else 2
+        for y in range(first, min(first + thickness, last + 1)):
+            grid[(x, y)] = ink + (255,)
     return grid
 
 
@@ -452,7 +447,7 @@ def centre_pupils(rgba, width, height, force=False, iris=None):
         ink = (38, 30, 26)
     # Room under the shut lid for the opening and the lower lid: the cheek there
     # is plain skin, which the stamp covers.
-    rows = max(8, (last - first + 1) * 2)
+    rows = max(8, int(round((last - first + 1) * 1.5)))
     # Never past the bottom of the sheet: those texels belong to something else.
     rows = min(rows, max(4, height - first - 1))
     grid = _open_eye(right - left + 1, rows, skin, ink, iris=iris)

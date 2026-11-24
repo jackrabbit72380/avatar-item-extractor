@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v91"
-BUILD = "2026-11-24 no-guess-mask"
+VERSION = "v92"
+BUILD = "2026-11-24 crisp-eyes"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
