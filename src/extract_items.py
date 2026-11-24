@@ -1840,8 +1840,9 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                             entry["name"], stem, entry["slot"], entry["name"]))
     overlay = facts.get("decal_overlay")
     if overlay:
-        lines.append("decal:     slot %s blended over a copy of the base map by its"
-                     " own alpha, as %s base map + decal.png/.tga/.tif"
+        lines.append("decal:     slot %s blended into the base map itself by its own"
+                     " alpha - %s base map.png/.tga/.tif is the item's paint with"
+                     " the decal in it, in every folder"
                      % (overlay.get("slot"), stem))
         lines.append("           %d of %d texels changed; read in UV set %s, the base"
                      " map's layout, because that is where its artwork traces the"
@@ -1849,8 +1850,9 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                      % (overlay.get("changed"), overlay.get("texels"),
                         overlay.get("uv_set")))
         lines.append("           Halo CE's shader_model has one colour layer, so the"
-                     " decal can only reach the game this way. The plain base"
-                     " map is still written beside it, unchanged")
+                     " decal can only reach the game this way. There is no"
+                     " second, decal-free base map: Blender, Max and the game"
+                     " read this one image")
     lines.append("change colour: %s change colour.png/.tga/.tif - white takes the"
                  " team colour; this is the alpha channel of the multipurpose map."
                  " Only the multiplayer version uses team colour, and there is one"
@@ -2409,9 +2411,13 @@ def main(argv=None):
             picture = facts.get("texture")
             # The decal is part of the item's look, and Halo CE's shader_model
             # has one colour layer: a decal cannot be layered at run time, only
-            # blended into the base map. The item's own base map is therefore
-            # left exactly as it came out, and the decal goes onto a copy of it
-            # - decal.rgb by decal.a, the rule both readers of this format use.
+            # blended into the base map - decal.rgb by decal.a, the rule both
+            # readers of this format use. It is blended into the base map it
+            # lies on, in every format, so there is one image with one name:
+            # what Blender and Max show is what the game shows. Writing a second
+            # "base map + decal" and copying it over the .tif left the .png
+            # beside it plain, which is a suit that looked different in Blender
+            # from the one that shipped.
             # Which UV set it is read in is answered by its pixels, the same way
             # the tint mask's is (decal_uv_set): the Marine's decal is painted
             # in the base map's layout whatever its material record says.
@@ -2425,7 +2431,7 @@ def main(argv=None):
                     blended, changed = decal_overlay(
                         picture["rgba"], picture["width"], picture["height"],
                         layer, size)
-                    name = os.path.join(out, "%s base map + decal" % stem)
+                    name = os.path.join(out, "%s base map" % stem)
                     write_png(name + ".png", blended, picture["width"],
                               picture["height"])
                     write_tga(name + ".tga", blended, picture["width"],
@@ -2433,9 +2439,9 @@ def main(argv=None):
                     write_tiff(name + ".tif", blended, picture["width"],
                                picture["height"])
                     overlay = {
-                        "png": "%s base map + decal.png" % stem,
-                        "tga": "%s base map + decal.tga" % stem,
-                        "tif": "%s base map + decal.tif" % stem,
+                        "png": "%s base map.png" % stem,
+                        "tga": "%s base map.tga" % stem,
+                        "tif": "%s base map.tif" % stem,
                         "width": picture["width"],
                         "height": picture["height"],
                         "slot": decal.get("slot"),

@@ -745,32 +745,28 @@ def main():
                 print("\nFAIL: report.txt does not say the derived mask was authored")
                 return 1
 
-        # The decal goes onto a copy of the base map, never into the item's own
-        # one: the base map is what the pack stores, and the blend is the item's
-        # look. The rule is the one both readers of the format use -
-        # base*(1-a) + decal.rgb*a - so the three alphas that matter are pinned
-        # exactly, and the written picture is checked against them.
-        base_texels = pixels(os.path.join(out_tint, "extracted for max users",
-                                          "Tint Trap base map.png"))
-        composite_path = os.path.join(out_tint, "extracted for max users",
-                                      "Tint Trap base map + decal.png")
-        if not os.path.exists(composite_path):
-            print("\nFAIL: no decal-blended base map was written")
+        # The decal is blended into the base map itself - one image, one name, in
+        # every folder - so the map the rigs bind and the .tif tool.exe compiles
+        # hold the same texels, and no second decal-only map is written beside
+        # it. The rule is the one both readers of the format use,
+        # base*(1-a) + decal.rgb*a: the half the decal covers takes its red and
+        # the half it leaves keeps the item's own grey. The fixture stores that
+        # grey as 200, 200, 200 in RGB565, which reads back as 206, 203, 206.
+        base = pixels(os.path.join(out_tint, "extracted for max users",
+                                   "Tint Trap base map.png"))
+        if os.path.exists(os.path.join(out_tint, "extracted for max users",
+                                       "Tint Trap base map + decal.png")):
+            print("\nFAIL: a second, decal-only base map was written as well")
             return 1
-        composite = pixels(composite_path)
-        if len(composite) != len(base_texels):
-            print("\nFAIL: the decal-blended base map is a different size")
-            return 1
-        red = sum(1 for pixel in composite if pixel[:3] == (255, 0, 0))
-        lazy = sum(1 for pixel in composite if pixel[3] != 255)
-        untouched = sum(1 for before, after in zip(base_texels, composite)
-                        if before[:3] == after[:3])
-        print("  composite      %d texels exactly the decal's red, %d left exactly"
-              " as the item's base map, of %d"
-              % (red, untouched, len(composite)))
-        if not red or not untouched or lazy:
+        red = sum(1 for pixel in base if pixel[:3] == (255, 0, 0))
+        kept = sum(1 for pixel in base if pixel[:3] == (206, 203, 206))
+        lazy = sum(1 for pixel in base if pixel[3] != 255)
+        print("  base map       %d texels the decal's red, %d left the item's own"
+              " grey, of %d" % (red, kept, len(base)))
+        if not red or not kept or lazy:
             print("\nFAIL: the decal blend either ignored its alpha or its"
-                  " colour, or wrote a transparent texel")
+                  " colour, or wrote a transparent texel; it holds %r"
+                  % (sorted(set(base))[:6],))
             return 1
         blended, changed = extract_items.decal_overlay(
             bytes([200, 200, 200, 255]) * 3, 3, 1,
@@ -782,18 +778,20 @@ def main():
             return 1
         with open(os.path.join(out_tint, "report.txt"), encoding="utf-8") as handle:
             report_decal = handle.read()
-        if "base map + decal" not in report_decal or "decal:     slot 2" not in report_decal:
+        if ("blended into the base map itself" not in report_decal
+                or "decal:     slot 2" not in report_decal):
             print("\nFAIL: report.txt does not describe the decal blend")
             return 1
         for order in ("pc", "xbox"):
-            path = os.path.join(out_tint, "extracted for hek users", order,
-                                "data", "Tint Trap", "bitmaps",
-                                "Tint Trap base map + decal.tif")
-            if not os.path.exists(path):
-                print("\nFAIL: no decal .tif for the %s build" % order)
+            bitmaps = os.path.join(out_tint, "extracted for hek users", order,
+                                   "data", "Tint Trap", "bitmaps")
+            path = os.path.join(bitmaps, "Tint Trap base map.tif")
+            if not os.path.exists(path) or os.path.getsize(path) == 0:
+                print("\nFAIL: the %s build has no base map .tif" % order)
                 return 1
-            if os.path.getsize(path) == 0:
-                print("\nFAIL: the %s decal .tif is empty" % order)
+            if os.path.exists(os.path.join(bitmaps,
+                                           "Tint Trap base map + decal.tif")):
+                print("\nFAIL: the %s bitmaps hold a second base map" % order)
                 return 1
 
         # A derived amount: the item states no tint mask, so the multiplayer
@@ -822,8 +820,8 @@ def main():
 
         print("\nPASS: a blank tint slot and no colour table give an empty mask"
               " (nothing tints), --tint full and --tint derived author one and"
-              " say so, sp masks nothing, and the decal blends onto a copy of"
-              " the base map")
+              " say so, and the decal is blended into the base map itself -"
+              " one file, in every folder")
 
         # Fourth case: two parts in one item, each with its own colour, and the
         # same shader id on both. They must stay two materials with two colours -

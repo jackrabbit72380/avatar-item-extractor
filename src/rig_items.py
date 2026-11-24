@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v96"
-BUILD = "2026-11-24 named-after-the-item"
+VERSION = "v97"
+BUILD = "2026-11-24 one-base-map"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -319,44 +319,6 @@ def catalogue_items(items_dir):
     return found
 
 
-def bind_decal(object_data):
-    """Bind the decal-blended base map in place of the plain one, when it exists.
-
-    Extraction writes `<item> base map + decal.png` beside the item: the base map
-    with the item's decal blended over it by its own alpha, which is the only
-    form Halo CE can show - shader_model has one colour layer and no second
-    texture to blend at run time. The .obj names the plain base map, because the
-    OBJ carries what the pack stores; the blend is what puts the decal on the
-    item a person opens, and the plain map stays beside it untouched.
-    """
-    bound = 0
-    for material in object_data.data.materials:
-        if material is None or not getattr(material, "use_nodes", False):
-            continue
-        tree = getattr(material, "node_tree", None)
-        if not tree:
-            continue
-        for node in tree.nodes:
-            image = getattr(node, "image", None)
-            if image is None:
-                continue
-            path = bpy.path.abspath(image.filepath) if image.filepath else ""
-            if not path.lower().endswith(" base map.png"):
-                continue
-            candidate = path[:-len("base map.png")] + "base map + decal.png"
-            if not os.path.exists(candidate):
-                continue
-            fresher = bpy.data.images.load(candidate, check_existing=True)
-            if fresher is image:
-                continue
-            node.image = fresher
-            bound += 1
-    if bound:
-        log("decal: bound <item> base map + decal.png in %d material(s)"
-            % bound)
-    return bound
-
-
 def prepare(object_data):
     """Make the item open correctly: smooth shading, images inside the file.
 
@@ -367,8 +329,11 @@ def prepare(object_data):
     The colour image is packed into the .blend for the same reason: an unpacked
     image is a broken link the moment the file is moved on its own, and the item
     then opens white with no colour at all.
+
+    There is one base map and the OBJ already names it, decal and all -
+    extraction blends the item's decal into the map itself in every format, so
+    nothing is swapped here and what opens in Blender is what ships.
     """
-    bind_decal(object_data)
     mesh_data = object_data.data
     for polygon in mesh_data.polygons:
         polygon.use_smooth = True
@@ -4805,10 +4770,11 @@ def hek_builds(out, stems):
     for stem in sorted(set(stems)):
         for order, tree in hek_folders(out, stem).items():
             bitmaps = tree["bitmaps"]
-            composite = os.path.join(bitmaps, "%s base map + decal.tif" % stem)
-            base_tif = os.path.join(bitmaps, "%s base map.tif" % stem)
-            if os.path.exists(composite) and os.path.exists(base_tif):
-                copy_file(composite, base_tif)
+            # Nothing is copied over the base map here: extraction blends the
+            # decal into the map itself, in the .png the rigs bind as well as the
+            # .tif tool.exe compiles. A second "base map + decal" copied over the
+            # .tif was what left the HEK folder holding one suit and the Blender
+            # folder another.
             share_files(bitmaps, tree["fp_bitmaps"])
             for source, home, name in (
                     (os.path.join(tree["source"], "%s.jms" % stem),

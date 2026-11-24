@@ -48,16 +48,14 @@ Test Item\
                        - halo fp arms, - NXE and - unrigged, copied out of
                        the Blender folder
         master chief skeleton.fbx  Halo's biped, for repairing a binding by hand
-        Test Item base map.png  also .tga  - the texture the model binds
-        Test Item base map + decal.png  also .tga  the same base map with the
-                        item's decal blended over it by its own alpha - this
-                        is what the .blend binds, and what a Halo CE build
-                        needs, because the shader has one colour layer
+        Test Item base map.png  also .tga  - the texture the model binds: the
+                        item's own paint with its decal blended in by the
+                        decal's own alpha, because the shader has one colour
+                        layer. One image, the same texels as the .tif in the
+                        HEK folder, so Blender, Max and the game agree
         Test Item slot 2 decal map.png  also .tga  a texture the item binds,
                         written as it came out of the model, colours and all
         Test Item multipurpose.png  also .tga  Halo CE channel order
-        Test Item multipurpose xbox.png  also .tga  Xbox channel order
-        Test Item multipurpose sp.png  also .tga  nothing masked
         Test Item change colour.png  also .tga  the team-colour mask
     extracted for blender users\
         Test Item - halo.blend  the item on Halo's biped, ready to export
@@ -70,31 +68,30 @@ Test Item\
         source rigs\  master chief skeleton.blend, fp arms.blend  Halo's own
                        rig files, kept for repair
     extracted for hek users\
-        pc\data\Test Item sp\
-            the faithful build: the base map exactly as the pack stores it, and
-            a multipurpose map that masks nothing. This is the folder to compile
-            when the item should look like itself.
-            bitmaps\    Test Item base map.tif, Test Item multipurpose.tif,
-                        Test Item change colour.tif, Test Item slot 2 decal
-                        map.tif, and Test Item base map + decal.tif
-            models\     Test Item sp.jms  the model, named for the build
+        pc\data\Test Item\
+            the one build, and it is the one that takes the team colour. It is a
+            complete data\ directory: tool.exe is pointed at it and looks inside
+            by name.
+            bitmaps\    Test Item base map.tif  the item's paint with its decal
+                        blended in, the same texels as the .png the rigs bind
+                        Test Item multipurpose.tif, Test Item change colour.tif,
+                        Test Item slot 2 decal map.tif  the item's own slots
+            models\     Test Item.jms  the model, named after the item
             animations\  empty until there are animation files to put here
             source\     Test Item - halo.blend, .fbx  what the model came from
             fp\         the first-person arms, a model of their own
                 bitmaps\  the same maps, for the arms
-                models\   Test Item sp - fp arms.jms
+                models\   Test Item - fp arms.jms
                 source\   Test Item - halo fp arms.blend, .fbx
-        pc\data\Test Item sp-decals\   the same with the decal baked in
-        pc\data\Test Item mp\          the team-colour mask bound
-        pc\data\Test Item mp-decals\   team colour and decal
-        xbox\data\  all four again, in the original Xbox channel order: the
-                    team colour sits in blue there, not in alpha
+        xbox\data\  the same build in the original Xbox channel order: the team
+                    colour sits in blue there, not in alpha
 
-    The four builds are independent because the two choices are: Halo CE's
-    shader_model samples one colour layer, so a decal is baked into the base map
-    or absent, and the team colour is a channel of the multipurpose map. Each
-    folder is a complete data\ directory with its own model and JMS material
-    names, so tool.exe writes four sets of tags instead of overwriting one.
+    There is one build, not four: only the multiplayer version uses team colour,
+    so an sp/mp pair meant the folder most people opened first was a suit that
+    never changes colour. The decal is in the base map because Halo CE's
+    shader_model samples one colour layer - and it is in the .tif the kit
+    compiles and the .png the rigs bind, so the suit does not change appearance
+    between Blender and the game.
     Test Item.png  the item's icon, when the package has one
     colour_00.png  the item's own palette, when it carries one
     Test Item_colours.txt
@@ -540,8 +537,9 @@ bitmap for this item would produce a tag nothing can reference.
 
 The decal is likewise not a shader input: `shader_model` samples one colour
 layer, so the item's decal is blended into the base map by its alpha
-(`base*(1-a) + decal.rgb*a`) in the `-decals` builds, and left out of the plain
-ones.
+(`base*(1-a) + decal.rgb*a`) - into the base map itself, in every format and
+every folder, so there is no separate decal bitmap and no decal-free copy for
+the HEK folder to differ from.
 
   * `<stem> multipurpose.*` - Halo CE order. Colour change is the team colour,
     and the only thing an item states about it is its **tint mask** - a material's

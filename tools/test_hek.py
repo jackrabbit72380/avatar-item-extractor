@@ -188,10 +188,10 @@ def main():
         write(os.path.join(base, "bitmaps", "%s multipurpose.tif" % stem),
               "team colour %s" % order)
         write(os.path.join(base, "bitmaps", "%s change colour.tif" % stem), "change")
+        # Extraction hands the kit one base map, its pixels already carrying the
+        # decal, so there is no second file to copy over it here.
         write(os.path.join(base, "bitmaps", "%s base map.tif" % stem),
               "base %s" % order)
-        write(os.path.join(base, "bitmaps", "%s base map + decal.tif" % stem),
-              "decal base %s" % order)
         # A later test wrote a model into models\ to check mirror_jms; the
         # build starts from what extraction leaves, which is no model there.
         for stale in ("models", os.path.join("fp", "models")):
@@ -241,9 +241,11 @@ def main():
         check(os.path.exists(change),
               "%s has no change-colour map, so nothing could be team coloured"
               % order)
-        # The decal is in the base map: CE's shader samples one colour layer.
+        # The base map is the one extraction wrote, decal and all: hek_builds
+        # copies nothing over it, so the HEK folder and the Blender folder hold
+        # the same texels under the same name.
         shipped = os.path.join(target, "bitmaps", "%s base map.tif" % stem)
-        wanted_base = "decal base %s" % order
+        wanted_base = "base %s" % order
         check(os.path.exists(shipped) and read(shipped) == wanted_base,
               "%s's base map is %r, expected %r"
               % (order, read(shipped) if os.path.exists(shipped) else None,
