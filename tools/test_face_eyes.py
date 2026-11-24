@@ -121,11 +121,31 @@ def main():
     paint_eye(face, RIGHT_EYE[0], RIGHT_EYE[1], 0.9)
     before = ink_profile(face, LEFT_EYE[0], LEFT_EYE[1])
     fixed, notes = face_eyes.centre_pupils(face, WIDTH, HEIGHT, force=True)
-    after = ink_profile(fixed, LEFT_EYE[0], LEFT_EYE[1])
     report("drawn at one end: the swelling was off centre",
            before is not None and abs(before - 0.5) > 0.1, " (%.2f)" % (before or 0))
-    report("drawn at one end: the eye now reads level",
-           after is not None and abs(after - 0.5) <= 0.15, " (%.2f)" % (after or 0))
+    # A pupil is added in the middle, and nothing painted is removed, so the
+    # drawing keeps the weight and the edges it was painted with.
+    def ink_texels(pixels):
+        return {(x, y) for x in range(LEFT_EYE[0], LEFT_EYE[1] + 1)
+                for y in range(TOP - 8, BOTTOM + 8)
+                if 0.299 * pixels[(y * WIDTH + x) * 4]
+                + 0.587 * pixels[(y * WIDTH + x) * 4 + 1]
+                + 0.114 * pixels[(y * WIDTH + x) * 4 + 2] < 140}
+
+    added = ink_texels(fixed) - ink_texels(face)
+    lost = ink_texels(face) - ink_texels(fixed)
+    middle = (LEFT_EYE[0] + LEFT_EYE[1]) / 2.0
+    where = (sum(x for x, _ in added) / float(len(added)) - LEFT_EYE[0]) \
+        / (LEFT_EYE[1] - LEFT_EYE[0]) if added else None
+    report("a pupil is added in the middle of the eye",
+           where is not None and abs(where - 0.5) <= 0.12,
+           " (%s of the eye's width, %d texels)"
+           % ("%.2f" % where if where is not None else "none", len(added)))
+    report("not one painted texel is removed", not lost,
+           " (%d of %d lost)" % (len(lost), len(ink_texels(face))))
+    report("the added pupil sits on the eye's middle",
+           bool(added) and all(abs(x - middle) <= 0.35 * (LEFT_EYE[1] - LEFT_EYE[0])
+                               for x, _ in added))
     report("both eyes reported", len(notes) == 2, " (%d notes)" % len(notes))
 
     # The lid is not redrawn: its rows are the ones that were painted.

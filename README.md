@@ -731,21 +731,26 @@ drawn pair is itself mirrored, so the two eyes come out *unmirrored* on the
 model: one lash sweeps up to the left and the other up to the left too, and no
 care with the pupil makes them a pair.
 
+The pupil is not separable from that stroke. It is the heavy end of it: trim it
+off and the lid that is left is a hairline where a bold, sharp stroke was
+painted, which is exactly what the first attempts produced. Whatever is done
+here, **nothing painted is removed** - the eye keeps the weight and the edges
+it was drawn with.
+
 `--eyes-forward` (or an `eyes_forward.txt` beside the `.bat`) therefore treats
 one painted eye as the pattern and copies it:
 
-  * the eyelid is kept **texel for texel**, exactly as painted - it is cleared
-    of nothing, and nothing is drawn over it,
-  * the swelling under that lid, which is the old pupil, is cleared to the
-    face's own skin tone,
-  * an iris is drawn centred under that same lid, clipped so it never rises
-    above it,
-  * the finished eye is stamped into both drawn eyes unchanged, so the UV
+  * the drawn eye is kept **texel for texel** - no texel is cleared, and the lid
+    is never redrawn,
+  * a pupil is added in the middle of it, in ink darker than the drawing's own,
+    tucked a row under the lid line and clear of its ends,
+  * that finished eye is stamped into both drawn eyes unchanged, so the UV
     mirroring turns one drawing into two eyes that are exact mirrors.
 
 It is off unless asked for, because it edits the avatar's own art rather than
-the item's. Verified on the Marine face: the lid lands on its painted row in all
-71 columns of the eye, and the two drawn eyes are byte-identical afterwards.
+the item's. Verified on the Marine face: 0 of the 605 painted ink texels are
+lost and 66 are added, the lid lands on its painted row in all 71 columns, and
+the two drawn eyes are byte-identical afterwards.
 
 ```
 python rig_items.py --items extracted --out extracted \
