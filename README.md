@@ -807,9 +807,9 @@ far:
 | neck to head | 5.3 | 1.7 | **x0.32** |
 
 A body whose torso nearly doubles and whose neck is crushed to a third is not
-the model its author made. `--keep-shape` is for that: it scales the whole item
-uniformly to the biped's height and touches nothing else, so every proportion
-survives.
+the model its author made. `--keep-shape` is for that: it carries the item
+through at 1:1 metres and touches nothing else, so every proportion survives -
+and so does the size.
 
 ```
 python rig_items.py --items extracted --out extracted \
@@ -817,9 +817,11 @@ python rig_items.py --items extracted --out extracted \
     --port MyAvatar.glb --keep-shape
 ```
 
-On the same item that gives 1.80 x 1.91 x 0.53 m against the 1.424 x 1.509 x
-0.417 m the file authored - the same proportions to within 0.2%, where the fit
-gives a 2.47 m body with the torso stretched.
+On the same item that gives 1.424 x 1.509 x 0.417 m - the size the file
+authored, to the millimetre - where the fit gives a 2.47 m body with the torso
+stretched. Normalising it to the biped's 1.91 m instead, which this did until
+v70, made a 1.85 m avatar a 1.45 m one: every proportion intact, but plainly not
+the avatar's own size.
 
 A `keep_shape.txt` beside the `.bat` asks for it on a double-click, the way
 `tint_mask.png` asks for a team-colour mask.

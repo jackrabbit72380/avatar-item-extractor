@@ -84,8 +84,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v69"
-BUILD = "2026-11-24 bones-in-parent-space"
+VERSION = "v70"
+BUILD = "2026-11-24 avatar-keeps-its-own-size"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -4351,8 +4351,7 @@ def main():
             elif anchor:
                 record["placement"] = anchor[2]
             elif body and options.get("keep_shape"):
-                record["placement"] = ("kept in the shape the file authored, scaled "
-                                       "to the biped's height")
+                record["placement"] = ("kept at the shape and size the file authored")
             elif body:
                 record["placement"] = "fitted to the biped's bones, joint by joint"
             else:
@@ -4365,7 +4364,20 @@ def main():
             if body and options.get("keep_shape"):
                 heights = [vertex.co.y for vertex in merged.data.vertices]
                 authored = (max(heights) - min(heights)) if heights else 0.0
-                if authored > 0:
+                if ported_materials is not None:
+                    # A metre is a metre: an avatar beside the item is carried
+                    # through at 1:1, so it comes out the size its own file
+                    # authored. Normalising the model to the biped instead -
+                    # which this did until v70 - turned a 1.85 m avatar into a
+                    # 1.45 m one: every proportion intact, but not the avatar,
+                    # and a body that has been shrunk reads as squashed.
+                    scale = 1.0
+                    log("%s kept at the size the avatar was authored: %.3f m "
+                        "tall, x1.000" % (merged.name, authored))
+                elif authored > 0:
+                    # No avatar to be the reference, so the item is what has to
+                    # reach the biped: it grows to the biped's height, keeping
+                    # its own proportions on the way.
                     scale = fit * AUTHORED_BODY_HEIGHT / authored
                     log("%s kept as authored: %.3f m of its own on to %.3f m of "
                         "biped, x%.3f" % (merged.name, authored,
