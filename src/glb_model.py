@@ -1182,16 +1182,25 @@ def skin_tones(rgba, width, height, mask=None):
 
     Median, not average, so one white highlight or one brown shadow does not
     move it. Texels counted are warm ones (red well above blue) in the mid
-    range, which is skin and not a highlight or a hair edge. A mask, from
-    uv_coverage, limits the count to the texels some geometry reads: two halves
-    of one face match by what they SHOW, not by what their sheets contain.
+    range, which is skin and not a highlight or a hair edge; warmth is what
+    keeps a near-white highlight out, since white has no red-to-blue gap. A
+    mask, from uv_coverage, limits the count to the texels some geometry reads:
+    two halves of one face match by what they SHOW, not by what their sheets
+    contain.
+
+    The upper cut is 250 and not 215: an avatar painted in (215, 170, 113) - a
+    light skin, and a common one - sat exactly on a 215 boundary, so its own base
+    colour was thrown out of the count and the median fell to the shaded skin
+    underneath it. Measured on that head: (174, 137, 91) against a base of
+    (215, 170, 113), a fifth too dark, and every texel the pass paints in "the
+    skin" came out that much darker than the sheet it was measured from.
     """
     samples = []
     for at in range(0, len(rgba), 4):
         if mask is not None and not mask[at >> 2]:
             continue
         red, green, blue = rgba[at], rgba[at + 1], rgba[at + 2]
-        if red - blue > 30 and 110 < red < 215:
+        if red - blue > 30 and 110 < red < 250:
             samples.append((red, green, blue))
     if not samples:
         return None

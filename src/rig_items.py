@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v99"
-BUILD = "2026-11-24 slot-names-by-material-id"
+VERSION = "v100"
+BUILD = "2026-11-24 face-keeps-its-own-skin-tone"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -624,8 +624,11 @@ def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
     # seam can leave a corner reading it: laid down in skin, no stray corner can
     # show white on the head.
     if scalp_tone and "face" in name.lower() and outside_mask is not None:
+        outside = sum(1 for texel in outside_mask if not texel)
         rgba = glb_model.paint_outside(rgba, width, height, outside_mask,
                                        scalp_tone)
+        log("port: %s laid the %d texels the head does not read down in %s, the "
+            "skin measured on the sheet" % (name, outside, scalp_tone))
         written = face_eyes.png_bytes(rgba, width, height)
     with open(picture, "wb") as handle:
         handle.write(written)
