@@ -656,6 +656,11 @@ python rig_items.py --items extracted --out extracted \
     --port MyAvatar.glb
 ```
 
+A double-click finds it too: put `MyAvatar.glb` beside the `.bat` and every
+whole-body item in that run gets its head, the same way `tint_mask.png` beside
+it becomes the team-colour mask. The command above is the manual route, for
+running the rigging pass again over items that are already extracted.
+
 `MyAvatar.glb` is the file 360sona gives you. Three of its meshes matter: the
 head, the face (the same head again, split into two patches either side of the
 face so the eyes and mouth can carry more detail), and the small patch of neck

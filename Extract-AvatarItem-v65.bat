@@ -61,7 +61,11 @@ set "TINT="
 if exist "%~dp0tint_mask.png" set TINT=--tint "%~dp0tint_mask.png"
 if not defined TINT if exist "%~dp0tint_mode.txt" set /p TINTMODE=<"%~dp0tint_mode.txt"
 if not defined TINT if defined TINTMODE set TINT=--tint %TINTMODE%
-%PY% "%BOOT%" "%~f0" "%CACHE%" --obj --out "%OUT%" %TINT%
+rem An avatar's own head, if one is beside this file: MyAvatar.glb is the file
+rem 360sona gives you, and a whole-body item gets its head, face and neck.
+set "PORT="
+if exist "%~dp0MyAvatar.glb" set PORT=--port "%~dp0MyAvatar.glb"
+%PY% "%BOOT%" "%~f0" "%CACHE%" --obj --out "%OUT%" %TINT% %PORT%
 set "RC=%ERRORLEVEL%"
 if "%RC%"=="0" goto :done
 if "%RC%"=="3" goto :unparsed
@@ -267,7 +271,7 @@ def missing_rigged(out, biped):
     return absent
 
 
-def rig(cache, bat_dir, out, inside=False):
+def rig(cache, bat_dir, out, inside=False, port=None):
     """One rigging pass over everything that was just extracted."""
     rig_dir = os.path.join(bat_dir, "rig")
     # Halo's two files are looked for in rig\ first, then beside the .bat: both
@@ -309,6 +313,9 @@ def rig(cache, bat_dir, out, inside=False):
         print("   files there for the biped, arms and JMS as well.")
     else:
         extra = ["--rig", blends[0], "--fp", blends[1]]
+    # The avatar's own head is read by the rigging pass, not the extractor.
+    if port:
+        extra = extra + ["--port", port]
     # Straight into the item's folder, so everything it makes sits together.
     target = out
     print("")
@@ -360,9 +367,20 @@ def rig(cache, bat_dir, out, inside=False):
     return 0
 
 
+def take_option(rest, name):
+    """Pull one `name value` pair out, so the extractor never sees it."""
+    if name not in rest:
+        return rest, None
+    at = rest.index(name)
+    if at + 1 >= len(rest):
+        raise SystemExit("%s needs a file after it" % name)
+    return rest[:at] + rest[at + 2:], rest[at + 1]
+
+
 def main():
     bat, cache = sys.argv[1], sys.argv[2]
     rest = sys.argv[3:]
+    rest, port = take_option(rest, "--port")
     bat_dir = os.path.dirname(os.path.abspath(bat))
     with open(bat, "r", encoding="utf-8", errors="replace") as handle:
         text = handle.read()
@@ -412,7 +430,7 @@ def main():
     if result == 0:
         # A rigging pass that could not start at all is worth a code of its
         # own, so the .bat can keep the window open and say why.
-        return rig(cache, bat_dir, out,
+        return rig(cache, bat_dir, out, port=port,
                    inside=os.path.abspath(out) != os.path.abspath(asked))
     return result
 
