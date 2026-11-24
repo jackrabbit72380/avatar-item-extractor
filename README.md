@@ -720,16 +720,16 @@ of the two happened.
 ### Eyes that look forward
 
 A painted face keeps its gaze in the paint, and these faces are drawn as one
-stroke per eye: a thin tail at the outer corner that swells into the pupil at
-the inner one. On the Marine face this was measured at 73% and 69% of the way
-across each eye, both toward the same side, so under a helmet the avatar looks
-off to one side in every frame while his head geometry faces straight ahead.
-Nothing in the mesh or the UVs causes it, and nothing in them can fix it.
+stroke per eye: a thin tail at one corner that swells into the pupil at the
+other, so the pupil is painted wherever the artist wanted the avatar to look
+and under a helmet he looks there in every frame. Nothing in the mesh or the
+UVs moves it, and nothing in them can fix it.
 
-The head's UVs make this worse than it looks. They **mirror one eye**, while the
-drawn pair is itself mirrored, so the two eyes come out *unmirrored* on the
-model: one lash sweeps up to the left and the other up to the left too, and no
-care with the pupil makes them a pair.
+The head's UVs were measured on the file: `du/dx` is positive on both sides of
+the nose, so they run left to right on both eyes and do **not** mirror. The
+drawn pair is itself mirrored, so a straight copy of one eye into the other
+comes out with both lash tails on the same side of the nose and both lids on
+the same slant - a pair that does not match.
 
 The pupil is the heavy end of that same stroke, so it cannot simply be trimmed
 off: a lid rebuilt around a removed pupil is a hairline where a bold, sharp
@@ -743,13 +743,16 @@ moves the gaze instead:
     its weight, its sharp edge and its shape; the lid is never redrawn,
   * the ink below it is erased to the cheek's own tone, and a pupil is drawn on
     the middle of the lid, hanging from it, in the eye's own ink,
-  * that finished eye is stamped into both drawn eyes unchanged, so the UV
-    mirroring turns one drawing into two eyes that are exact mirrors.
+  * that finished eye is stamped into both drawn eyes, **mirrored into the
+    second**. The head's UVs were measured on the file: `du/dx` is positive on
+    both sides of the nose, so the UVs do not mirror, and two straight copies
+    would put both lash tails toward the same side and both lids on the same
+    slant. Mirrored, the pair matches across the nose.
 
 It is off unless asked for, because it edits the avatar's own art rather than
 the item's. Verified on the Marine face: 0 of the lid's texels change in any of
 the 72 columns, the new pupil is one blob of 198 texels centred at 0.501 of the
-eye, and the two drawn eyes are byte-identical afterwards.
+eye, and the second eye is the exact mirror of the first afterwards.
 
 ```
 python rig_items.py --items extracted --out extracted \

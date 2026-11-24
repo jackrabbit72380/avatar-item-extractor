@@ -1,24 +1,24 @@
 """Put a painted face's pupils back on the centre of its eyes.
 
 A 360sona face is a painted texture: the eyes are ink on a flat skin tone, and
-the pupil is drawn wherever the artist wanted the gaze to sit. Export after
-export has them looking off to one side - measured on a real Marine face, both
-pupils sit about 70% of the way across their own eye, toward the same side, so
-the avatar glances sideways while the head geometry looks straight ahead.
-Nothing in the mesh or the UVs causes that and nothing in the mesh or the UVs
-can fix it: the ink has to move.
+the pupil is drawn wherever the artist wanted the gaze to sit. Each eye is one
+stroke - a thin tail at one corner that swells into the pupil at the other - so
+the gaze is fixed in the paint, and nothing in the mesh or the UVs moves it.
 
-The head's UVs mirror one eye, and the drawn pair is itself mirrored, so the
-two eyes come out *unmirrored* on the model: one lash sweeps up to the left and
-the other up to the left too, and no amount of care with the pupil makes the
-pair look alike. Which is why this works on one eye and copies it:
+The head's UVs were measured on the file: ``du/dx`` is positive on both sides
+of the nose, so they run left to right on both eyes and do not mirror. The
+drawn pair is itself mirrored, so a straight copy of one eye into the other
+comes out with both lash tails on the same side of the nose - a pair that does
+not match, which is what it looked like. So this works on one eye and stamps
+it, mirrored, into the second:
 
   * the first drawn eye is the pattern - its lid is kept texel for texel,
     exactly as painted, and only the swelling under that lid is erased,
   * a pupil is drawn on the middle of the same lid, hanging from it,
-  * the finished eye is stamped into both drawn eyes unchanged, so the head's
-    mirroring turns one drawing into two eyes that are exact mirrors - which is
-    what a pair of eyes is supposed to be.
+  * the finished eye is stamped into both drawn eyes, mirrored into the second
+    one, because the head's UVs run left to right on both sides: a straight
+    copy puts the lash tail toward the nose on one side and toward the ear on
+    the other, which is a pair that does not match.
 
 Nothing here imports ``bpy``; the pixels and the PNG are plain Python so
 ``tools/test_face_eyes.py`` can pin the behaviour without Blender.
@@ -150,7 +150,9 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
         swollen ones,
       * every texel above that line keeps its painted colour, and the ink below
         it is erased to the cheek's own tone - the row against the lid keeps
-        its own coverage, so the stroke's soft underside survives,
+        its own coverage, so the stroke's soft underside survives. A column
+        that is not swollen has no line under it at all: it keeps its whole
+        painted stroke, edge and all,
       * a pupil is drawn on the middle of that line, hanging from the lid, in
         the eye's own ink and with a soft edge.
 
@@ -162,9 +164,10 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
 
     # Where the lid's underside runs: the stroke's own bottom edge, smoothed so
     # the one place it swells down - the pupil - cannot drag the line with it.
-    thickness = sorted(low[x] - top[x] + 1 for x in low)
+    measure = {x: low[x] - top[x] + 1 for x in low}
+    thickness = sorted(measure.values())
     ordinary = thickness[len(thickness) // 2]
-    thin = [x for x in sorted(low) if low[x] - top[x] + 1 <= ordinary]
+    thin = [x for x in sorted(low) if measure[x] <= ordinary]
     if len(thin) >= 4:
         # Least-squares line through the underside of the columns that are not
         # swollen: it says where the lid ends and the pupil begins.
@@ -177,7 +180,13 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
         line = {x: mean_y + slope * (x - mean_x) for x in low}
     else:
         line = {x: float(low[x]) for x in low}
-    underside = {x: int(math.floor(line[x])) for x in line}
+    # A column that is not swollen keeps its whole painted stroke - its own
+    # bottom edge and its own soft edge. One that is swollen is cut at the
+    # fitted line. Either way the lash's top rows are never in question.
+    underside = {}
+    for x in line:
+        cut = low[x] if measure[x] <= ordinary else int(math.floor(line[x]))
+        underside[x] = max(cut, top[x] + LASH_ROWS - 1)
 
     # The eye as painted, minus the swelling under the lid. The face is flat
     # toned under the eye, and the cheek a few rows below it is the honest
@@ -255,8 +264,8 @@ def centre_pupils(rgba, width, height, force=False):
 
     The pupil moves; the lid does not. The off-centre ink is erased under the
     painted lid and a pupil is drawn in the middle, and that finished eye is
-    stamped into both, so each eye keeps the shape it was drawn with and the
-    pair looks straight ahead.
+    stamped into both - mirrored into the second, since the head's UVs do not
+    mirror - so the pair looks straight ahead and matches across the nose.
     """
     found = find_eyes(rgba, width, height)
     if found is None:
@@ -291,11 +300,17 @@ def centre_pupils(rgba, width, height, force=False):
                 at = (y * width + x) * 4
                 pixels[at:at + 4] = bytes(skin)
         offset = gle + int(round((gright - gle - span) / 2.0))
+        # The head's UVs run left to right on both sides of the face (measured:
+        # du/dx is positive on either side of the nose), so the two eyes cannot
+        # both be the same drawing. The second one is the first, mirrored: that
+        # is what puts both lash tails on the outside and both pupils in the
+        # middle, which is a matching pair.
         for ox in range(span + 1):
             x = offset + ox
             if x < gle or x > gright:
                 continue
-            source_ox = ox + int(round((right - left - span) / 2.0))
+            source_ox = (span - ox if index else ox) \
+                + int(round((right - left - span) / 2.0))
             for oy in range(last - first + 1):
                 colour = grid.get((source_ox, oy))
                 if colour is None:
@@ -305,8 +320,8 @@ def centre_pupils(rgba, width, height, force=False):
 
     notes = ["face: the painted lid kept texel for texel, with the pupil erased "
              "from under it and redrawn in the middle of the eye",
-             "face: that eye stamped into both, so the head's mirrored UVs make "
-             "the pair exact mirrors"]
+             "face: that eye stamped into both, mirrored into the second, so the "
+             "pair matches across the nose"]
     return pixels, notes
 
 
