@@ -2500,26 +2500,27 @@ def main(argv=None):
                               " takes the team colour"
                               % (tint_texture.get("slot"), tint_texture["width"],
                                  tint_texture["height"]))
-            elif picture:
-                # The item's tint slot is blank and it carries no colour table,
-                # so the item alone says nothing tints. Only the multiplayer
-                # build uses team colour, and a black mask there is a suit that
-                # never takes one: the mask is worked out from the armour's own
-                # paint instead - dark, near-neutral plate takes the colour, the
-                # visor and the bright trim keep theirs.
-                big = derived_amount(picture, png_size)
-                small = derived_amount(picture, small_size)
-                source = ("none in the item - its tint slot is blank and it"
-                          " carries no colour table - so the multiplayer mask is"
-                          " worked out from the base map: dark near-neutral plate"
-                          " takes the team colour, the bright parts keep theirs"
-                          " (--tint full, item or a mask image says otherwise)")
             else:
+                # The item says nothing tints: its tint slot is blank and it
+                # carries no colour table. Nothing is invented to fill that in -
+                # a mask is what the item states, and a guess about which texels
+                # should take a colour is still a guess. An authored mask (a
+                # black-and-white PNG, --tint full or derived) is the only way
+                # one appears.
                 big = bytes(png_size * png_size)
                 small = bytes(small_size * small_size)
-                source = ("none - the item has no tint mask, no colour table and"
-                          " no base map to work a mask out from")
+                source = ("none - the item states no colour change: it has no tint"
+                          " mask and no colour table, so its mask is empty and"
+                          " nothing tints (a tint mask image, --tint full or --tint"
+                          " derived authors one)")
             painted = sum(1 for value in big if value)
+            if not painted and TINT_MODE == "item" and "states no colour change" not in source:
+                # A tint slot can hold a decoy that paints nothing. Say what the
+                # bytes come to, rather than where they were read from.
+                source = ("none - the item states no colour change: the mask its"
+                          " own slot carries is empty, so nothing tints (a tint"
+                          " mask image, --tint full or --tint derived authors"
+                          " one)")
             facts["mask_source"] = source
             facts["mask_coverage"] = round(painted / float(png_size * png_size), 4)
 

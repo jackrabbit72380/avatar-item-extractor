@@ -491,15 +491,8 @@ def main():
         if len(ce) != 1024 * 1024:
             print("\nFAIL: the mask is %d texels, expected 1024x1024" % (len(ce),))
             return 1
-        # The item states no tint mask, so the mask is worked out from its own
-        # paint: it follows the item's island rather than covering the canvas,
-        # and it leaves part of it untinted. A flat-painted item gives a flat
-        # mask; a shaded one gives shaded values, so only 0-and-not-0 is checked.
-        if len([value for value in coverage if value]) < 2:
-            print("\nFAIL: the team-colour mask is empty")
-            return 1
-        if covered >= 0.99:
-            print("\nFAIL: the derived mask covers the whole canvas")
+        if sorted(set(coverage)) != [0, 255]:
+            print("\nFAIL: the team-colour mask is not a two-value island mask")
             return 1
         if not 0.01 <= covered <= 0.75:
             print("\nFAIL: the mask covers %.1f%% of the canvas" % (covered * 100))
@@ -652,28 +645,26 @@ def main():
             print("FAIL: the tint-trap extractor returned %r" % (code,))
             return 1
         # The tint slot is a decoy - a 32x32 with one texel set - and the item
-        # carries no colour table, so the item alone states no colour change.
-        # Only the multiplayer version uses team colour and there is one build,
-        # so the mask is worked out from the base map instead of shipped black:
-        # the decoy must not be read as the mask, and the report says where the
-        # mask it did write came from.
+        # carries no colour table, so it states no colour change at all. The
+        # faithful mask is empty: the decal's half-lit alpha must not be read as
+        # one, and nothing is invented to fill the gap, and the report says so.
         for suffix in ("multipurpose", "change colour"):
             path = os.path.join(out_tint, "extracted for max users",
                                 "Tint Trap %s.png" % suffix)
             texels = pixels(path)
             lit = sum(1 for pixel in texels if any(pixel))
             print("  %-16s %d of %d texels lit" % (suffix, lit, len(texels)))
-            if not lit:
-                print("\nFAIL: %s is black - the one build takes the team colour,"
-                      " so its mask cannot be empty" % suffix)
+            if lit:
+                print("\nFAIL: %s lights %d texels - the item states no colour"
+                      " change, so nothing may tint" % (suffix, lit))
                 return 1
         with open(os.path.join(out_tint, "report.txt"), encoding="utf-8") as handle:
             report_tint = handle.read()
-        if "worked out from the base map" not in report_tint:
-            print("\nFAIL: report.txt does not say where the mask came from")
+        if "states no colour change" not in report_tint:
+            print("\nFAIL: report.txt does not say the item states no colour change")
             return 1
-        if "mask coverage: none - nothing takes the team colour" in report_tint:
-            print("\nFAIL: report.txt still says nothing takes the team colour")
+        if "mask coverage: none - nothing takes the team colour" not in report_tint:
+            print("\nFAIL: report.txt does not say the faithful mask is empty")
             return 1
 
         # --tint full authors a mask the item does not have: every texel its base
