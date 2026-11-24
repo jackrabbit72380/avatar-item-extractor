@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin the face fix: the painted lid is kept, the old pupil is replaced.
+"""Pin the face fix: the painted lid is kept, the old pupil is moved to the middle.
 
 The faces an avatar exports carry their gaze in the paint. The Marine face this
 was written against has each eye drawn as one stroke - a thin tail at the outer
@@ -10,14 +10,16 @@ drawn pair is itself mirrored, so the two eyes do not even match each other.
 So one eye is treated as the pattern and copied:
 
   * the lid is kept texel for texel, exactly as painted,
-  * the swelling under it is cleared and an iris drawn centred under the lid,
+  * the swelling under it is erased to the cheek's own tone and a pupil is
+    drawn in the middle of the lid, hanging from it,
   * the finished eye is stamped into both drawn eyes, so the UV mirroring makes
     a matching pair.
 
 A synthetic face is painted here, so the test runs without Blender and without
 an asset on the machine:
 
-  * a pupil drawn at one end ends up centred, with the lid rows untouched,
+  * a pupil drawn at one end ends up centred, alone, and under the lid,
+  * the lid's own rows are untouched, byte for byte,
   * both drawn eyes end up byte-identical,
   * a face already level, or with no eyes at all, is left byte for byte alone,
   * the PNG written out reads back as the same pixels the fix produced.
@@ -42,6 +44,8 @@ LEFT_EYE = (40, 110)
 RIGHT_EYE = (146, 216)
 TOP = 96
 BOTTOM = 130
+LID = 3          # rows of painted lid, the same in every column
+SWELL = 9        # rows the pupil was painted under the lid
 
 
 def canvas(colour=SKIN):
@@ -57,7 +61,7 @@ def paint(pixels, x, y, colour=INK):
 
 
 def paint_eye(pixels, left, right, swell):
-    """One eye: a swept lid across the span, swelling into a pupil at `swell`.
+    """One eye: a lid across the span, swelling into a pupil at `swell`.
 
     `swell` is 0.0 for a pupil at the left corner and 1.0 for the right, which
     is how these faces are drawn - the pupil sits at one end of the stroke, not
@@ -66,42 +70,63 @@ def paint_eye(pixels, left, right, swell):
     span = right - left
     for x in range(left, right + 1):
         t = (x - left) / float(span)
-        arc = TOP + int(round(4 * (1 - (2 * t - 1) ** 2)))
-        paint(pixels, x, arc)
-        paint(pixels, x, arc + 1)
-        depth = int(round(9 * max(0.0, 1 - abs(t - swell) * 4)))
-        for extra in range(1, depth + 1):
-            paint(pixels, x, arc + 1 + extra)
+        for row in range(LID):
+            paint(pixels, x, TOP + row)
+        depth = int(round(SWELL * max(0.0, 1 - abs(t - swell) * 4)))
+        for extra in range(depth):
+            paint(pixels, x, TOP + LID + extra)
+
+
+def ink(pixels, x, y):
+    at = (y * WIDTH + x) * 4
+    return 0.299 * pixels[at] + 0.587 * pixels[at + 1] + 0.114 * pixels[at + 2] < 140
+
+
+def texels(pixels, left, right, first=TOP, last=BOTTOM):
+    return {(x, y) for x in range(left, right + 1)
+            for y in range(first, last + 1) if ink(pixels, x, y)}
+
+
+def below_lid(pixels, left, right):
+    return {(x, y) for x, y in texels(pixels, left, right)
+            if y >= TOP + LID}
+
+
+def blob_count(points):
+    """How many separate blobs a set of texels makes, touching at 8 corners."""
+    left = set(points)
+    count = 0
+    while left:
+        count += 1
+        stack = [left.pop()]
+        while stack:
+            x, y = stack.pop()
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    near = (x + dx, y + dy)
+                    if near in left:
+                        left.remove(near)
+                        stack.append(near)
+    return count
+
+
+def centre(points, left, right):
+    if not points:
+        return None
+    return (sum(x for x, _ in points) / float(len(points)) - left) \
+        / float(right - left)
+
+
+def lid_bytes(pixels, left, right):
+    return [bytes(pixels[((TOP + row) * WIDTH + x) * 4:
+                        ((TOP + row) * WIDTH + x) * 4 + 4])
+            for x in range(left, right + 1) for row in range(LID)]
 
 
 def rectangle(pixels, left, right):
-    return [bytes(pixels[(y * WIDTH + x) * 4:(y * WIDTH + x) * 4 + 4])
-            for y in range(TOP, BOTTOM + 1) for x in range(left, right + 1)]
-
-
-def lid_rows(pixels, left, right):
-    rows = {}
-    for x in range(left, right + 1):
-        for y in range(TOP - 8, BOTTOM + 8):
-            at = (y * WIDTH + x) * 4
-            if 0.299 * pixels[at] + 0.587 * pixels[at + 1] + 0.114 * pixels[at + 2] < 140:
-                rows[x] = y
-                break
-    return rows
-
-
-def ink_profile(pixels, left, right):
-    weight = 0
-    moment = 0
-    for x in range(left, right + 1):
-        for y in range(TOP - 8, BOTTOM + 8):
-            at = (y * WIDTH + x) * 4
-            if 0.299 * pixels[at] + 0.587 * pixels[at + 1] + 0.114 * pixels[at + 2] < 140:
-                weight += 1
-                moment += x
-    if not weight:
-        return None
-    return (moment / float(weight) - left) / float(right - left)
+    return lid_bytes(pixels, left, right) + [
+        bytes(pixels[(y * WIDTH + x) * 4:(y * WIDTH + x) * 4 + 4])
+        for y in range(TOP, BOTTOM + 1) for x in range(left, right + 1)]
 
 
 def main():
@@ -115,51 +140,53 @@ def main():
         if not ok:
             failures.append(name)
 
-    # The case that started this: both pupils drawn at one end of their stroke.
+    # The case that started this: both pupils drawn at one end of their stroke,
+    # so that eye is drawn twice rather than mirrored.
     face = canvas()
     paint_eye(face, LEFT_EYE[0], LEFT_EYE[1], 0.9)
-    paint_eye(face, RIGHT_EYE[0], RIGHT_EYE[1], 0.9)
-    before = ink_profile(face, LEFT_EYE[0], LEFT_EYE[1])
+    paint_eye(face, RIGHT_EYE[0], RIGHT_EYE[1], 0.1)
+    before = centre(below_lid(face, LEFT_EYE[0], LEFT_EYE[1]),
+                    LEFT_EYE[0], LEFT_EYE[1])
     fixed, notes = face_eyes.centre_pupils(face, WIDTH, HEIGHT, force=True)
-    report("drawn at one end: the swelling was off centre",
+    report("drawn at one end: the pupil was off centre",
            before is not None and abs(before - 0.5) > 0.1, " (%.2f)" % (before or 0))
-    # A pupil is added in the middle, and nothing painted is removed, so the
-    # drawing keeps the weight and the edges it was painted with.
-    def ink_texels(pixels):
-        return {(x, y) for x in range(LEFT_EYE[0], LEFT_EYE[1] + 1)
-                for y in range(TOP - 8, BOTTOM + 8)
-                if 0.299 * pixels[(y * WIDTH + x) * 4]
-                + 0.587 * pixels[(y * WIDTH + x) * 4 + 1]
-                + 0.114 * pixels[(y * WIDTH + x) * 4 + 2] < 140}
 
-    added = ink_texels(fixed) - ink_texels(face)
-    lost = ink_texels(face) - ink_texels(fixed)
-    middle = (LEFT_EYE[0] + LEFT_EYE[1]) / 2.0
-    where = (sum(x for x, _ in added) / float(len(added)) - LEFT_EYE[0]) \
-        / (LEFT_EYE[1] - LEFT_EYE[0]) if added else None
-    report("a pupil is added in the middle of the eye",
-           where is not None and abs(where - 0.5) <= 0.12,
-           " (%s of the eye's width, %d texels)"
-           % ("%.2f" % where if where is not None else "none", len(added)))
-    report("not one painted texel is removed", not lost,
-           " (%d of %d lost)" % (len(lost), len(ink_texels(face))))
-    report("the added pupil sits on the eye's middle",
-           bool(added) and all(abs(x - middle) <= 0.35 * (LEFT_EYE[1] - LEFT_EYE[0])
-                               for x, _ in added))
+    # One pupil, in the middle, hanging from the lid.
+    pupil = below_lid(fixed, LEFT_EYE[0], LEFT_EYE[1])
+    where = centre(pupil, LEFT_EYE[0], LEFT_EYE[1])
+    report("one pupil is drawn, not two", blob_count(pupil) == 1,
+           " (%d blob(s), %d texels)" % (blob_count(pupil), len(pupil)))
+    report("it sits on the middle of the eye",
+           where is not None and abs(where - 0.5) <= 0.08, " (%.2f)" % (where or 0))
+    report("it hangs from the lid",
+           bool(pupil) and min(y for _, y in pupil) <= TOP + LID + 1)
+    report("it is no wider than the eye it is in",
+           bool(pupil)
+           and max(x for x, _ in pupil) - min(x for x, _ in pupil)
+           <= 0.45 * (LEFT_EYE[1] - LEFT_EYE[0]),
+           " (%d of %d columns)"
+           % (max(x for x, _ in pupil) - min(x for x, _ in pupil),
+              LEFT_EYE[1] - LEFT_EYE[0]))
     report("both eyes reported", len(notes) == 2, " (%d notes)" % len(notes))
 
-    # The lid is not redrawn: its rows are the ones that were painted.
-    painted_lid = lid_rows(face, LEFT_EYE[0], LEFT_EYE[1])
-    fixed_lid = lid_rows(fixed, LEFT_EYE[0], LEFT_EYE[1])
-    kept = sum(1 for x in painted_lid if painted_lid[x] == fixed_lid.get(x))
-    report("the lid is kept exactly as painted", kept == len(painted_lid),
-           " (%d of %d columns on their own row)" % (kept, len(painted_lid)))
+    # The lid is not redrawn: its rows are the ones that were painted, and none
+    # of those bytes moved.
+    report("the lid is kept exactly as painted",
+           lid_bytes(fixed, LEFT_EYE[0], LEFT_EYE[1])
+           == lid_bytes(face, LEFT_EYE[0], LEFT_EYE[1]),
+           " (%d columns, %d rows)" % (LEFT_EYE[1] - LEFT_EYE[0] + 1, LID))
+    report("the lid keeps its painted top row",
+           {x for x, y in texels(fixed, LEFT_EYE[0], LEFT_EYE[1]) if y == TOP}
+           == {x for x in range(LEFT_EYE[0], LEFT_EYE[1] + 1)})
 
     # Both drawn eyes end up identical, which is what makes the mirrored UVs
     # produce a matching pair on the head.
     report("both drawn eyes are identical",
            rectangle(fixed, LEFT_EYE[0], LEFT_EYE[1])
            == rectangle(fixed, RIGHT_EYE[0], RIGHT_EYE[1]))
+    report("the right eye was redrawn too",
+           rectangle(fixed, RIGHT_EYE[0], RIGHT_EYE[1])
+           != rectangle(face, RIGHT_EYE[0], RIGHT_EYE[1]))
 
     # Already level: nothing may change, not one byte.
     level = canvas()

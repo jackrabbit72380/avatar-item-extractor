@@ -731,26 +731,25 @@ drawn pair is itself mirrored, so the two eyes come out *unmirrored* on the
 model: one lash sweeps up to the left and the other up to the left too, and no
 care with the pupil makes them a pair.
 
-The pupil is not separable from that stroke. It is the heavy end of it: trim it
-off and the lid that is left is a hairline where a bold, sharp stroke was
-painted, which is exactly what the first attempts produced. Whatever is done
-here, **nothing painted is removed** - the eye keeps the weight and the edges
-it was drawn with.
+The pupil is the heavy end of that same stroke, so it cannot simply be trimmed
+off: a lid rebuilt around a removed pupil is a hairline where a bold, sharp
+stroke was painted, which is exactly what the first attempts produced.
+`--eyes-forward` (or an `eyes_forward.txt` beside the `.bat`) keeps the lid and
+moves the gaze instead:
 
-`--eyes-forward` (or an `eyes_forward.txt` beside the `.bat`) therefore treats
-one painted eye as the pattern and copies it:
-
-  * the drawn eye is kept **texel for texel** - no texel is cleared, and the lid
-    is never redrawn,
-  * a pupil is added in the middle of it, in ink darker than the drawing's own,
-    tucked a row under the lid line and clear of its ends,
+  * the lid's underside is the line the stroke follows where it is not swollen -
+    fitted through the thin columns and run on through the swollen ones,
+  * every texel above that line is kept **exactly as painted**, so the lid keeps
+    its weight, its sharp edge and its shape; the lid is never redrawn,
+  * the ink below it is erased to the cheek's own tone, and a pupil is drawn on
+    the middle of the lid, hanging from it, in the eye's own ink,
   * that finished eye is stamped into both drawn eyes unchanged, so the UV
     mirroring turns one drawing into two eyes that are exact mirrors.
 
 It is off unless asked for, because it edits the avatar's own art rather than
-the item's. Verified on the Marine face: 0 of the 605 painted ink texels are
-lost and 66 are added, the lid lands on its painted row in all 71 columns, and
-the two drawn eyes are byte-identical afterwards.
+the item's. Verified on the Marine face: 0 of the lid's texels change in any of
+the 72 columns, the new pupil is one blob of 198 texels centred at 0.501 of the
+eye, and the two drawn eyes are byte-identical afterwards.
 
 ```
 python rig_items.py --items extracted --out extracted \

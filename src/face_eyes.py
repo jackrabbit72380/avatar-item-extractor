@@ -13,9 +13,9 @@ two eyes come out *unmirrored* on the model: one lash sweeps up to the left and
 the other up to the left too, and no amount of care with the pupil makes the
 pair look alike. Which is why this works on one eye and copies it:
 
-  * the first drawn eye is the pattern - its lid is kept row for row, exactly
-    as painted, and only the swelling under that lid is cleared away,
-  * a new iris is drawn centred under that same lid,
+  * the first drawn eye is the pattern - its lid is kept texel for texel,
+    exactly as painted, and only the swelling under that lid is erased,
+  * a pupil is drawn on the middle of the same lid, hanging from it,
   * the finished eye is stamped into both drawn eyes unchanged, so the head's
     mirroring turns one drawing into two eyes that are exact mirrors - which is
     what a pair of eyes is supposed to be.
@@ -24,6 +24,7 @@ Nothing here imports ``bpy``; the pixels and the PNG are plain Python so
 ``tools/test_face_eyes.py`` can pin the behaviour without Blender.
 """
 
+import math
 import struct
 import zlib
 
@@ -135,38 +136,37 @@ def _extent(rgba, width, left, right, first, last):
     return top, low
 
 
-def _pattern(rgba, width, skin, left, right, first, last, top, low):
-    """One finished eye: the drawing as painted, with its swelling moved.
+def _pattern(rgba, width, height, left, right, first, last, top, low):
+    """One finished eye: the painted lid, and a pupil in the middle of it.
 
-    The eye is one stroke - a thin tail at one corner swelling into the pupil at
-    the other - so its thickness and its sharp edges are the drawing, not
-    something to replace. This keeps every texel of it: the lash stays where it
-    was painted, the swelling under it is translated along the eye until it sits
-    in the middle, and its own anti-aliased coverage travels with it, which is
-    what keeps it sharp instead of turning into a line.
+    Each eye is painted as one stroke: a thin tail at the outer corner that
+    swells into the pupil at the inner one, and the swelled end is where the
+    avatar looks. The lid is everything else in that stroke, and its weight and
+    its sharp edge are the drawing, so the lid is kept texel for texel and only
+    the swelling under it is taken away:
+
+      * the lid's underside is the line the stroke follows where it is not
+        swollen - fitted through the thin columns and run on through the
+        swollen ones,
+      * every texel above that line keeps its painted colour, and the ink below
+        it is erased to the cheek's own tone - the row against the lid keeps
+        its own coverage, so the stroke's soft underside survives,
+      * a pupil is drawn on the middle of that line, hanging from the lid, in
+        the eye's own ink and with a soft edge.
 
     Returned as a grid covering the eye's own rectangle, so the same drawing can
     be stamped into both eyes and the head's mirroring makes a matching pair.
     """
     rows = last - first + 1
     columns = right - left + 1
-    skin_luma = 0.299 * skin[0] + 0.587 * skin[1] + 0.114 * skin[2]
-    # Coverage, not a yes/no mask: a texel half painted over skin comes back half
-    # painted over skin, so moving the swelling cannot leave a hard rim behind.
-    ink_luma = min(_luma(rgba, width, x, y)
-                   for x in range(left, right + 1)
-                   for y in range(first, last + 1))
-    span = max(1.0, skin_luma - ink_luma)
 
     # Where the lid's underside runs: the stroke's own bottom edge, smoothed so
-    # the one place it bulges down - the pupil - cannot drag the line with it.
-    # The lid is then everything above that line, kept exactly as painted; the
-    # pupil is the bulge below it, and only that bulge moves.
+    # the one place it swells down - the pupil - cannot drag the line with it.
     thickness = sorted(low[x] - top[x] + 1 for x in low)
     ordinary = thickness[len(thickness) // 2]
     thin = [x for x in sorted(low) if low[x] - top[x] + 1 <= ordinary]
     if len(thin) >= 4:
-        # Least-squares curve through the underside of the columns that are not
+        # Least-squares line through the underside of the columns that are not
         # swollen: it says where the lid ends and the pupil begins.
         count = float(len(thin))
         mean_x = sum(thin) / count
@@ -174,41 +174,63 @@ def _pattern(rgba, width, skin, left, right, first, last, top, low):
         sxx = sum((x - mean_x) ** 2 for x in thin) or 1.0
         sxy = sum((x - mean_x) * (low[x] - mean_y) for x in thin)
         slope = sxy / sxx
-        smooth = {x: mean_y + slope * (x - mean_x) for x in low}
+        line = {x: mean_y + slope * (x - mean_x) for x in low}
     else:
-        smooth = {x: low[x] for x in low}
+        line = {x: float(low[x]) for x in low}
+    underside = {x: int(math.floor(line[x])) for x in line}
 
-    # The eye as painted, texel for texel: nothing is removed and nothing is
-    # trimmed, because the stroke's weight and its sharp edges are the drawing.
+    # The eye as painted, minus the swelling under the lid. The face is flat
+    # toned under the eye, and the cheek a few rows below it is the honest
+    # sample of that tone, column by column: erasing to it leaves no rim of
+    # guessed skin behind. The one row against the lid keeps its own coverage,
+    # so the stroke's soft underside survives; everything under that is opening.
+    cheek = {}
+    probe = min(height - 1, last + 4)
+    for x in range(left, right + 1):
+        at = (probe * width + x) * 4
+        cheek[x] = (rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3])
     grid = {}
-    for oy in range(rows):
-        for ox in range(columns):
-            at = ((first + oy) * width + left + ox) * 4
-            grid[(ox, oy)] = (rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3])
-
-    # The room under the lid: how deep the eye is open, column by column.
-    room = sorted(max(1.0, last - smooth[x]) for x in low)
-    depth = room[len(room) // 2]
-    if depth < 3:
-        return None, 0
-
-    # A pupil drawn in the middle, tucked a row under the lid line and clear of
-    # its ends: additive, so the painted eye underneath is never disturbed.
-    darkest = min((tuple(rgba[(y * width + x) * 4:(y * width + x) * 4 + 3])
-                   for x in range(left, right + 1)
-                   for y in range(first, last + 1)
-                   if _luma(rgba, width, x, y) < INK), key=lambda colour: sum(colour))
-    ink = (int(darkest[0] * 0.8), int(darkest[1] * 0.8), int(darkest[2] * 0.8))
-    radius_y = max(2.5, depth * 0.55)
-    radius_x = max(2.5, radius_y * 0.85)
-    centre_x = (columns - 1) / 2.0
-    centre_y = (first + last + 1) / 2.0 - first + 0.5
+    stolen = []
     for oy in range(rows):
         for ox in range(columns):
             x = left + ox
-            if x not in top:
+            y = first + oy
+            at = (y * width + x) * 4
+            colour = (rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3])
+            if x not in underside or y <= underside[x]:
+                grid[(ox, oy)] = colour
                 continue
-            if oy + first <= max(smooth[x], top[x] + 1):
+            tone = cheek[x]
+            if y == underside[x] + 1:
+                tone_luma = 0.299 * tone[0] + 0.587 * tone[1] + 0.114 * tone[2]
+                cover = min(1.0, max(0.0, (tone_luma - _luma(rgba, width, x, y))
+                                  / max(1.0, tone_luma - INK)))
+            else:
+                cover = 1.0
+            if cover > 0.5:
+                stolen.append(colour)
+            grid[(ox, oy)] = tuple(
+                int(round(colour[channel] * (1 - cover) + tone[channel] * cover))
+                for channel in range(4))
+
+    # The pupil: the middle of the opening under the lid, in the ink the eye was
+    # drawn with, and never over the lid itself.
+    opening = sorted(last - underside[x] for x in underside)
+    depth = opening[len(opening) // 2]
+    if depth < 3 or not stolen:
+        return None
+    stolen.sort(key=lambda colour: 0.299 * colour[0] + 0.587 * colour[1]
+                + 0.114 * colour[2])
+    ink = stolen[len(stolen) // 8]
+    radius_x = max(2.5, columns * 0.17)
+    radius_y = max(2.0, depth * 0.42)
+    centre_x = (columns - 1) / 2.0
+    middle = left + int(round(centre_x))
+    centre_y = underside.get(middle, last - depth // 2) - first + depth / 2.0
+    for oy in range(rows):
+        for ox in range(columns):
+            x = left + ox
+            if x in underside and first + oy <= underside[x]:
                 # Never over the lid line itself.
                 continue
             dx = (ox - centre_x) / radius_x
@@ -221,7 +243,7 @@ def _pattern(rgba, width, skin, left, right, first, last, top, low):
             grid[(ox, oy)] = tuple(
                 int(round(here[channel] * (1 - cover) + ink[channel] * cover))
                 for channel in range(3)) + (here[3],)
-    return grid, 0
+    return grid
 
 
 def centre_pupils(rgba, width, height, force=False):
@@ -230,6 +252,11 @@ def centre_pupils(rgba, width, height, force=False):
     Returns (pixels, notes): the notes say what was done, in plain numbers, so a
     run can report it rather than silently rewriting somebody's art. A face
     whose eyes already look level is left alone unless ``force`` is set.
+
+    The pupil moves; the lid does not. The off-centre ink is erased under the
+    painted lid and a pupil is drawn in the middle, and that finished eye is
+    stamped into both, so each eye keeps the shape it was drawn with and the
+    pair looks straight ahead.
     """
     found = find_eyes(rgba, width, height)
     if found is None:
@@ -248,9 +275,10 @@ def centre_pupils(rgba, width, height, force=False):
         return bytearray(rgba), ["face: the eyes already look forward, texture untouched"]
 
     skin = _skin(rgba, width, height, groups[0][0], groups[-1][-1], first, last)
-    grid, shift = _pattern(rgba, width, skin, left, right, first, last, top, low)
+    grid = _pattern(rgba, width, height, left, right, first, last, top, low)
     if grid is None:
-        return bytearray(rgba), ["face: the eye has no swelling to move, texture untouched"]
+        return bytearray(rgba), ["face: the eye has no opening to put a pupil in, "
+                                 "texture untouched"]
 
     pixels = bytearray(rgba)
     span = min(group[-1] - group[0] for group in groups)
@@ -275,8 +303,8 @@ def centre_pupils(rgba, width, height, force=False):
                 at = ((first + oy) * width + x) * 4
                 pixels[at:at + 4] = bytes(colour)
 
-    notes = ["face: eye 0 kept exactly as painted, with a pupil added in the "
-             "middle of the eye",
+    notes = ["face: the painted lid kept texel for texel, with the pupil erased "
+             "from under it and redrawn in the middle of the eye",
              "face: that eye stamped into both, so the head's mirrored UVs make "
              "the pair exact mirrors"]
     return pixels, notes

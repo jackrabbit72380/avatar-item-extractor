@@ -84,8 +84,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v65"
-BUILD = "2026-11-24 shape-kept-body-and-level-eyes"
+VERSION = "v66"
+BUILD = "2026-11-24 eyes-looking-forward"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -452,8 +452,9 @@ def port_material(mesh, stem, out, model, eyes_forward=False):
     written = image["data"]
     # A painted face keeps its gaze wherever the artist left it, and these faces
     # are drawn with the pupil at one end of the eye: under Halo's helmet the
-    # avatar then looks off to one side in every frame. --eyes-forward redraws
-    # that pupil in the middle, which is opt-in because it changes the art.
+    # avatar then looks off to one side in every frame. --eyes-forward keeps the
+    # painted lid and draws the pupil again in the middle of it, which is opt-in
+    # because it changes the art.
     if eyes_forward and "face" in name.lower():
         rgba, notes = face_eyes.centre_pupils(rgba, width, height, force=True)
         for line in notes:
