@@ -76,7 +76,7 @@ def main():
     stem = "UNSC Marine Armor"
     # The item's own build folder is the faithful single-player build: plain
     # base map, nothing masked. The other three are made from it.
-    plain = stem + " sp"
+    plain = stem
     out = tempfile.mkdtemp(prefix="hek-layout-")
     hek = os.path.join(out, module.HEK_DIR)
 
@@ -164,9 +164,10 @@ def main():
     check(lower == 1,
           "a lower-case file name did not match an item title in mixed case")
 
-    # 6. Two builds of the item: data\<item> sp and data\<item> mp, each a
-    #    complete data\ folder with its own multipurpose map, its own model name
-    #    and its own shader names, so the two can be compiled side by side.
+    # 6. One build of the item: data\<item>\, complete for tool.exe, taking the
+    #    team colour and carrying the decal in its base map. There is no sp/mp
+    #    pair any more - only the multiplayer version uses team colour, so a
+    #    second folder that masked nothing was a suit that never changes colour.
     jms = "\n".join([
         "8200\t3251\t2",
         "root\t-1\t-1\t0\t0\t0\t1\t0\t0\t0",
@@ -186,25 +187,20 @@ def main():
         base = os.path.join(hek, order, "data", plain)
         write(os.path.join(base, "bitmaps", "%s multipurpose.tif" % stem),
               "team colour %s" % order)
-        write(os.path.join(base, "bitmaps", "%s multipurpose xbox.tif" % stem),
-              "team colour xbox")
-        write(os.path.join(base, "bitmaps", "%s multipurpose sp.tif" % stem),
-              "nothing masked %s" % order)
         write(os.path.join(base, "bitmaps", "%s change colour.tif" % stem), "change")
         write(os.path.join(base, "bitmaps", "%s base map.tif" % stem),
               "base %s" % order)
         write(os.path.join(base, "bitmaps", "%s base map + decal.tif" % stem),
               "decal base %s" % order)
         # A later test wrote a model into models\ to check mirror_jms; the
-        # builds start from what extraction leaves, which is no model there.
+        # build starts from what extraction leaves, which is no model there.
         for stale in ("models", os.path.join("fp", "models")):
             folder = os.path.join(base, stale)
             for name in os.listdir(folder):
                 if name.lower().endswith(".jms"):
                     os.remove(os.path.join(folder, name))
-        # The exported model lives in source\, not models\: data\<item> sp\ is
-        # the sp build's own folder, and tool.exe compiles every .jms in
-        # models\, so a copy there would become a second tag.
+        # The exported model lives in source\, not models\: tool.exe compiles
+        # every .jms in models\, so the original there would become a second tag.
         write(os.path.join(base, "source", "%s.jms" % stem), jms)
         write(os.path.join(base, "fp", "source", "%s - fp arms.jms" % stem), jms)
 
@@ -223,66 +219,45 @@ def main():
         pass
 
     built = module.hek_builds(out, [stem])
-    builds = ("sp", "sp-decals", "mp", "mp-decals")
-    check(len(built) == 8,
-          "hek_builds made %d folders, expected 8 - four builds for both orders"
+    check(len(built) == 2,
+          "hek_builds made %d folders, expected 2 - one build for both orders"
           % len(built))
     for order in ("pc", "xbox"):
-        for build in builds:
-            target = os.path.join(hek, order, "data", "%s %s" % (stem, build))
-            for sub in ("bitmaps", "models", "animations", "source",
-                        os.path.join("fp", "bitmaps"),
-                        os.path.join("fp", "models")):
-                check(os.path.isdir(os.path.join(target, sub)),
-                      "%s %s is missing %s\\" % (order, build, sub))
-            want = ("nothing masked %s" % order if build.startswith("sp")
-                    else "team colour xbox" if order == "xbox"
-                    else "team colour %s" % order)
-            mask = os.path.join(target, "bitmaps", "%s multipurpose.tif" % stem)
-            check(os.path.exists(mask) and read(mask) == want,
-                  "%s %s\\bitmaps multipurpose is %r, expected %r"
-                  % (order, build, read(mask) if os.path.exists(mask) else None,
-                     want))
-            arms = os.path.join(target, "fp", "bitmaps",
-                                "%s multipurpose.tif" % stem)
-            check(os.path.exists(arms) and read(arms) == want,
-                  "%s %s's arms do not carry that build's own map" % (order, build))
-            change = os.path.join(target, "bitmaps", "%s change colour.tif" % stem)
-            # The item's own folder (the sp build) is where extraction put the
-            # reference mask, so the builds that must not carry one are the
-            # sp-decals ones.
-            check(build != "sp-decals" or not os.path.exists(change),
-                  "%s %s has a change-colour map and masks nothing"
-                  % (order, build))
-            # The decal is in the base map only where the build says so.
-            shipped = os.path.join(target, "bitmaps", "%s base map.tif" % stem)
-            wanted_base = ("decal base %s" % order if "-decals" in build
-                           else "base %s" % order)
-            check(os.path.exists(shipped) and read(shipped) == wanted_base,
-                  "%s %s's base map is %r, expected %r"
-                  % (order, build,
-                     read(shipped) if os.path.exists(shipped) else None,
-                     wanted_base))
-            model = os.path.join(target, "models", "%s %s.jms" % (stem, build))
-            check(os.path.exists(model), "%s %s has no model" % (order, build))
-            present = sorted(name for name in os.listdir(os.path.join(target, "models"))
-                             if name.lower().endswith(".jms"))
-            check(present == ["%s %s.jms" % (stem, build)],
-                  "%s %s\\models holds %r, expected only the model named for "
-                  "the build" % (order, build, present))
-            if os.path.exists(model):
-                # A JMS material name becomes a tag name, so the suffix is the
-                # build with underscores: _sp_decals, not _sp-decals.
-                suffix = build.replace("-", "_")
-                check("boot_shader_%s\t<none>" % suffix in read(model),
-                      "%s %s's model does not rename its shader" % (order, build))
-            arms_model = os.path.join(target, "fp", "models",
-                                      "%s %s - fp arms.jms" % (stem, build))
-            check(os.path.exists(arms_model),
-                  "%s %s has no fp arms model" % (order, build))
-            check(os.path.exists(os.path.join(target, "bitmaps",
-                                              "%s base map.tif" % stem)),
-                  "%s %s has no base map" % (order, build))
+        target = os.path.join(hek, order, "data", plain)
+        for sub in ("bitmaps", "models", "animations", "source",
+                    os.path.join("fp", "bitmaps"), os.path.join("fp", "models")):
+            check(os.path.isdir(os.path.join(target, sub)),
+                  "%s is missing %s\\" % (order, sub))
+        mask = os.path.join(target, "bitmaps", "%s multipurpose.tif" % stem)
+        want = "team colour %s" % order
+        check(os.path.exists(mask) and read(mask) == want,
+              "%s\\bitmaps multipurpose is %r, expected %r"
+              % (order, read(mask) if os.path.exists(mask) else None, want))
+        arms = os.path.join(target, "fp", "bitmaps",
+                            "%s multipurpose.tif" % stem)
+        check(os.path.exists(arms) and read(arms) == want,
+              "%s's arms do not carry the same map" % order)
+        change = os.path.join(target, "bitmaps", "%s change colour.tif" % stem)
+        check(os.path.exists(change),
+              "%s has no change-colour map, so nothing could be team coloured"
+              % order)
+        # The decal is in the base map: CE's shader samples one colour layer.
+        shipped = os.path.join(target, "bitmaps", "%s base map.tif" % stem)
+        wanted_base = "decal base %s" % order
+        check(os.path.exists(shipped) and read(shipped) == wanted_base,
+              "%s's base map is %r, expected %r"
+              % (order, read(shipped) if os.path.exists(shipped) else None,
+                 wanted_base))
+        model = os.path.join(target, "models", "%s.jms" % stem)
+        check(os.path.exists(model), "%s has no model" % order)
+        present = sorted(name for name in os.listdir(os.path.join(target, "models"))
+                         if name.lower().endswith(".jms"))
+        check(present == ["%s.jms" % stem],
+              "%s\\models holds %r, expected only the item's own model"
+              % (order, present))
+        arms_model = os.path.join(target, "fp", "models",
+                                  "%s - fp arms.jms" % stem)
+        check(os.path.exists(arms_model), "%s has no fp arms model" % order)
 
     if failures:
         print("FAIL: %d check(s)" % len(failures))
@@ -290,7 +265,7 @@ def main():
             print("  - %s" % message)
         return 1
     print("PASSED: HEK tree - data\\<item>\\{models,animations,source,fp\\{models,"
-          "bitmaps,source}}, both orders, each with its own maps")
+          "bitmaps,source}}, both orders, one build with team colour")
     return 0
 
 

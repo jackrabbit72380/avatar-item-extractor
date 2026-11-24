@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v89"
-BUILD = "2026-11-24 one-click"
+VERSION = "v90"
+BUILD = "2026-11-24 one-build"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -4624,8 +4624,7 @@ def report_text(options, records, stems, armature, nxe=None):
             lines.append("  join      : %s" % record["join"])
         if record.get("halo_file"):
             lines.append("  halo file : %s" % record["halo_file"])
-        lines.append("  hek builds: data\\%s sp\\ (its own colours) and data\\%s"
-                     " mp\\ (team colour)" % (stem, stem))
+        lines.append("  hek build : data\\%s\\ - one build, team colour" % stem)
         if record.get("arms_file"):
             lines.append("  fp arms   : %s" % record["arms_file"])
             lines.append("              %s" % (record.get("arms_binding")
@@ -4660,16 +4659,10 @@ def report_text(options, records, stems, armature, nxe=None):
 MAX_DIR = "extracted for max users"
 BLENDER_DIR = "extracted for blender users"
 HEK_DIR = "extracted for hek users"
-# The item's own build folder, the one with the plain base map and no tint: the
-# faithful single-player build. The other three copy from it. Must match
-# extract_items.PLAIN_SUFFIX.
-PLAIN_SUFFIX = " sp"
-
-# Every build tool.exe is given, per channel order. The decal is baked into the
-# base map because Halo CE's shader_model samples one colour layer, and the team
-# colour lives in the multipurpose map, so the two are independent: each build
-# is one of each.
-BUILD_NAMES = ("sp", "sp-decals", "mp", "mp-decals")
+# The item's own folder. One build, the one that takes the team colour: only the
+# multiplayer version uses it, so there is no sp/mp pair to choose between.
+# Must match extract_items.PLAIN_SUFFIX.
+PLAIN_SUFFIX = ""
 
 
 def hek_folders(out, stem):
@@ -4795,110 +4788,36 @@ def jms_material_names(text, suffix):
 
 
 def hek_builds(out, stems):
-    r"""Make the four builds per order: decal on and off, team colour on and off.
+    r"""Finish each item's one build: decal in the base map, arms beside it.
 
-    Halo CE ships an item twice - one tag that keeps the colours it was painted
-    in, one that takes the team colour - and the difference is one bitmap, the
-    multipurpose map the shader reads. The decal is a second, independent
-    choice: CE's shader_model samples one colour layer, so a decal is only there
-    if it is baked into the base map. Hence four data\ folders per order:
+    Halo CE ships an item as a tag built from data\<item>\, and only the
+    multiplayer version uses team colour - so there is one build, in the item's
+    own folder, carrying the team-colour mask in its multipurpose map. The decal
+    is baked into the base map because CE's shader_model samples one colour
+    layer: the bitmap holds it or it is not there at all.
 
-        <item> sp          the item's own colours, plain base map
-        <item> sp-decals   the item's own colours, decal blended in
-        <item> mp          team colour, plain base map
-        <item> mp-decals   team colour, decal blended in
-
-    Each is complete - its own maps, its own model name, its own JMS material
-    names - because tool.exe names tags after the folder and the file, so
-    sharing a name would mean the second build overwriting the first.
-    "Team colour" here means whatever mask the multipurpose map carries: for an
-    item that states no colour change (blank tint slot, no colour table) the mp
-    mask is black, so mp and sp differ only in which file is bound until someone
-    authors a mask with extract_items --tint.
+    There used to be four folders per item (sp, sp-decals, mp, mp-decals) with
+    the .jms renamed for each, because tool.exe names tags after files. One
+    build needs none of that: the model keeps its own name, so the tag is the
+    item.
     """
     made = []
     for stem in sorted(set(stems)):
-        folders = hek_folders(out, stem)
-        for order, tree in folders.items():
-            data = os.path.dirname(tree["item"])
-            # The two masks extraction wrote: the team-colour one in this
-            # order's channel layout, and the single-player one with nothing
-            # masked.
-            # Read both masks before any build is written: the sp build's folder
-            # is the source of the copies, so writing its multipurpose map
-            # first would leave the mp builds copying the sp mask.
-            masks = {}
-            for kind, name in (
-                    ("sp", "%s multipurpose sp.tif" % stem),
-                    ("mp", "%s multipurpose%s.tif"
-                     % (stem, " xbox" if order == "xbox" else ""))):
-                path = os.path.join(tree["bitmaps"], name)
-                if os.path.exists(path):
-                    with open(path, "rb") as handle:
-                        masks[kind] = handle.read()
-            for build in BUILD_NAMES:
-                target = os.path.join(data, "%s %s" % (stem, build))
-                bitmaps = os.path.join(target, "bitmaps")
-                models = os.path.join(target, "models")
-                fp_bitmaps = os.path.join(target, "fp", "bitmaps")
-                fp_models = os.path.join(target, "fp", "models")
-                for path in (bitmaps, models, fp_bitmaps, fp_models,
-                             os.path.join(target, "animations"),
-                             os.path.join(target, "source")):
-                    os.makedirs(path, exist_ok=True)
-                # Every map but the two this build decides for itself: the
-                # multipurpose map, and the base map when the decal is baked in.
-                for name in sorted(os.listdir(tree["bitmaps"])):
-                    low = name.lower()
-                    if not low.endswith(".tif"):
-                        continue
-                    if "base map + decal" in low or "multipurpose" in low:
-                        continue
-                    if build.startswith("sp") and "change colour" in low:
-                        # Nothing tints in an sp build, so the reference mask
-                        # would be a second, contradicting statement.
-                        continue
-                    copy_file(os.path.join(tree["bitmaps"], name),
-                              os.path.join(bitmaps, name))
-                # Halo CE's shader samples one colour layer, so the decal is in
-                # the bitmap or nowhere. It keeps the name the shader binds.
-                if "-decals" in build:
-                    composite = os.path.join(tree["bitmaps"],
-                                             "%s base map + decal.tif" % stem)
-                    base_tif = os.path.join(bitmaps, "%s base map.tif" % stem)
-                    if os.path.exists(composite) and os.path.exists(base_tif):
-                        copy_file(composite, base_tif)
-                mask = masks.get("mp" if build.startswith("mp") else "sp")
-                if mask is not None:
-                    with open(os.path.join(bitmaps, "%s multipurpose.tif" % stem),
-                              "wb") as handle:
-                        handle.write(mask)
-                share_files(bitmaps, fp_bitmaps)
-                # The models are copied, not moved, and renamed for the build:
-                # tool.exe names the tag after the .jms file, so the builds
-                # arrive as separate tags rather than one overwriting another.
-                # The material suffix is underscored because a JMS material name
-                # becomes a tag name, and hyphens have no place in those.
-                suffix = "_" + build.replace("-", "_")
-                for source, name, home in (
-                        (os.path.join(tree["source"], "%s.jms" % stem),
-                         "%s %s.jms" % (stem, build), models),
-                        (os.path.join(tree["fp_source"],
-                                      "%s - fp arms.jms" % stem),
-                         "%s %s - fp arms.jms" % (stem, build), fp_models)):
-                    if not os.path.exists(source):
-                        continue
-                    with open(source, encoding="utf-8", newline="") as handle:
-                        text_of = handle.read()
-                    try:
-                        text_of = jms_material_names(text_of, suffix)
-                    except ValueError:
-                        pass
-                    with open(os.path.join(home, name), "w", encoding="utf-8",
-                              newline="") as handle:
-                        handle.write(text_of)
-                share_files(tree["source"], os.path.join(target, "source"))
-                made.append(target)
+        for order, tree in hek_folders(out, stem).items():
+            bitmaps = tree["bitmaps"]
+            composite = os.path.join(bitmaps, "%s base map + decal.tif" % stem)
+            base_tif = os.path.join(bitmaps, "%s base map.tif" % stem)
+            if os.path.exists(composite) and os.path.exists(base_tif):
+                copy_file(composite, base_tif)
+            share_files(bitmaps, tree["fp_bitmaps"])
+            for source, home, name in (
+                    (os.path.join(tree["source"], "%s.jms" % stem),
+                     tree["models"], "%s.jms" % stem),
+                    (os.path.join(tree["fp_source"], "%s - fp arms.jms" % stem),
+                     tree["fp_models"], "%s - fp arms.jms" % stem)):
+                if os.path.exists(source):
+                    copy_file(source, os.path.join(home, name))
+            made.append(tree["item"])
     return made
 
 
@@ -5283,7 +5202,7 @@ def main():
         # that cannot read a .blend.
         if armature:
             if options["jms"]:
-                # Into source\, not models\: data\<item> sp\ is also the sp
+                # Into source\, not models\: data\<item>\ is also the
                 # build, and tool.exe compiles every .jms in models\, so the
                 # plain model would become a second tag beside the build's own.
                 # It is the file the model was exported from, which is what a
@@ -5381,7 +5300,7 @@ def main():
             log("wrote build-hek.bat beside the builds: run it to compile the .jms "
                 "and .tif files into tags with tool.exe")
     if built:
-        log("wrote %d HEK builds (sp and mp for each order)" % len(built))
+        log("wrote %d HEK build(s), one per channel order" % len(built))
 
     shipped = ship_source_rigs(out, options, armature)
     if shipped:

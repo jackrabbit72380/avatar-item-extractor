@@ -38,8 +38,8 @@ EXPECTED = (
     "extracted for max users/UNSC Marine Armor base map.png",
     "extracted for max users/UNSC Marine Armor base map.tga",
     "extracted for blender users/UNSC Marine Armor base map.png",
-    "extracted for hek users/pc/data/UNSC Marine Armor sp/bitmaps/UNSC Marine Armor base map.tif",
-    "extracted for hek users/xbox/data/UNSC Marine Armor sp/bitmaps/UNSC Marine Armor base map.tif",
+    "extracted for hek users/pc/data/UNSC Marine Armor/bitmaps/UNSC Marine Armor base map.tif",
+    "extracted for hek users/xbox/data/UNSC Marine Armor/bitmaps/UNSC Marine Armor base map.tif",
     "UNSC Marine Armor_colours.txt",
     "colour_00.png",
     "catalogue.json",
@@ -49,9 +49,7 @@ EXPECTED = (
 # inside the item's own data folder, because that is the directory tool.exe is
 # pointed at: data\<item>\bitmaps.
 MASK_BUILDS = {
-    "multipurpose": ("pc",),
-    "multipurpose xbox": ("xbox",),
-    "multipurpose sp": ("pc", "xbox"),
+    "multipurpose": ("pc", "xbox"),
     "change colour": ("pc", "xbox"),
 }
 
@@ -63,7 +61,7 @@ def homes_for(family, stem):
         wanted.append((folder, "png"))
         wanted.append((folder, "tga"))
     for build in MASK_BUILDS[family]:
-        wanted.append(("extracted for hek users/%s/data/%s sp/bitmaps"
+        wanted.append(("extracted for hek users/%s/data/%s/bitmaps"
                        % (build, stem), "tif"))
     return wanted
 
@@ -308,8 +306,8 @@ def main():
 
         maps = ["extracted for max users/Model Table Item base map.png",
                 "extracted for max users/Model Table Item base map.tga",
-                "extracted for hek users/pc/data/Model Table Item sp/bitmaps/Model Table Item base map.tif",
-                "extracted for hek users/xbox/data/Model Table Item sp/bitmaps/Model Table Item base map.tif"]
+                "extracted for hek users/pc/data/Model Table Item/bitmaps/Model Table Item base map.tif",
+                "extracted for hek users/xbox/data/Model Table Item/bitmaps/Model Table Item base map.tif"]
         for name in maps:
             path = os.path.join(out2, name)
             mark = "ok  " if os.path.exists(path) else "MISS"
@@ -342,7 +340,7 @@ def main():
             return 1
         for name in ("pc", "xbox"):
             tif = os.path.join(out2, "extracted for hek users", name, "data",
-                               "Model Table Item sp", "bitmaps",
+                               "Model Table Item", "bitmaps",
                                "Model Table Item slot 1 decal map.tif")
             if not os.path.exists(tif):
                 print("\nFAIL: the slot .tif is missing from the %s bitmaps" % name)
@@ -424,8 +422,8 @@ def main():
 
         flat = ["extracted for max users/Plain Tee colour.png", "extracted for max users/Plain Tee colour.tga",
                 "extracted for blender users/Plain Tee colour.png",
-                "extracted for hek users/pc/data/Plain Tee sp/bitmaps/Plain Tee colour.tif",
-                "extracted for hek users/xbox/data/Plain Tee sp/bitmaps/Plain Tee colour.tif"]
+                "extracted for hek users/pc/data/Plain Tee/bitmaps/Plain Tee colour.tif",
+                "extracted for hek users/xbox/data/Plain Tee/bitmaps/Plain Tee colour.tif"]
         for name in flat:
             mark = "ok  " if os.path.exists(os.path.join(out3, name)) else "MISS"
             print("  %s %s" % (mark, name))
@@ -442,7 +440,7 @@ def main():
             return 1
 
         with open(os.path.join(out3, "extracted for hek users", "pc", "data",
-                              "Plain Tee sp", "bitmaps",
+                              "Plain Tee", "bitmaps",
                               "Plain Tee colour.tif"), "rb") as handle:
             head = handle.read(4)
         if head not in (b"II*\0", b"MM\0*"):
@@ -466,7 +464,7 @@ def main():
         # green self-illumination, blue colour change, alpha detail. The two
         # orders differ in exactly two channels, so a set that was copied
         # instead of reordered passes a name check and still renders wrong.
-        for suffix in ("multipurpose", "multipurpose xbox", "multipurpose sp"):
+        for suffix in ("multipurpose",):
             stem_set = "Plain Tee " + suffix
             for folder, ext in homes_for(suffix, "Plain Tee"):
                 name = "%s.%s" % (stem_set, ext)
@@ -481,7 +479,7 @@ def main():
             return pixels(os.path.join(out3, "extracted for max users",
                                        "Plain Tee %s.png" % suffix))
 
-        ce, xbox, sp = mask("multipurpose"), mask("multipurpose xbox"), mask("multipurpose sp")
+        ce = mask("multipurpose")
         change = mask("change colour")
         # The mask is painted from the item's own UV layout, so it has to follow
         # that island: a blanket fill would pass a channel check and still not
@@ -493,8 +491,15 @@ def main():
         if len(ce) != 1024 * 1024:
             print("\nFAIL: the mask is %d texels, expected 1024x1024" % (len(ce),))
             return 1
-        if sorted(set(coverage)) != [0, 255]:
-            print("\nFAIL: the Halo CE mask is not a two-value island mask")
+        # The item states no tint mask, so the mask is worked out from its own
+        # paint: it follows the item's island rather than covering the canvas,
+        # and it leaves part of it untinted. A flat-painted item gives a flat
+        # mask; a shaded one gives shaded values, so only 0-and-not-0 is checked.
+        if len([value for value in coverage if value]) < 2:
+            print("\nFAIL: the team-colour mask is empty")
+            return 1
+        if covered >= 0.99:
+            print("\nFAIL: the derived mask covers the whole canvas")
             return 1
         if not 0.01 <= covered <= 0.75:
             print("\nFAIL: the mask covers %.1f%% of the canvas" % (covered * 100))
@@ -508,15 +513,6 @@ def main():
                 or [p[2] for p in ce] != coverage):
             print("\nFAIL: the Halo CE .png does not show its mask in colour")
             return 1
-        if [p[2] for p in xbox] != coverage:
-            print("\nFAIL: the Xbox set does not carry the colour change in blue")
-            return 1
-        if any(p[0] or p[1] or p[3] for p in xbox):
-            print("\nFAIL: the Xbox set lights red, green or alpha")
-            return 1
-        if any(any(pixel) for pixel in sp):
-            print("\nFAIL: the single-player set masks something")
-            return 1
         if ([p[3] for p in change] != coverage
                 or [p[0] for p in change] != coverage):
             print("\nFAIL: change colour does not show its mask")
@@ -524,30 +520,22 @@ def main():
 
         def hek_tif(suffix, build="pc"):
             return tiff(os.path.join(out3, "extracted for hek users", build, "data",
-                                     "Plain Tee sp", "bitmaps",
+                                     "Plain Tee", "bitmaps",
                                      "Plain Tee %s.tif" % suffix))
 
         ce_tif = hek_tif("multipurpose")
-        xbox_tif = hek_tif("multipurpose xbox", "xbox")
         if any(p[0] or p[1] or p[2] for p in ce_tif):
-            print("\nFAIL: the Halo CE .tif lights something other than alpha")
+            print("\nFAIL: the .tif lights something other than the colour change")
             return 1
-        if sorted({p[3] for p in ce_tif}) != [0, 255]:
-            print("\nFAIL: the Halo CE .tif does not carry the mask in alpha")
+        if not any(p[3] for p in ce_tif):
+            print("\nFAIL: the .tif carries no colour change in alpha")
             return 1
-        if [p[2] for p in xbox_tif] != [p[3] for p in ce_tif]:
-            print("\nFAIL: the Xbox .tif does not carry the colour change in blue")
-            return 1
-        if any(p[0] or p[1] or p[3] for p in xbox_tif):
-            print("\nFAIL: the Xbox .tif lights red, green or alpha")
+        if any(p[3] for p in ce_tif) != any(value for value in coverage):
+            print("\nFAIL: the .tif and the .png disagree about the mask")
             return 1
         change_tif = hek_tif("change colour")
-        if ([p[0] for p in change_tif] != [p[3] for p in change_tif]
-                or sorted({p[3] for p in change_tif}) != [0, 255]):
+        if [p[0] for p in change_tif] != [p[3] for p in change_tif]:
             print("\nFAIL: change colour .tif does not show its mask")
-            return 1
-        if any(any(pixel) for pixel in hek_tif("multipurpose sp")):
-            print("\nFAIL: the single-player .tif masks something")
             return 1
 
         # An item's team colour comes from its tint mask, read as the avatar
@@ -596,23 +584,21 @@ def main():
 
         with open(os.path.join(out3, "catalogue.json"), encoding="utf-8") as handle:
             catalogue_text = handle.read()
-        for key in ("multipurpose", "multipurpose_xbox", "multipurpose_sp",
-                    "change_colour"):
+        for key in ("multipurpose", "change_colour"):
             if ('"%s"' % key) not in catalogue_text:
                 print("\nFAIL: catalogue.json does not record %s" % key)
                 return 1
 
         with open(os.path.join(out3, "report.txt"), encoding="utf-8") as handle:
             report_masks = handle.read()
-        for phrase in ("multipurpose xbox.png/.tga/.tif",
-                       "multipurpose sp.png/.tga/.tif",
+        for phrase in ("multipurpose.png/.tga/.tif",
                        "alpha colour change"):
             if phrase not in report_masks:
                 print("\nFAIL: report.txt does not say %r" % phrase)
                 return 1
 
-        print("\nPASS: masks painted from the item's UV island, both channel orders,"
-              " sp masks nothing")
+        print("\nPASS: one team-colour mask, worked out from the item's own paint,"
+              " in both channel orders")
 
         # Fifth case (where a team colour may come from): an item states one
         # through its tint mask and nothing else. The Marine armour's tint slot is
@@ -666,31 +652,28 @@ def main():
             print("FAIL: the tint-trap extractor returned %r" % (code,))
             return 1
         # The tint slot is a decoy - a 32x32 with one texel set - and the item
-        # carries no colour table, so it states no colour change at all. The
-        # faithful mask is empty: the decal's half-lit alpha must not be read as
-        # one, and the report says what the item says.
-        for suffix in ("multipurpose", "multipurpose xbox", "change colour"):
+        # carries no colour table, so the item alone states no colour change.
+        # Only the multiplayer version uses team colour and there is one build,
+        # so the mask is worked out from the base map instead of shipped black:
+        # the decoy must not be read as the mask, and the report says where the
+        # mask it did write came from.
+        for suffix in ("multipurpose", "change colour"):
             path = os.path.join(out_tint, "extracted for max users",
                                 "Tint Trap %s.png" % suffix)
             texels = pixels(path)
             lit = sum(1 for pixel in texels if any(pixel))
             print("  %-16s %d of %d texels lit" % (suffix, lit, len(texels)))
-            if lit:
-                print("\nFAIL: %s lights %d texels - the item states no colour"
-                      " change, so nothing may tint" % (suffix, lit))
+            if not lit:
+                print("\nFAIL: %s is black - the one build takes the team colour,"
+                      " so its mask cannot be empty" % suffix)
                 return 1
-        sp_path = os.path.join(out_tint, "extracted for max users",
-                               "Tint Trap multipurpose sp.png")
-        if any(any(pixel) for pixel in pixels(sp_path)):
-            print("\nFAIL: the single-player map masks something")
-            return 1
         with open(os.path.join(out_tint, "report.txt"), encoding="utf-8") as handle:
             report_tint = handle.read()
-        if "states no colour change" not in report_tint:
-            print("\nFAIL: report.txt does not say the item states no colour change")
+        if "worked out from the base map" not in report_tint:
+            print("\nFAIL: report.txt does not say where the mask came from")
             return 1
-        if "mask coverage: none - nothing takes the team colour" not in report_tint:
-            print("\nFAIL: report.txt does not say the faithful mask is empty")
+        if "mask coverage: none - nothing takes the team colour" in report_tint:
+            print("\nFAIL: report.txt still says nothing takes the team colour")
             return 1
 
         # --tint full authors a mask the item does not have: every texel its base
@@ -787,7 +770,7 @@ def main():
             return 1
         for order in ("pc", "xbox"):
             path = os.path.join(out_tint, "extracted for hek users", order,
-                                "data", "Tint Trap sp", "bitmaps",
+                                "data", "Tint Trap", "bitmaps",
                                 "Tint Trap base map + decal.tif")
             if not os.path.exists(path):
                 print("\nFAIL: no decal .tif for the %s build" % order)
@@ -891,12 +874,12 @@ def main():
             return 1
 
         wanted = ("extracted for max users/%s.obj", "extracted for max users/%s.mtl", "%s_colours.txt",
-                  "extracted for max users/%s multipurpose.png", "extracted for max users/%s multipurpose xbox.png",
-                  "extracted for max users/%s multipurpose sp.tga", "extracted for max users/%s change colour.png",
+                  "extracted for max users/%s multipurpose.png",
+                  "extracted for max users/%s change colour.png",
                   "extracted for blender users/%s multipurpose.tga",
-                  "extracted for hek users/pc/data/%s sp/bitmaps/%s multipurpose.tif",
-                  "extracted for hek users/xbox/data/%s sp/bitmaps/%s multipurpose xbox.tif",
-                  "extracted for hek users/xbox/data/%s sp/bitmaps/%s change colour.tif")
+                  "extracted for hek users/pc/data/%s/bitmaps/%s multipurpose.tif",
+                  "extracted for hek users/xbox/data/%s/bitmaps/%s multipurpose.tif",
+                  "extracted for hek users/xbox/data/%s/bitmaps/%s change colour.tif")
         for name in containers:
             for pattern in wanted:
                 want = pattern % tuple([name] * pattern.count("%s"))
@@ -944,10 +927,8 @@ def main():
         fallback = ("extracted1", "extracted2")
         for name in fallback:
             for pattern in ("extracted for max users/%s.obj", "extracted for max users/%s.mtl", "extracted for max users/%s multipurpose.png",
-                            "extracted for max users/%s multipurpose xbox.png",
                             "extracted for max users/%s change colour.tga",
-                            "extracted for hek users/pc/data/%s sp/bitmaps/%s multipurpose sp.tif",
-                            "extracted for hek users/pc/data/%s sp/bitmaps/%s multipurpose.tif"):
+                            "extracted for hek users/pc/data/%s/bitmaps/%s multipurpose.tif"):
                 want = pattern % tuple([name] * pattern.count("%s"))
                 found = os.path.exists(os.path.join(out6, want))
                 print("  %s %s" % ("ok  " if found else "MISS", want))
@@ -998,12 +979,13 @@ def main():
         data7 = os.path.join(folder, "extracted for hek users", "xbox", "data")
         folders = sorted(os.listdir(data7)) if os.path.isdir(data7) else []
         print("  hek data folders   -> %r" % (folders,))
-        if folders != ["UNSC Armor sp"]:
-            print("\nFAIL: one item's HEK tree was split into %r" % (folders,))
+        if folders != ["UNSC Armor"]:
+            print("\nFAIL: one item's HEK tree is %r, expected one folder named"
+                  " after it" % (folders,))
             return 1
         for kind in ("bitmaps", "models", "animations"):
-            if not os.path.isdir(os.path.join(data7, "UNSC Armor sp", kind)):
-                print("\nFAIL: data\\UNSC Armor sp\\%s was not made" % kind)
+            if not os.path.isdir(os.path.join(data7, "UNSC Armor", kind)):
+                print("\nFAIL: data\\UNSC Armor\\%s was not made" % kind)
                 return 1
 
         print("\nPASS: nameless bins come out as extracted1, extracted2; the GUID keeps its name")

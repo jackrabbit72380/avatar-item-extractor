@@ -609,13 +609,10 @@ def mask_orders(name):
     if re.search(r" slot \d+ (tint mask|decal map)\.(png|tga|tif)$", low):
         # A texture the item itself binds, so both builds get the .tif.
         return ("pc", "xbox")
-    if "multipurpose xbox" in low:
-        return ("xbox",)
-    if "multipurpose sp" in low:
-        # Nothing is masked, so the image is the same in either channel order.
-        return ("pc", "xbox")
     if "multipurpose" in low:
-        return ("pc",)
+        # One mask, in the order the HEK reads, and both trees are complete
+        # folders for tool.exe, so both get it.
+        return ("pc", "xbox")
     if "change colour" in low or "base map" in low:
         return ("pc", "xbox")
     # The item's own colour image, and the per-part ones the .mtl names when a
@@ -626,23 +623,25 @@ def mask_orders(name):
     return ()
 
 
-PLAIN_SUFFIX = " sp"
+PLAIN_SUFFIX = ""
 
-# Which team-colour mask the mp build gets. "item" is the item's own tint mask
-# and nothing else: an item with a blank slot and no colour table states no
-# colour change at all, so its mask is black and nothing tints. The other
-# values author a mask the item does not have, and report.txt says so.
+# Which team-colour mask the build gets. "item" is the item's own tint mask;
+# where the item states none, the mask is worked out from the base map, because
+# only the multiplayer version uses team colour and a black mask there is a suit
+# that never changes colour. The other values author a mask the item does not
+# have, and report.txt says so.
 TINT_MODE = "item"
 
 
 def plain_build(stem):
-    """The item's own build folder: the maps as the pack stores them.
+    """The item's folder: one build, the one that takes the team colour.
 
-    This is the single-player build - the decal-free base map and a multipurpose
-    map that masks nothing - so it is the faithful one. The decal and the team
-    colour are separate builds beside it (sp-decals, mp, mp-decals), made by
-    copying from here. Extraction and rigging both write here first, so the
-    folder has to be named the same way in both.
+    There used to be four builds per item - sp, sp-decals, mp, mp-decals - and
+    the sp pair was what most players opened first, which meant a suit that never
+    changed colour. Only the multiplayer version uses team colour, so there is
+    one build now, in data\\<item>\\, with the team-colour mask in its
+    multipurpose map and any decal blended into the base map. Extraction and
+    rigging both write here, so the name has to match in both.
     """
     return stem + PLAIN_SUFFIX
 
@@ -1853,22 +1852,15 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                      " decal can only reach the game this way. The plain base"
                      " map is still written beside it, unchanged")
     lines.append("change colour: %s change colour.png/.tga/.tif - white takes the"
-                 " team colour; this is the alpha channel of the multipurpose map"
-                 " on Halo CE (blue on the original Xbox). It is the item's tint"
-                 " mask and nothing else: an item with a blank one does not change"
-                 " colour, and no decal is ever read as a mask. All three formats"
-                 " show the mask in colour as well, so it can be looked at"
+                 " team colour; this is the alpha channel of the multipurpose map."
+                 " Only the multiplayer version uses team colour, and there is one"
+                 " build, so this mask is what the shader reads in game. All three"
+                 " formats show the mask in colour as well, so it can be looked at"
                  % stem)
     lines.append("multipurpose: %s multipurpose.png/.tga/.tif - Halo CE order:"
                  " red detail, green self-illumination, blue specular,"
                  " alpha colour change. The .png and .tga show the mask in colour"
                  " too; the .tif keeps it in alpha alone" % stem)
-    lines.append("              %s multipurpose xbox.png/.tga/.tif - the same masks in"
-                 " the original Xbox order: red specular, green"
-                 " self-illumination, blue colour change, alpha detail" % stem)
-    lines.append("              %s multipurpose sp.png/.tga/.tif - nothing masked, so the"
-                 " item keeps its own colour; every channel is zero, which"
-                 " makes it valid in either order" % stem)
     if facts.get("mask_source"):
         lines.append("mask source: %s" % facts["mask_source"])
     if facts.get("mask_coverage") is not None:
@@ -1903,10 +1895,9 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
     lines.append("  blue      color change          specular")
     lines.append("  alpha     detail                color change")
     lines.append("")
-    lines.append("  multipurpose.png is the Halo CE order; multipurpose xbox.png")
-    lines.append("  is the Xbox order; multipurpose sp.png has every channel at")
-    lines.append("  zero, so it is valid in either order and leaves the colour alone.")
-    lines.append("  Colour change comes from the item's tint mask (a material's")
+    lines.append("  There is one multipurpose map, in the Halo CE / HEK order,")
+    lines.append("  because there is one build. Colour change comes from the item's")
+    lines.append("  tint mask (a material's")
     lines.append("  parameter id 2): its alpha is how much takes a colour, its red,")
     lines.append("  green and blue which of the player's three - the avatar reads")
     lines.append("  lerp(base, red*C1 + green*C2 + blue*C3, alpha). A blank tint mask")
@@ -2509,20 +2500,25 @@ def main(argv=None):
                               " takes the team colour"
                               % (tint_texture.get("slot"), tint_texture["width"],
                                  tint_texture["height"]))
+            elif picture:
+                # The item's tint slot is blank and it carries no colour table,
+                # so the item alone says nothing tints. Only the multiplayer
+                # build uses team colour, and a black mask there is a suit that
+                # never takes one: the mask is worked out from the armour's own
+                # paint instead - dark, near-neutral plate takes the colour, the
+                # visor and the bright trim keep theirs.
+                big = derived_amount(picture, png_size)
+                small = derived_amount(picture, small_size)
+                source = ("none in the item - its tint slot is blank and it"
+                          " carries no colour table - so the multiplayer mask is"
+                          " worked out from the base map: dark near-neutral plate"
+                          " takes the team colour, the bright parts keep theirs"
+                          " (--tint full, item or a mask image says otherwise)")
             else:
-                # The item's own answer. Its tint slot is blank and it carries no
-                # colour table, so the item states no colour change: the avatar
-                # rule (open-avatar-lib, FORMATS.md 3.6) is
-                # lerp(base, r*C1 + g*C2 + b*C3, a) with the colours from the
-                # colour table, "untinted if it has none". A black mask is
-                # therefore what its bytes say, and the mp build masks nothing
-                # until someone asks for a mask with --tint.
                 big = bytes(png_size * png_size)
                 small = bytes(small_size * small_size)
-                source = ("none - the item states no colour change: its tint slot"
-                          " is blank and it carries no colour table, so by the"
-                          " avatar rule its mask is black and nothing tints"
-                          " (--tint full, derived or a mask image authors one)")
+                source = ("none - the item has no tint mask, no colour table and"
+                          " no base map to work a mask out from")
             painted = sum(1 for value in big if value)
             facts["mask_source"] = source
             facts["mask_coverage"] = round(painted / float(png_size * png_size), 4)
@@ -2585,46 +2581,6 @@ def main(argv=None):
                 "tga_tif_size": small_size,
                 "painted": "the item's own UV layout",
                 "coverage": round(painted / float(png_size * png_size), 3),
-            }
-            # The same masks in the original Xbox channel order, rather than
-            # only a note saying they are different. Colour change moves from
-            # alpha to blue and the auxiliary (detail) mask takes the alpha
-            # slot - zero here, because an item never says where a detail map
-            # would go. H1A reads this order when the shader's "multipurpose
-            # map uses og xbox channel order" flag (0x40) is set; Halo CE and
-            # the legacy HEK always read Gearbox order, so both are written.
-            multipurpose_xbox = os.path.join(out, "%s multipurpose xbox" % stem)
-            write_mask(multipurpose_xbox, 2)
-            record["multipurpose_xbox"] = {
-                "png": "%s multipurpose xbox.png" % stem,
-                "tga": "%s multipurpose xbox.tga" % stem,
-                "tif": "%s multipurpose xbox.tif" % stem,
-                "channels": "Xbox: red specular, green self-illumination, "
-                            "blue colour change, alpha detail",
-                "use": "H1A with the og-xbox-channel-order flag (0x40) set",
-                "png_size": png_size,
-                "tga_tif_size": small_size,
-                "coverage": round(painted / float(png_size * png_size), 3),
-            }
-            # Single player: no mask lit, so nothing takes a colour and the item
-            # keeps the one it was drawn in. Every channel is zero, so the image
-            # is identical in either channel order - one set covers both.
-            multipurpose_sp = os.path.join(out, "%s multipurpose sp" % stem)
-            write_png(multipurpose_sp + ".png",
-                      b"\x00\x00\x00\x00" * (png_size * png_size),
-                      png_size, png_size)
-            write_tga(multipurpose_sp + ".tga",
-                      b"\x00\x00\x00\x00" * (small_size * small_size),
-                      small_size, small_size)
-            write_tiff(multipurpose_sp + ".tif",
-                       b"\x00\x00\x00\x00" * (small_size * small_size),
-                       small_size, small_size)
-            record["multipurpose_sp"] = {
-                "png": "%s multipurpose sp.png" % stem,
-                "tga": "%s multipurpose sp.tga" % stem,
-                "tif": "%s multipurpose sp.tif" % stem,
-                "meaning": "no masks: the item keeps its own colour",
-                "use": "a single-player build; valid in either channel order",
             }
             record["slot_textures"] = facts.get("slot_images") or {}
 
@@ -2705,8 +2661,7 @@ def main(argv=None):
         for key in ("obj", "mtl"):
             if record.get(key):
                 record[key] = MAX_DIR + "/" + record[key]
-        for key in ("multipurpose", "multipurpose_xbox", "multipurpose_sp",
-                    "change_colour"):
+        for key in ("multipurpose", "change_colour"):
             paths = record.get(key)
             if not isinstance(paths, dict):
                 continue

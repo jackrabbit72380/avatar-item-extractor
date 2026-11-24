@@ -13,15 +13,15 @@ rem  users" - and run it. It asks once where the editing kit is and remembers
 rem  the answer in hek_path.txt. Everything it does is logged to build-hek.log,
 rem  which is what to paste if something fails.
 rem
-rem  Four data folders are built per channel order:
-rem    <item> sp          the item's own colours, plain base map (the faithful one)
-rem    <item> sp-decals   the item's own colours, decal blended in
-rem    <item> mp          the team-colour mask bound, plain base map
-rem    <item> mp-decals   team colour and decal
+rem  One data folder is built per channel order: data\<item>\ - the item's own
+rem  colours with the team-colour mask bound and any decal blended into the base
+rem  map. Only the multiplayer version uses team colour, so there is no sp/mp
+rem  pair to choose between: what is built is the version that takes a colour.
 rem
-rem  For an item whose tint slot is blank and which carries no colour table
-rem  (the Marine armour is one), the mp mask is black: nothing tints. Author one
-rem  with extract_items.py --tint full|derived|<mask.png> and run it again.
+rem  The team-colour mask is the alpha of <item> multipurpose: white where the
+rem  armour takes red or blue, black where it keeps the colour it was painted.
+rem  For an item whose tint slot is blank and which carries no colour table (the
+rem  Marine armour is one) that mask is worked out from the base map.
 rem
 rem  The model needs a shader tag named after each .jms material, and tool.exe
 rem  will ask for one if it cannot find it. Make that shader once (README.md,
