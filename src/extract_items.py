@@ -683,6 +683,8 @@ def organise(out, stems):
         low = name.lower()
         extension = low.rsplit(".", 1)[-1] if "." in low else ""
         stem = stem_for(name, stems)
+        owner = max((each for each in stems if name.startswith(each)),
+                    key=len, default="")
         homes = []
         if extension in ("obj", "mtl"):
             homes = [MAX_DIR]
@@ -700,6 +702,21 @@ def organise(out, stems):
                     # item's own bitmaps\ folder, not beside the model.
                     homes = [HEK_DIR + "/%s/data/%s/bitmaps"
                              % (order, plain_build(stem)) for order in orders]
+            elif owner and not re.match(r"colour_\d+\.(png|tga|tif)$", low):
+                # Every other sheet this item's build binds: the avatar's face,
+                # its body and its accessories. They are as much a part of what
+                # the model draws as its base map - a head with no face texture
+                # is a blank head in Max - so they go where the base map goes
+                # instead of being left in the item's own folder beside the
+                # report, where neither program looks. The swatch cards
+                # (colour_00.png) are not textures and stay: they describe the
+                # item's palette, not what it is drawn with.
+                if extension in ("png", "tga"):
+                    homes = [MAX_DIR, BLENDER_DIR]
+                else:
+                    homes = [HEK_DIR + "/%s/data/%s/bitmaps"
+                             % (order, plain_build(stem))
+                             for order in ("pc", "xbox")]
         if not homes:
             continue
         for home in homes[:-1]:

@@ -48,12 +48,12 @@ except ImportError:  # run from somewhere that has not put this folder on the pa
 try:
     import face_eyes
     import glb_model
-    from extract_items import tiff_bytes
+    from extract_items import organise, tiff_bytes
 except ImportError:  # run from somewhere that has not put this folder on the path
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import face_eyes
     import glb_model
-    from extract_items import tiff_bytes
+    from extract_items import organise, tiff_bytes
 
 # The biped is authored in Halo units: 100 units is a metre (0.03048 m each),
 # so a 1.83 m figure stands 60 units tall with its feet on z = 0.
@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v100"
-BUILD = "2026-11-24 face-keeps-its-own-skin-tone"
+VERSION = "v101"
+BUILD = "2026-11-24 sheets-filed-and-padded-alike"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -623,13 +623,22 @@ def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
     # Everything the head's own triangles do not read is padding, and a welded
     # seam can leave a corner reading it: laid down in skin, no stray corner can
     # show white on the head.
-    if scalp_tone and "face" in name.lower() and outside_mask is not None:
-        outside = sum(1 for texel in outside_mask if not texel)
-        rgba = glb_model.paint_outside(rgba, width, height, outside_mask,
-                                       scalp_tone)
-        log("port: %s laid the %d texels the head does not read down in %s, the "
-            "skin measured on the sheet" % (name, outside, scalp_tone))
-        written = face_eyes.png_bytes(rgba, width, height)
+    # The skin sheets alike, not the face alone: a face padded in skin and a
+    # body padded in the exporter's own pale fill are two files that read as two
+    # skin tones in a bitmaps folder, even though the texels either mesh reads
+    # are the same colour in both. Every sheet that is skin - the face, the body
+    # under it - is laid down in the skin it is painted in, measured on its own
+    # texels, so opening the two side by side shows one skin.
+    skin_sheet = "face" in name.lower() or "body" in name.lower()
+    if skin_sheet and outside_mask is not None:
+        own = glb_model.skin_tones(rgba, width, height, outside_mask)
+        own = own or scalp_tone
+        if own:
+            unread = sum(1 for texel in outside_mask if not texel)
+            rgba = glb_model.paint_outside(rgba, width, height, outside_mask, own)
+            log("port: %s laid the %d texels its own triangles do not read down "
+                "in %s, the skin it is painted in" % (name, unread, own))
+            written = face_eyes.png_bytes(rgba, width, height)
     with open(picture, "wb") as handle:
         handle.write(written)
     if not (glb_model.power_of_two(width) and glb_model.power_of_two(height)):
@@ -5320,6 +5329,15 @@ def main():
     # card_art.png used to be a copy of the item's own picture under a second
     # name - the same bytes twice in the folder, and the icon already says which
     # item it is. Nothing read it back, so it is not written at all.
+
+    # Sorted again, because the extractor sorted the folder before this pass ran.
+    # Everything the rigging pass writes - the avatar's own face and body sheets
+    # and their .tif twins, the .jms, the .blend and its .fbx - was written after
+    # that one pass, so it stayed in the item's own folder: a Max user opened
+    # their folder and found a model with no textures beside it, and a Blender
+    # user the same, while the two sheets sat at the top looking like leftovers.
+    organise(out, stems)
+    log("sorted every file into the folder of the program that opens it")
     return 0
 
 

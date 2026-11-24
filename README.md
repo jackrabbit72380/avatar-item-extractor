@@ -63,6 +63,12 @@ Test Item\
                         both
         Test Item multipurpose.png  also .tga  Halo CE channel order
         Test Item change colour.png  also .tga  the team-colour mask
+        Test Item face.png, body_0.png  the avatar's own sheets, when one was
+                        ported: the head and the body under it are drawn with
+                        them, so they sit with the item's own maps instead of
+                        beside the report. Every texel neither mesh reads is
+                        laid down in the skin that sheet is painted in, so the
+                        two read as one skin side by side
     extracted for blender users\
         Test Item - halo.blend  the item on Halo's biped, ready to export
         Test Item - halo.fbx  the same rig for tools that cannot read .blend
@@ -727,9 +733,13 @@ movement, nothing that needs an animation to look right from outside.
 
 What a ported item gains:
 
-- `<stem> face.png` and `<stem> body_0.png` beside the item - the two images the
-  export carries, byte for byte, packed into the `.blend` like every other
-  texture.
+- `<stem> face.png` and `<stem> body_0.png` in `extracted for max users` and
+  `extracted for blender users` - the two images the export carries, packed into
+  the `.blend` like every other texture. The texels each mesh actually reads are
+  the export's own, untouched; the padding around them is laid down in the skin
+  measured on that sheet, because the export pads its face sheet in skin and its
+  body sheet in a paler fill, and two files that read as two skin tones in a
+  bitmaps folder is a folder that looks wrong even when the model is right.
 - `<stem> face.tif` and `<stem> body_0.tif` in `bitmaps` **and** `fp\bitmaps` of
   every build, so each HEK folder carries everything it needs by itself.
 - Two more materials in every `.jms`, named `face` and `body_0`, taking the same
