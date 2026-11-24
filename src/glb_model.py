@@ -729,28 +729,6 @@ def paint_uv_patch(rgba, width, height, uv_triangles, colour, pale=236,
     return pixels, painted
 
 
-def agreement(pairs):
-    """How alike two paintings are, ignoring how bright either was graded.
-
-    Pearson's r over the texels the mirror pairs: 1 is the same picture, 0 is
-    unrelated. A face graded twice - one sheet brighter, one duller - is still
-    the same picture and scores high, which a median difference in levels cannot
-    tell apart from a face whose halves are painted differently. That is the
-    question worth asking before one half's paint is copied over the other's.
-    """
-    if len(pairs) < 16:
-        return 0.0
-    count = float(len(pairs))
-    mean_here = sum(one for one, two in pairs) / count
-    mean_there = sum(two for one, two in pairs) / count
-    cov = sum((one - mean_here) * (two - mean_there) for one, two in pairs)
-    var_here = sum((one - mean_here) ** 2 for one, two in pairs)
-    var_there = sum((two - mean_there) ** 2 for one, two in pairs)
-    if var_here <= 0 or var_there <= 0:
-        return 0.0
-    return cov / ((var_here * var_there) ** 0.5)
-
-
 def _surface_samples(mesh, pixels, width, height):
     """Walk a sheet's triangles: every texel it paints, where it sits on the head.
 
@@ -792,86 +770,6 @@ def _surface_samples(mesh, pixels, width, height):
                 colours.append((pixels[at], pixels[at + 1], pixels[at + 2]))
                 texels.append((x, y))
     return points, colours, texels
-
-
-def repaint_through_mirror(pixels, width, height, mesh, source, src_width,
-                           src_height, src_mesh, cell=0.004):
-    """Paint a head half's sheet with the other half's paint, through the mirror.
-
-    A 360sona head is one surface in two halves on two sheets, and the two
-    sheets are graded differently - a few levels apart at the cheek and nineteen
-    at the forehead. Since the halves are exact mirrors of one another (the
-    pairing is good to five microns), the second half can simply WEAR the first
-    half's paint: each texel it shows is placed on the head, reflected across
-    the midline, and given the colour the other sheet shows at that same point.
-
-    That is the one thing a tone match cannot do - it makes the two halves
-    agree statistically, this makes them the same paint, so the join cannot show.
-
-    Point-to-point rather than triangle-to-triangle on purpose: the halves have
-    different vertex counts (455 and 496), so a triangle on one side does not
-    mirror onto a triangle on the other, only onto the same surface between a
-    few of them.
-
-    The copy is only meaningful if the two sheets really are the same painting -
-    one face, graded twice. An avatar whose halves are painted differently (a
-    scar, a closed eye, a different brow) would have one side's art stamped over
-    the other, so the median difference between what the mirror offers and what
-    the texel already shows is returned with it: near zero, the sheets agree and
-    the copy is safe; large, they do not and the caller should leave the paint
-    alone. Returns (pixels, painted, missed, median_gap, agreement) - the last
-    being Pearson's r over the same texels, which says whether the two sheets
-    are one painting or two.
-    """
-    points, colours, texels = _surface_samples(mesh, pixels, width, height)
-    if not points:
-        return bytearray(pixels), 0, 0, 0
-    src_points, src_colours, _ = _surface_samples(
-        src_mesh, source, src_width, src_height)
-    if not src_points:
-        return bytearray(pixels), 0, 0, 0
-
-    # Bucket the other half's paint by where it lands once reflected, so each
-    # texel here only has to look in its own voxel and the ones around it.
-    buckets = {}
-    for at, (x, y, z) in enumerate(src_points):
-        key = (int(-x // cell), int(y // cell), int(z // cell))
-        buckets.setdefault(key, []).append(at)
-    nearby = [(dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)]
-
-    out = bytearray(pixels)
-    painted = 0
-    missed = 0
-    gaps = []
-    pairs = []
-    for at, point in enumerate(points):
-        key = (int(point[0] // cell), int(point[1] // cell), int(point[2] // cell))
-        best = None
-        best_gap = 1e18
-        for dx, dy, dz in nearby:
-            found = buckets.get((key[0] + dx, key[1] + dy, key[2] + dz))
-            if not found:
-                continue
-            for other in found:
-                sx, sy, sz = src_points[other]
-                gap = ((sx + point[0]) ** 2 + (sy - point[1]) ** 2 + (sz - point[2]) ** 2)
-                if gap < best_gap:
-                    best_gap, best = gap, other
-        x, y = texels[at]
-        to = (y * width + x) * 4
-        if best is None:
-            missed += 1
-            continue
-        r, g, b = src_colours[best]
-        here = colours[at]
-        gaps.append(max(abs(r - here[0]), abs(g - here[1]), abs(b - here[2])))
-        pairs.append((0.299 * here[0] + 0.587 * here[1] + 0.114 * here[2],
-                      0.299 * r + 0.587 * g + 0.114 * b))
-        out[to], out[to + 1], out[to + 2] = r, g, b
-        painted += 1
-    gaps.sort()
-    middle = gaps[len(gaps) // 2] if gaps else 255
-    return out, painted, missed, middle, agreement(pairs)
 
 
 def bitmap_side(value):

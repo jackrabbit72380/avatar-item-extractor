@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v80"
-BUILD = "2026-11-24 head-paint-gate"
+VERSION = "v81"
+BUILD = "2026-11-24 eyes-intact"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -282,6 +282,15 @@ def append_from(path, wanted_types=None):
 def biped_armature(objects):
     for object_data in objects:
         if object_data.type == "ARMATURE":
+            # Halo's own biped, kept at Halo's own proportions - its bones must
+            # stay where the animation expects them. On a 360sona body, whose
+            # head is large and whose legs are short, that leaves some bones
+            # outside the silhouette: opened in Blender they drew as solid
+            # octahedra over the armour, which reads as broken geometry rather
+            # than a skeleton. Drawn as sticks and not in front, the body covers
+            # the bones that are inside it and the rest reads as the rig it is.
+            object_data.data.display_type = "STICK"
+            object_data.show_in_front = False
             return object_data
     return None
 
@@ -766,44 +775,15 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
             log("port: the face is painted on %d sheets at different brightness "
                 "(%s), so each is brought to %s - one face, one colour"
                 % (len(measured), ", ".join(str(each) for each in measured), tone))
-    # The two halves of the head are painted on two different sheets, and the
-    # sheets are graded differently - a few levels apart at the cheek, nineteen
-    # at the forehead. The halves are exact mirrors of one another, so the
-    # second half is simply given the first half's paint instead of having its
-    # own tones nudged towards it: every texel the second half shows is placed
-    # on the head, reflected across the midline, and taken from the point the
-    # first sheet paints there. One paint, so one colour, so no join.
-    halves = [mesh for mesh in sheets if mesh["image"] in decoded]
-    if len(halves) > 1:
-        ref = halves[0]
-        ref_pixels, ref_w, ref_h = decoded[ref["image"]]
-        for other in halves[1:]:
-            if other["image"] == ref["image"]:
-                continue
-            pixels, width, height = decoded[other["image"]]
-            painted, done, missed, gap, alike = glb_model.repaint_through_mirror(
-                pixels, width, height, other, ref_pixels, ref_w, ref_h, ref)
-            if not done:
-                continue
-            # Only the same painting, graded twice, can be worn across. An avatar
-            # whose halves carry different art - one eye open, a brow, a scar -
-            # would have one side stamped over the other, which reads as half a
-            # face: the mirror is measured against what the texel already says,
-            # and if the two disagree the second half keeps its own paint.
-            if alike < 0.75:
-                log("port: the head's two sheets are not one face graded twice - "
-                    "their paintings agree only %.2f (1.0 is the same picture) - "
-                    "so the mirror copy is skipped and the second half keeps its "
-                    "own paint, %d levels off at the median"
-                    % (alike, gap))
-                continue
-            model["images"][other["image"]]["data"] = face_eyes.png_bytes(
-                painted, width, height)
-            decoded[other["image"]] = (painted, width, height)
-            log("port: the second half of the head now wears the first half's "
-                "paint - %d texels taken through the mirror, %d left alone, "
-                "agreeing %.2f - so the join is one colour"
-                % (done, missed, alike))
+    # The two halves of the head are painted on two sheets that were graded
+    # differently, and the whole-sheet gain in port_material brings both to one
+    # tone. It must be that and nothing else: copying one sheet's paint across,
+    # or baking a per-point gain field across, both resample two different texel
+    # grids at the resolution of the head's vertices - one colour per ~500
+    # texels - and an eye is 30x15 texels with 1-3 texel lashes, so the copy came
+    # back as a dash and the field as a step. A gain that is a single number per
+    # sheet cannot do either: it moves every texel by the same factor, so the
+    # eyes stay exactly as the artist drew them.
     # What every mesh on a sheet reads, added up: a head painted on one sheet
     # for both halves has two islands, and laying skin over "everything this
     # half does not read" would paint the other half's face out - one eye, the
