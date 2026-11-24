@@ -14,7 +14,7 @@ body items when one is present, and left absent when it is not.
 Usage:
     blender -b --python rig_items.py -- --items extracted --rig "master chief skeleton.blend"
         [--fp "fp arms.blend"] [--out rigged] [--no-fbx] [--no-jms] [--name NAME]
-        [--port "MyAvatar.glb"] [--keep-shape] [--eyes-forward | --eyes-keep]
+        [--port "MyAvatar.glb"] [--keep-shape] [--eyes-forward]
 
 ``--port`` takes an avatar exported by 360sona and puts its body under the item:
 the head, the face and the patch of neck an item like the Marine armour leaves
@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v87"
-BUILD = "2026-11-24 eyes-keep"
+VERSION = "v88"
+BUILD = "2026-11-24 one-click"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -248,9 +248,6 @@ def args():
             index += 1
         elif word == "--eyes-forward":
             parsed["eyes_forward"] = True
-        elif word == "--eyes-keep":
-            # The face exactly as it was painted: no eye drawn over it.
-            parsed["eyes_forward"] = False
             index += 1
         else:
             index += 1
