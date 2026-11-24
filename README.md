@@ -726,17 +726,26 @@ across each eye, both toward the same side, so under a helmet the avatar looks
 off to one side in every frame while his head geometry faces straight ahead.
 Nothing in the mesh or the UVs causes it, and nothing in them can fix it.
 
-`--eyes-forward` (or an `eyes_forward.txt` beside the `.bat`) rebuilds each eye
-before the face map is written: the eyelid is folded about the eye's own middle
-and the pupil drawn under the middle of that fold, in the face's own ink and
-skin tone. All three numbers matter, and each was got wrong first: moving the
-pupil alone leaves the lid swept one way and the two eyes looking unalike, and
-drawing column by column rather than offset by offset is what keeps the lid a
-line instead of a comb. It is off unless asked for, because it edits the
-avatar's own art rather than the item's.
+The head's UVs make this worse than it looks. They **mirror one eye**, while the
+drawn pair is itself mirrored, so the two eyes come out *unmirrored* on the
+model: one lash sweeps up to the left and the other up to the left too, and no
+care with the pupil makes them a pair.
 
-Both eyes come out mirror images of each other to within a pixel, measured
-across all 71 columns of each.
+`--eyes-forward` (or an `eyes_forward.txt` beside the `.bat`) therefore treats
+one painted eye as the pattern and copies it:
+
+  * the eyelid is kept **texel for texel**, exactly as painted - it is cleared
+    of nothing, and nothing is drawn over it,
+  * the swelling under that lid, which is the old pupil, is cleared to the
+    face's own skin tone,
+  * an iris is drawn centred under that same lid, clipped so it never rises
+    above it,
+  * the finished eye is stamped into both drawn eyes unchanged, so the UV
+    mirroring turns one drawing into two eyes that are exact mirrors.
+
+It is off unless asked for, because it edits the avatar's own art rather than
+the item's. Verified on the Marine face: the lid lands on its painted row in all
+71 columns of the eye, and the two drawn eyes are byte-identical afterwards.
 
 ```
 python rig_items.py --items extracted --out extracted \
