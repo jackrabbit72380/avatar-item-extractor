@@ -43,6 +43,11 @@ GAP = 12
 # averaged down, which is what keeps them smooth on screen.
 SAMPLES = 6
 
+# How many rows below the painted eye a pupil may reach into. The faces are flat
+# toned under the eye, so a pupil that needs a row or two more room can have it,
+# but only over plain skin: _pattern stops at the first painted row.
+EXTRA_ROWS = 4
+
 
 def _luma(rgba, width, x, y):
     at = (y * width + x) * 4
@@ -195,8 +200,17 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
     Returned as a grid covering the eye's own rectangle, so the same drawing can
     be stamped into both eyes.
     """
-    rows = last - first + 1
     columns = right - left + 1
+
+    # A round pupil needs more room than the painted stroke leaves it, and the
+    # cheek under the eye is plain: reach into it, but only while it is plain.
+    extra = 0
+    while extra < EXTRA_ROWS and last + extra + 1 < height:
+        below = last + extra + 1
+        if any(_luma(rgba, width, x, below) < INK for x in range(left, right + 1)):
+            break
+        extra += 1
+    rows = last - first + 1 + extra
 
     measure = {x: low[x] - top[x] + 1 for x in low}
     weights = sorted(measure.values())
@@ -241,7 +255,7 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
     # but not quite one colour.
     pupil_ink = tuple(min(255, int(channel * 1.5) + 8) for channel in lash_ink)
 
-    probe = min(height - 1, last + 4)
+    probe = min(height - 1, last + extra + 2)
     skin = {}
     for x in range(left, right + 1):
         at = (probe * width + x) * 4
@@ -249,14 +263,14 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
 
     centre_x = (left + right) / 2.0
     lash_bottom = centre(centre_x) + weight(centre_x)
-    opening = last - lash_bottom
+    opening = last + extra - lash_bottom
     if opening < 3:
         return None
-    # A circle that fills the room under the lash, sunk just far enough that the
-    # lash cuts its top off: what is left showing is a round pupil with a lid
-    # over it, not a pill tucked under a line.
-    radius = max(2.0, (last - lash_bottom - 0.5) / 2.0)
-    middle_y = lash_bottom + radius - 0.8
+    # A circle, as big as the room under the lash and into the cheek allows, set
+    # so the lash cuts its top off at about half its radius: the part left
+    # showing is then very nearly as tall as it is wide - round, not a pill.
+    radius = max(2.0, opening / 1.55)
+    middle_y = lash_bottom + radius * 0.55
     taper = max(3.0, columns * 0.07)
 
     grid = {}
@@ -332,12 +346,15 @@ def centre_pupils(rgba, width, height, force=False):
 
     pixels = bytearray(rgba)
     span = min(group[-1] - group[0] for group in groups)
+    # The grid can reach a few rows under the eye, where a round pupil needs the
+    # room: clear and stamp those rows too.
+    deep = max(oy for (_ox, oy) in grid) + 1
     for index, group in enumerate(groups):
         gle, gright = group[0], group[-1]
         # Clear this eye completely - its own swelling and its own lid - so what
         # is stamped is the whole eye rather than one drawing over another.
         for x in range(gle, gright + 1):
-            for y in range(first, last + 1):
+            for y in range(first, min(height, first + deep)):
                 at = (y * width + x) * 4
                 pixels[at:at + 4] = bytes(skin)
         offset = gle + int(round((gright - gle - span) / 2.0))
@@ -352,7 +369,7 @@ def centre_pupils(rgba, width, height, force=False):
                 continue
             source_ox = (span - ox if index else ox) \
                 + int(round((right - left - span) / 2.0))
-            for oy in range(last - first + 1):
+            for oy in range(deep):
                 colour = grid.get((source_ox, oy))
                 if colour is None:
                     continue
