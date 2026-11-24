@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v78"
-BUILD = "2026-11-24 bare-head"
+VERSION = "v79"
+BUILD = "2026-11-24 hek-bitmaps"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -5046,9 +5046,20 @@ def main():
         # in every build is written once here and is complete everywhere.
         for texture, pixels, width, height in port_textures.get(stem, []):
             name = "%s %s.tif" % (stem, texture)
+            # tool.exe takes a power of two a side and the export is not built
+            # to that rule - a 360sona face is 765x930 - so the HEK copy is
+            # resampled up to one. UVs are normalised, so the face stays on the
+            # face. The .blend keeps the sheet at its own size.
+            wide, tall = glb_model.bitmap_side(width), glb_model.bitmap_side(height)
+            hek_pixels, hek_width, hek_height = glb_model.stretch_bitmap(
+                pixels, width, height, wide, tall)
+            if (hek_width, hek_height) != (width, height):
+                log("port: %s is %dx%d, which tool.exe cannot compile, so the "
+                    "HEK copy is written %dx%d" % (texture, width, height,
+                                                   hek_width, hek_height))
             for tree in folders.values():
                 with open(os.path.join(tree["bitmaps"], name), "wb") as handle:
-                    handle.write(tiff_bytes(pixels, width, height))
+                    handle.write(tiff_bytes(hek_pixels, hek_width, hek_height))
             log("wrote %s for both channel orders" % name)
         models_dir = folders["pc"]["models"]
         item_dir = folders["pc"]["item"]

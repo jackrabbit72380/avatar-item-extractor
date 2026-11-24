@@ -834,6 +834,80 @@ def repaint_through_mirror(pixels, width, height, mesh, source, src_width,
     return out, painted, missed
 
 
+def bitmap_side(value):
+    """The smallest power of two a bitmap of this size can be given to tool.exe.
+
+    Halo's bitmap compiler takes a power of two a side and nothing else, and a
+    360sona export is not built to that rule: the face sheets are 765x930 and
+    746x967, the body 827x1008. Rounded up, never down, so nothing is thrown
+    away.
+    """
+    side = 32
+    while side < value:
+        side *= 2
+    return side
+
+
+def stretch_bitmap(rgba, width, height, new_width, new_height):
+    """Resample a bitmap to another size, keeping the picture where it was.
+
+    UVs are normalised, so a stretch preserves which texel a corner reads - the
+    face stays on the face at any size. Bilinear, with numpy when it is there
+    (Blender ships it) and plain arithmetic otherwise, so this can be tested
+    without Blender.
+    """
+    if new_width == width and new_height == height:
+        return bytearray(rgba), width, height
+    try:
+        import numpy
+    except ImportError:
+        numpy = None
+    if numpy is not None:
+        flat = numpy.frombuffer(bytes(rgba), dtype=numpy.uint8)
+        picture = flat.reshape(height, width, 4).astype(numpy.float32)
+        xs = (numpy.arange(new_width) + 0.5) * (width / float(new_width)) - 0.5
+        ys = (numpy.arange(new_height) + 0.5) * (height / float(new_height)) - 0.5
+        x0 = numpy.clip(numpy.floor(xs).astype(int), 0, width - 1)
+        y0 = numpy.clip(numpy.floor(ys).astype(int), 0, height - 1)
+        x1 = numpy.clip(x0 + 1, 0, width - 1)
+        y1 = numpy.clip(y0 + 1, 0, height - 1)
+        fx = numpy.clip(xs - numpy.floor(xs), 0.0, 1.0).reshape(1, new_width, 1)
+        fy = numpy.clip(ys - numpy.floor(ys), 0.0, 1.0).reshape(new_height, 1, 1)
+        top = picture[y0][:, x0] * (1 - fx) + picture[y0][:, x1] * fx
+        bottom = picture[y1][:, x0] * (1 - fx) + picture[y1][:, x1] * fx
+        out = top * (1 - fy) + bottom * fy
+        return bytearray(numpy.clip(out + 0.5, 0, 255).astype(numpy.uint8).tobytes()), new_width, new_height
+    out = bytearray(new_width * new_height * 4)
+    columns = []
+    for x in range(new_width):
+        at = (x + 0.5) * width / float(new_width) - 0.5
+        low = int(at // 1)
+        blend_x = at - low
+        if low < 0:
+            low, blend_x = 0, 0.0
+        columns.append((low, min(width - 1, low + 1), blend_x))
+    for y in range(new_height):
+        at = (y + 0.5) * height / float(new_height) - 0.5
+        low = int(at // 1)
+        blend_y = at - low
+        if low < 0:
+            low, blend_y = 0, 0.0
+        high = min(height - 1, low + 1)
+        near = low * width * 4
+        far = high * width * 4
+        base = y * new_width * 4
+        for x, (left, right, blend_x) in enumerate(columns):
+            a = near + left * 4
+            b = near + right * 4
+            c = far + left * 4
+            d = far + right * 4
+            for channel in range(4):
+                top = rgba[a + channel] + (rgba[b + channel] - rgba[a + channel]) * blend_x
+                bottom = rgba[c + channel] + (rgba[d + channel] - rgba[c + channel]) * blend_x
+                out[base + x * 4 + channel] = int(top + (bottom - top) * blend_y + 0.5)
+    return out, new_width, new_height
+
+
 def paint_outside(rgba, width, height, mask, colour):
     """Paint every texel a mesh does NOT read, so a stray UV cannot show padding.
 
