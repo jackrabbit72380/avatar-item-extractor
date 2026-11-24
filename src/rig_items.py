@@ -499,7 +499,22 @@ def port_material(mesh, stem, out, model, eyes_forward=False):
     return material, (name, rgba, width, height)
 
 
-def import_port(path, stem, out, eyes_forward=False):
+def mesh_box_of(objects):
+    """(low, high) per axis over every vertex of these objects, or None.
+
+    Read from the vertices themselves, not through the object's matrix: this is
+    the same space ``tallest`` above is read in, and the avatar's export is in
+    it too. The comparison that uses it is by extents, so a rotation the
+    importer put on the object does not matter.
+    """
+    points = [vertex.co for obj in objects for vertex in obj.data.vertices]
+    if not points:
+        return None
+    return ([min(point[axis] for point in points) for axis in range(3)],
+            [max(point[axis] for point in points) for axis in range(3)])
+
+
+def import_port(path, stem, out, eyes_forward=False, item_box=None):
     """The avatar's own head and neck, as meshes to join under the item.
 
     The export is in the space the items are authored in - y-up metres, the
@@ -513,7 +528,7 @@ def import_port(path, stem, out, eyes_forward=False):
     for note in model.get("broken") or []:
         log("the .glb is not a body: %s - a mesh that thin is a broken export, "
             "and the avatar it stands for cannot be measured or trusted" % note)
-    kept, skipped = glb_model.choose(model, stem)
+    kept, skipped = glb_model.choose(model, stem, item_box=item_box)
     made = {}
     textures = []
     objects = []
@@ -4366,6 +4381,11 @@ def main():
     port_textures = {}
     for record, path in items:
         meshes = import_obj(path)
+        # The item's own box, in the space the avatar's export is authored in.
+        # 360sona names the item's copy in an export after the slot it fills -
+        # the armour came back as plain "hair" - so the port recognises the item
+        # by its geometry as well as by its name, and leaves out the duplicate.
+        item_box = mesh_box_of(meshes)
         label = record.get("name") or record["id"]
         ported_materials = None
         ported_head_material = None
@@ -4386,7 +4406,8 @@ def main():
             if tallest >= 1.45:
                 ported = import_port(options["port"], item_stem(record),
                                      options["out"],
-                                     eyes_forward=options["eyes_forward"])
+                                     eyes_forward=options["eyes_forward"],
+                                     item_box=item_box)
                 if ported["objects"]:
                     meshes = meshes + ported["objects"]
                     record["port"] = ported["lines"]

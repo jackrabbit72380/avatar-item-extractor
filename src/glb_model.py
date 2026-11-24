@@ -239,24 +239,69 @@ def flatten(name):
     return " ".join((name or "").replace("_", " ").replace("-", " ").split()).lower()
 
 
-def choose(model, stem, also_skip=()):
+def mesh_box(mesh):
+    """(low, high) per axis over the vertices a mesh actually uses."""
+    points = mesh.get("positions") or []
+    if not points:
+        return None
+    low = [min(point[axis] for point in points) for axis in range(3)]
+    high = [max(point[axis] for point in points) for axis in range(3)]
+    return low, high
+
+
+def box_sizes(box):
+    """A box as its three extents, smallest first."""
+    return sorted(box[1][axis] - box[0][axis] for axis in range(3))
+
+
+def same_box(one, other, share=0.01):
+    """Whether two boxes are the same size, within a hundredth of the larger.
+
+    The item's copy in an export is the item's own geometry, so its extents are
+    the item's extents to the millimetre. The three are compared smallest to
+    smallest rather than axis by axis, because the two files are not guaranteed
+    to be turned the same way round: an .obj comes into Blender through an
+    importer that may carry a rotation on the object, and comparing x to x
+    there would call the same suit two different things.
+
+    The body under a suit is a different size on at least one extent - the
+    armour is 1.51 m head to toe where the body in it stops at 1.17 m - so the
+    body is not mistaken for the item.
+    """
+    mine, theirs = box_sizes(one), box_sizes(other)
+    for a, b in zip(mine, theirs):
+        if abs(a - b) > share * max(a, b, 1e-4) + 1e-3:
+            return False
+    return True
+
+
+def choose(model, stem, also_skip=(), item_box=None):
     """The body meshes to keep, and the ones that are the item itself.
 
-    The exporter names the item's own mesh after the item - ``hair: UNSC Marine
-    Armor`` - so a mesh whose name holds the item's own name is the item, and
-    that geometry is already in the pipeline from its container. Anything the
-    caller names in ``also_skip`` is dropped for the same reason.
+    One exporter names the item's own mesh after the item - ``hair: UNSC Marine
+    Armor`` - and another names it after the slot it fills, so the armour comes
+    back as plain ``hair``. A name test alone therefore misses it, and the item
+    is joined onto a second copy of itself: two shells in the same place, which
+    renders as a double image and fights itself in the game.
 
-    If that rule would leave nothing at all, the item's name was not in the file
-    and every mesh is kept: a body with the item's copy still on it is visibly
-    wrong, but an empty one is not fixable by looking at it.
+    So the item is recognised twice over. By name, as above, and by geometry
+    when the caller passes ``item_box``: a mesh whose box is the item's box is
+    the item. Anything the caller names in ``also_skip`` is dropped the same
+    way.
+
+    If the rules would leave nothing at all, every mesh is kept: a body with the
+    item's copy still on it is visibly wrong, but an empty one is not fixable by
+    looking at it.
     """
     wanted = flatten(stem)
     skips = {flatten(name) for name in also_skip if flatten(name)}
     kept, skipped = [], []
     for mesh in model["meshes"]:
         own = flatten(mesh["name"])
+        box = mesh_box(mesh)
         if (wanted and wanted in own) or own in skips:
+            skipped.append(mesh)
+        elif item_box and box and same_box(box, item_box):
             skipped.append(mesh)
         else:
             kept.append(mesh)

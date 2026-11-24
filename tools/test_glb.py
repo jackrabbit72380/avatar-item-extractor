@@ -257,6 +257,42 @@ def main():
           len(glb_model.choose(model, "test-item")[1]) == 1,
           str(len(glb_model.choose(model, "test-item")[1])))
 
+    # A 360sona export can name the item's own copy after the slot it fills
+    # rather than after the item: the UNSC Marine Armor comes back as a mesh
+    # called plain "hair". The name test cannot see that, so the pipeline
+    # measured the armour's copy as if it were the body's hair, kept it, and
+    # joined the armour onto a second copy of the armour - two shells in one
+    # place. The caller's box for the item is what recognises it.
+    print("the item's copy under a slot's name")
+    twin = [
+        {"name": "body", "material": "body_0", "image": 0,
+         "positions": [(0.0, 0.0, 0.0), (0.02, 0.0, 0.0), (0.0, 0.05, 0.01)],
+         "uvs": [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)], "triangles": [(0, 1, 2)]},
+        {"name": "hair", "material": "hair_6", "image": 2,
+         "positions": [(0.0, 0.0, 0.0), (0.7, 0.0, 0.0), (0.0, 1.5, 0.2)],
+         "uvs": [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)],
+         "triangles": [(0, 1, 2), (0, 2, 1)]},
+    ]
+    twin_path = os.path.join(work, "twin.glb")
+    with open(twin_path, "wb") as handle:
+        handle.write(build_glb(twin, images=[image, image, image], joints=[]))
+    twin_model = glb_model.read(twin_path)
+    kept, skipped = glb_model.choose(twin_model, "UNSC Marine Armor")
+    check("a slot's name alone does not see the copy", len(kept) == 2 and not skipped,
+          ", ".join(mesh["name"] for mesh in skipped) or "nothing skipped")
+    item_box = glb_model.mesh_box(twin_model["meshes"][1])
+    kept, skipped = glb_model.choose(twin_model, "UNSC Marine Armor",
+                                     item_box=item_box)
+    check("the item's own box leaves the copy out",
+          [mesh["name"] for mesh in kept] == ["body"]
+          and [mesh["name"] for mesh in skipped] == ["hair"],
+          "kept %s, skipped %s"
+          % (", ".join(mesh["name"] for mesh in kept),
+             ", ".join(mesh["name"] for mesh in skipped)))
+    kept, skipped = glb_model.choose(twin_model, "UNSC Marine Armor",
+                                     item_box=([0.0, 0.0, 0.0], [0.7, 1.2, 0.2]))
+    check("a box one body is not keeps every mesh", len(kept) == 2 and not skipped)
+
     # ----------------------------------------------------------- the images
     print("turning an embedded PNG into pixels")
     for filt in (0, 1, 2):
