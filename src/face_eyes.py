@@ -179,7 +179,7 @@ def _curve(points):
     return solved[0], solved[1], solved[2], mean
 
 
-def _pattern(rgba, width, height, left, right, first, last, top, low):
+def _pattern(rgba, width, height, left, right, first, last, top, low, iris=None):
     """One finished eye: a smooth lash, and one pupil in the middle of it.
 
     These eyes are painted on a 512-texel face, and the eye itself is only about
@@ -194,6 +194,9 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
         corners,
       * the pupil is a circle, set so the lash cuts the top of it off - a pupil
         seen under a lid rather than a pill drawn under a line,
+    * when a colour is given, the same circle is painted in it first and the
+        pupil is drawn inside that: an iris, so the eye has the colour it was
+        chosen with instead of reading as one black stroke,
       * both are sampled SAMPLES times per texel and averaged down, which is
         what makes their edges smooth instead of stepped.
 
@@ -281,6 +284,7 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
             x = left + ox
             lash_cover = 0
             pupil_cover = 0
+            iris_cover = 0
             for sub_y in range(SAMPLES):
                 sample_y = y - 0.5 + (sub_y + 0.5) / SAMPLES
                 for sub_x in range(SAMPLES):
@@ -294,12 +298,23 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
                         lash_cover += 1
                     across = (sample_x - centre_x) / radius
                     down = (sample_y - middle_y) / radius
-                    if across * across + down * down <= 1.0:
+                    reach = across * across + down * down
+                    if reach <= 1.0:
                         under = centre(sample_x) + weight(sample_x)
                         if sample_y >= under:
-                            pupil_cover += 1
+                            iris_cover += 1
+                            # The pupil is the middle of that circle, at a
+                            # little under half its radius: the ring of
+                            # colour left round it is what an eye is.
+                            if reach <= 0.2:
+                                pupil_cover += 1
             tone = skin[x]
-            colour = [tone[channel] * (1.0 - pupil_cover / share)
+            colour = list(tone[:3])
+            if iris is not None and iris_cover:
+                colour = [colour[channel] * (1.0 - iris_cover / share)
+                          + iris[channel] * (iris_cover / share)
+                          for channel in range(3)]
+            colour = [colour[channel] * (1.0 - pupil_cover / share)
                       + pupil_ink[channel] * (pupil_cover / share)
                       for channel in range(3)]
             colour = [colour[channel] * (1.0 - lash_cover / share)
@@ -310,7 +325,7 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
     return grid
 
 
-def centre_pupils(rgba, width, height, force=False):
+def centre_pupils(rgba, width, height, force=False, iris=None):
     """A copy of the face with one painted eye stamped into both eyes.
 
     Returns (pixels, notes): the notes say what was done, in plain numbers, so a
@@ -339,7 +354,8 @@ def centre_pupils(rgba, width, height, force=False):
         return bytearray(rgba), ["face: the eyes already look forward, texture untouched"]
 
     skin = _skin(rgba, width, height, groups[0][0], groups[-1][-1], first, last)
-    grid = _pattern(rgba, width, height, left, right, first, last, top, low)
+    grid = _pattern(rgba, width, height, left, right, first, last, top, low,
+                    iris=iris)
     if grid is None:
         return bytearray(rgba), ["face: the eye has no opening to put a pupil in, "
                                  "texture untouched"]

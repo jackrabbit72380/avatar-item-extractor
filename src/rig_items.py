@@ -28,6 +28,7 @@ import os
 import shutil
 import sys
 
+import bmesh
 import bpy
 from mathutils import Quaternion, Vector
 
@@ -460,6 +461,18 @@ def port_material(mesh, stem, out, model, eyes_forward=False):
         for line in notes:
             log("port: %s" % line)
         written = face_eyes.png_bytes(rgba, width, height)
+    # A face sheet arrives with holes in it: the exporter leaves flat grey where
+    # it painted nothing, and 41% of the pieces of a head read that grey, so the
+    # face shows blank patches. The holes are filled from the skin around them -
+    # nothing is drawn that was not painted somewhere on the same face. This runs
+    # after the eye pass, not before: on a filled sheet the eye pass reads the
+    # smooth skin next to the cheek as an eye and stamps one on to the chin.
+    if "face" in name.lower():
+        rgba, filled = glb_model.fill_unpainted(rgba, width, height)
+        if filled:
+            log("port: %s had %d unpainted texels of %d, filled from the skin "
+                "around them" % (name, filled, width * height))
+            written = face_eyes.png_bytes(rgba, width, height)
     with open(picture, "wb") as handle:
         handle.write(written)
     if not (glb_model.power_of_two(width) and glb_model.power_of_two(height)):
@@ -528,7 +541,24 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
     for note in model.get("broken") or []:
         log("the .glb is not a body: %s - a mesh that thin is a broken export, "
             "and the avatar it stands for cannot be measured or trusted" % note)
-    kept, skipped = glb_model.choose(model, stem, item_box=item_box)
+    # Is the item worn over the whole body, rather than on one part of it? Its
+    # own box answers that: a costume reaches as far up and down the avatar as
+    # the avatar does, where a hat or a pair of boots covers a fraction of it.
+    # Both are in the same metres - the item as its container authored it, the
+    # avatar as it exported itself - so the two heights compare directly.
+    heights = [point[1] for mesh in model["meshes"] for point in mesh["positions"]]
+    avatar_height = (max(heights) - min(heights)) if heights else 0.0
+    item_height = ((item_box[1][1] - item_box[0][1]) if item_box else 0.0)
+    costume = avatar_height > 0.0 and item_height >= 0.90 * avatar_height
+    if costume:
+        log("port: the item is a costume (%.2f m over a %.2f m avatar), so it is "
+            "worn instead of clothes" % (item_height, avatar_height))
+    kept, skipped = glb_model.choose(model, stem, item_box=item_box, costume=costume)
+    if costume:
+        gone = sorted({glb_model.flatten(mesh["name"]) for mesh in skipped
+                       if glb_model.flatten(mesh["name"]) in glb_model.REPLACED_BY_COSTUME})
+        log("port: left out of the avatar what the costume replaces (%s); "
+            "glasses, rings and watches stay" % (", ".join(gone) or "nothing"))
     made = {}
     textures = []
     objects = []
@@ -588,8 +618,12 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
         if points:
             box = ([min(point[axis] for point in points) for axis in range(3)],
                    [max(point[axis] for point in points) for axis in range(3)])
+    body_name = next((mesh["material"] for mesh in kept
+                      if glb_model.flatten(mesh["name"]) == glb_model.BODY_SLOT), None)
     return {"objects": objects, "textures": textures, "lines": lines,
             "material_objects": list(made.values()), "box": box,
+            "costume": costume,
+            "body_material": made.get(body_name) if body_name else None,
             "head_material": made.get(head_name) if head_name else None}
 
 
@@ -650,6 +684,34 @@ def refit_ported(object_data, materials, head_material, box):
             for axis in range(3))
     mesh.update()
     return factors
+
+
+def cut_body(object_data, material):
+    """Take the avatar's own body out from under a costume, once it is scaled.
+
+    A costume is the whole figure: the site draws the suit instead of a body,
+    and the export still carries the body underneath it. Left in, that body is
+    not hidden - it is a centimetre proud of the armour's sleeve in places - so
+    bare arms show through the suit and the skin fights the shell in the game.
+
+    It cannot simply be left out of the port, because it is what the fit
+    measures the avatar against: a head alone measures 0.55 m, the fit reads
+    that as a broken export, and the model came out 2.5 m tall. So the body
+    comes through the fit and is cut away here, after every scale is settled.
+    """
+    mesh = object_data.data
+    slots = {index for index, slot in enumerate(object_data.material_slots)
+             if slot.material is material}
+    if not slots:
+        return 0
+    working = bmesh.new()
+    working.from_mesh(mesh)
+    faces = [face for face in working.faces if face.material_index in slots]
+    bmesh.ops.delete(working, geom=faces, context="FACES")
+    working.to_mesh(mesh)
+    working.free()
+    mesh.update()
+    return len(faces)
 
 
 def join_meshes(meshes, name):
@@ -4402,6 +4464,7 @@ def main():
         # neck the item leaves bare. Only a whole body has parts like that - a
         # hat or a tee is worn on the catalogue's body, which already brings a
         # head, and two bodies under one item is not a smaller mistake than none.
+        ported = None
         if options["port"] and not is_body:
             if tallest >= 1.45:
                 ported = import_port(options["port"], item_stem(record),
@@ -4519,6 +4582,11 @@ def main():
                         "biped, x%.3f" % (merged.name, authored,
                                           fit * AUTHORED_BODY_HEIGHT,
                                           scale / fit))
+            if ported and ported.get("costume") and ported.get("body_material"):
+                cut = cut_body(merged, ported["body_material"])
+                log("port: the costume replaces the body itself, so the avatar's "
+                    "own body is cut away (%d faces) - the armour is the body "
+                    "from here, and the head, face and accessories stay" % cut)
             to_halo_space(merged, scale, keep_position=prop, anchor=anchor)
             record["binding"] = skin(merged, armature, rigid=prop)
             # Only a prop rides one bone. Reading the binding line instead

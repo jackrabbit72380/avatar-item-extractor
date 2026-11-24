@@ -31,6 +31,7 @@ import json
 import os
 import struct
 import zlib
+from collections import deque
 
 FORMAT_VERSION = 2
 CHUNK_JSON = 0x4E4F534A
@@ -205,8 +206,7 @@ def read(path):
             uvs = (_accessor(document, binary, primitive["attributes"]["TEXCOORD_0"])
                    if "TEXCOORD_0" in primitive["attributes"] else [])
             name, image = material_of(primitive)
-            name, image = material_of(primitive)
-            if len(positions) >= 40 and len(triangles) * 2 < len(positions):
+            if len(positions) >= 40 and len(triangles) * 10 < len(positions):
                 # A body of 1137 vertices carrying 34 triangles is how a broken
                 # export arrives; carried through silently it becomes a body a
                 # few centimetres tall and a model scaled x4.578 into a giant.
@@ -275,7 +275,32 @@ def same_box(one, other, share=0.01):
     return True
 
 
-def choose(model, stem, also_skip=(), item_box=None):
+# What a full-body costume takes the place of. An export names each worn mesh
+# after the slot it fills - ``hair``, ``glasses``, ``shirt`` - and the wardrobe's
+# own record for a costume is the slot ``costume``, which is worn over the body
+# instead of clothes. So the pieces below are left out under one, and anything
+# else - glasses, a ring, a watch - stays: those sit on skin the costume does
+# not cover, and a person should not have to undress their avatar to wear it.
+REPLACED_BY_COSTUME = frozenset((
+    "hair", "headwear", "shirt", "trousers", "shorts", "skirt", "dress",
+    "coat", "jacket", "shoes", "socks", "boots", "gloves", "belt",
+))
+# A costume is the whole figure, so it takes the place of the body itself and not
+# just its clothes. The body is NOT dropped when the export is read, though: it
+# is what the fit measures the avatar against, and a head on its own measures
+# 0.55 m and lands the model 2.5 m tall. It is cut away after the scale is
+# settled - see cut_body in rig_items.
+BODY_SLOT = "body"
+
+# The slots that are worn on bare skin. They are named here so the costume test
+# above can be read as the short list it is, and so a name nobody has thought
+# about is kept rather than silently thrown away.
+ACCESSORY_SLOTS = frozenset((
+    "glasses", "ring", "wristwear", "earring", "earrings", "necklace",
+))
+
+
+def choose(model, stem, also_skip=(), item_box=None, costume=False):
     """The body meshes to keep, and the ones that are the item itself.
 
     One exporter names the item's own mesh after the item - ``hair: UNSC Marine
@@ -288,6 +313,10 @@ def choose(model, stem, also_skip=(), item_box=None):
     when the caller passes ``item_box``: a mesh whose box is the item's box is
     the item. Anything the caller names in ``also_skip`` is dropped the same
     way.
+
+    ``costume`` says the item is worn over the body rather than on one part of
+    it. Then the clothes and the hair the export carries are the ones the
+    costume replaces, and they are dropped with it; accessories stay.
 
     If the rules would leave nothing at all, every mesh is kept: a body with the
     item's copy still on it is visibly wrong, but an empty one is not fixable by
@@ -302,6 +331,8 @@ def choose(model, stem, also_skip=(), item_box=None):
         if (wanted and wanted in own) or own in skips:
             skipped.append(mesh)
         elif item_box and box and same_box(box, item_box):
+            skipped.append(mesh)
+        elif costume and own in REPLACED_BY_COSTUME:
             skipped.append(mesh)
         else:
             kept.append(mesh)
@@ -408,6 +439,56 @@ def decode_png(data):
                 rgba[out + 2] = palette[entry + 2]
                 rgba[out + 3] = 255
     return bytes(rgba), width, height
+
+
+# The colour a 360sona face sheet leaves where it painted nothing: flat mid grey,
+# the value a normal map is stored on. Measured on two exports, 41% and 53% of
+# the pieces of head read it, and a face with it shows as blank patches - a white
+# wedge over the brow, a grey cheek - which is what "half the head is missing"
+# looked like. It is not missing geometry: the head is whole and its triangles
+# land on the sheet; the sheet has holes in it.
+UNPAINTED = 128
+
+
+def fill_unpainted(rgba, width, height, value=UNPAINTED, tolerance=6):
+    """Grow the painted pixels into the flat grey the exporter left, in place.
+
+    Each grey texel takes the colour of the nearest painted one, which is how a
+    hole in a painted sheet is filled without inventing anything: it is the skin
+    round the hole spreading into it, so a brow keeps its brow's tone and a
+    cheek its cheek's. Returns (pixels, number filled).
+
+    Breadth-first from every painted texel at once, so the fill is by distance
+    and not by passes over the image.
+    """
+    pixels = bytearray(rgba)
+    total = width * height
+    painted = bytearray(total)
+    queue = deque()
+    for at in range(total):
+        base = at * 4
+        if not (abs(pixels[base] - value) <= tolerance
+                and abs(pixels[base + 1] - value) <= tolerance
+                and abs(pixels[base + 2] - value) <= tolerance):
+            painted[at] = 1
+            queue.append(at)
+    if not queue:
+        return pixels, 0
+    filled = 0
+    while queue:
+        at = queue.popleft()
+        x, y = at % width, at // width
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if nx < 0 or ny < 0 or nx >= width or ny >= height:
+                continue
+            other = ny * width + nx
+            if painted[other]:
+                continue
+            painted[other] = 1
+            pixels[other * 4:other * 4 + 4] = pixels[at * 4:at * 4 + 4]
+            filled += 1
+            queue.append(other)
+    return pixels, filled
 
 
 def power_of_two(value):

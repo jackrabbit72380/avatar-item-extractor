@@ -363,6 +363,20 @@ def main():
               "the whole test")
 
     print("")
+    # A face sheet from the site leaves flat grey where it painted nothing, and
+    # 41% of the pieces of a head read that grey, so the face shows blank
+    # patches. Filling grows the painted skin into the hole, so no texel the
+    # head samples is left unpainted.
+    skin = (196, 148, 108, 255)
+    grey = (128, 128, 128, 255)
+    sheet = bytearray(bytes(skin) * 2 + bytes(grey) * 3)
+    filled_pixels, filled = glb_model.fill_unpainted(sheet, 5, 1)
+    check("three empty texels filled", filled == 3, str(filled))
+    check("the hole takes the colour beside it",
+          filled_pixels[-4:] == bytes(skin), str(tuple(filled_pixels[-4:])))
+    _, none = glb_model.fill_unpainted(bytearray(bytes(skin) * 4), 4, 1)
+    check("a painted sheet is left alone", none == 0, str(none))
+
     if FAILURES:
         print("FAILED: %d check(s)" % len(FAILURES))
         for label in FAILURES:
