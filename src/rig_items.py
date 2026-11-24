@@ -14,7 +14,7 @@ body items when one is present, and left absent when it is not.
 Usage:
     blender -b --python rig_items.py -- --items extracted --rig "master chief skeleton.blend"
         [--fp "fp arms.blend"] [--out rigged] [--no-fbx] [--no-jms] [--name NAME]
-        [--port "MyAvatar.glb"]
+        [--port "MyAvatar.glb"] [--keep-shape]
 
 ``--port`` takes an avatar exported by 360sona and puts its body under the item:
 the head, the face and the patch of neck an item like the Marine armour leaves
@@ -226,7 +226,8 @@ def nxe_armature(name="NXE skeleton"):
 def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parsed = {"items": "extracted", "rig": None, "fp": None, "out": "rigged",
-              "fbx": True, "jms": True, "name": None, "port": None}
+              "fbx": True, "jms": True, "name": None, "port": None,
+              "keep_shape": False}
     index = 0
     while index < len(argv):
         word = argv[index]
@@ -238,6 +239,9 @@ def args():
             index += 1
         elif word == "--no-jms":
             parsed["jms"] = False
+            index += 1
+        elif word == "--keep-shape":
+            parsed["keep_shape"] = True
             index += 1
         else:
             index += 1
@@ -4306,11 +4310,28 @@ def main():
                 record["placement"] = "kept where the file puts it, grown in place"
             elif anchor:
                 record["placement"] = anchor[2]
+            elif body and options.get("keep_shape"):
+                record["placement"] = ("kept in the shape the file authored, scaled "
+                                       "to the biped's height")
             elif body:
                 record["placement"] = "fitted to the biped's bones, joint by joint"
             else:
                 record["placement"] = "body height, grown from the floor"
-            to_halo_space(merged, fit, keep_position=prop, anchor=anchor)
+            # A whole body is carried joint by joint, which is what makes it
+            # match Halo's animations - and what stretches an avatar whose
+            # proportions are not Halo's. --keep-shape keeps the file's own
+            # shape instead and only scales it to the biped's height.
+            scale = fit
+            if body and options.get("keep_shape"):
+                heights = [vertex.co.y for vertex in merged.data.vertices]
+                authored = (max(heights) - min(heights)) if heights else 0.0
+                if authored > 0:
+                    scale = fit * AUTHORED_BODY_HEIGHT / authored
+                    log("%s kept as authored: %.3f m of its own on to %.3f m of "
+                        "biped, x%.3f" % (merged.name, authored,
+                                          fit * AUTHORED_BODY_HEIGHT,
+                                          scale / fit))
+            to_halo_space(merged, scale, keep_position=prop, anchor=anchor)
             record["binding"] = skin(merged, armature, rigid=prop)
             # Only a prop rides one bone. Reading the binding line instead
             # takes any garment whose top-weighted bone happens to be an arm -
@@ -4324,7 +4345,7 @@ def main():
             # first-person set keeps the geometry it was measured on: it is the
             # set that was tuned to Halo's fingers, and a re-fitted sleeve would
             # move every glove away from them.
-            if body:
+            if body and not options.get("keep_shape"):
                 fitted = retarget_body(merged, armature, fit)
                 if fitted:
                     record["biped_fit"] = fitted

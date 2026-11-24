@@ -717,6 +717,51 @@ hat or a tee is worn on the catalogue's body, which brings its own head, and two
 heads under one item is not a smaller mistake than none. `report.txt` says which
 of the two happened.
 
+## Keeping the item's own shape
+
+A whole-body item is fitted to the biped **joint by joint**: every joint the
+avatar's skeleton declares is carried onto Halo's bone for it, and the bone
+between two joints turns the mesh with it. That is what makes an item match
+Halo's animations - and it is also what changes its shape, because Halo's biped
+is a realistic 1.9 m body and a 360sona avatar is not.
+
+Measured on one real avatar and its Marine armour, the fit moved the mesh this
+far:
+
+| segment | as authored | after the fit | |
+|---|---|---|---|
+| torso, pelvis to spine1 | 4.1 units | 7.4 units | **x1.80** |
+| upper arm | 7.6 | 10.8 | x1.42 |
+| forearm | 6.9 | 11.3 | x1.64 |
+| thigh | 12.0 | 17.2 | x1.43 |
+| shin | 11.7 | 15.4 | x1.32 |
+| neck to head | 5.3 | 1.7 | **x0.32** |
+
+A body whose torso nearly doubles and whose neck is crushed to a third is not
+the model its author made. `--keep-shape` is for that: it scales the whole item
+uniformly to the biped's height and touches nothing else, so every proportion
+survives.
+
+```
+python rig_items.py --items extracted --out extracted \
+    --rig "master chief skeleton.blend" --fp "fp arms.blend" \
+    --port MyAvatar.glb --keep-shape
+```
+
+On the same item that gives 1.80 x 1.91 x 0.53 m against the 1.424 x 1.509 x
+0.417 m the file authored - the same proportions to within 0.2%, where the fit
+gives a 2.47 m body with the torso stretched.
+
+A `keep_shape.txt` beside the `.bat` asks for it on a double-click, the way
+`tint_mask.png` asks for a team-colour mask.
+
+The trade is honest and worth stating plainly: the joint fit exists so that the
+mesh's joints sit on the bones Halo animates, and `--keep-shape` does not do
+that. The mesh keeps the pose it was authored in - arms out, for a typical
+export - and its limb lengths are the avatar's, not Halo's, so an animation
+that bends Halo's knees and shoulders will move limbs that are the wrong length
+for it. The model looks like the file; it does not move like the biped.
+
 ## Building it in Halo's editing kit
 
 This tool stops at source data; `tool.exe` is the next step, and this is the whole
