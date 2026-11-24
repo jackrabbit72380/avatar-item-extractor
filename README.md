@@ -644,6 +644,64 @@ found, and each part's shader and texture bindings. The extractor writes it
 before any Blender runs, so a run without Blender still describes the file;
 the rigging section is added underneath it when Blender is there.
 
+## Putting an avatar's own head under an item
+
+An item is a shell: the game's own model has no head, because every player wears
+the same one. So a whole-body item has a helmet with nothing inside it, and the
+face is a hole. `--port` fills it from the avatar's own export:
+
+```
+python rig_items.py --items extracted --out extracted \
+    --rig "master chief skeleton.blend" --fp "fp arms.blend" \
+    --port MyAvatar.glb
+```
+
+`MyAvatar.glb` is the file 360sona gives you. Three of its meshes matter: the
+head, the face (the same head again, split into two patches either side of the
+face so the eyes and mouth can carry more detail), and the small patch of neck
+an armour leaves bare. Those are taken. The copy of the item the export carries
+- its own armour, already placed on the avatar - is left out by name, because
+the item being rigged is in the run already, and it is the one that keeps its
+textures, UVs, masks and decal.
+
+Two things are deliberately not carried across:
+
+- **Vertex colour.** Every vertex in the export has one, but it is baked
+  lighting rather than paint: 94% of the head's vertices sit at 0.90 or
+  brighter, and the few that are darker are the mouth and chin. Halo lights the
+  model itself, and the armour the head sits under has no vertex colours at all,
+  so keeping them would light the face twice and from the wrong direction.
+- **The export's skeleton, weights and joints.** The head is bound to the biped
+  and to the NXE skeleton by the same `skin()` pass as the item, so it needs no
+  name map, no weight transfer and no retarget table: the joints that carry the
+  armour carry the face, and it stays in its helmet when the biped animates.
+
+The export is already in the space items are authored in - y-up metres, the
+avatar's own T-pose - so the head needs no scale and no offset. It lands where
+the avatar's head is, which is where the item's collar expects it. Only the
+texture coordinates are flipped once, because glTF runs them top-down and this
+pipeline runs them bottom-up. The face is static geometry: no blink, no eye
+movement, nothing that needs an animation to look right from outside.
+
+What a ported item gains:
+
+- `<stem> face.png` and `<stem> body_0.png` beside the item - the two images the
+  export carries, byte for byte, packed into the `.blend` like every other
+  texture.
+- `<stem> face.tif` and `<stem> body_0.tif` in `bitmaps` **and** `fp\bitmaps` of
+  every build, so each HEK folder carries everything it needs by itself.
+- Two more materials in every `.jms`, named `face` and `body_0`, taking the same
+  `_sp`, `_sp_decals`, `_mp` and `_mp_decals` suffixes as the item's own.
+
+The armour is not touched. With and without `--port` its geometry comes out
+identical to the last bit - all 4,876 triangles, 0.000000 units of movement -
+because the fit is driven by joints, and the head only supplies one more cap.
+
+`--port` is used only for a whole body, an item that reaches 1.45 m or more. A
+hat or a tee is worn on the catalogue's body, which brings its own head, and two
+heads under one item is not a smaller mistake than none. `report.txt` says which
+of the two happened.
+
 ## Building it in Halo's editing kit
 
 This tool stops at source data; `tool.exe` is the next step, and this is the whole
@@ -704,6 +762,14 @@ What it does, step by step:
    legacy HEK read **Gearbox** order, which is what the `pc` builds are written
    in - the `multipurpose xbox` bitmap and the 0x40 flag are the only pair that
    belongs together.
+
+   An item built with `--port` carries two more materials, `face` and `body_0`,
+   and each needs its own `shader_model` at the tag path its name gives -
+   `<stem> sp\face`, `<stem> sp\body_0` - with its own base map (`<stem> face`
+   and `<stem> body_0`, already beside the item's own in every build's
+   `bitmaps`). Leave their multipurpose maps empty unless you want the face to
+   take the team colour: it is skin, and a team colour on it flickers with the
+   armour's.
 5. **Map.** `tool build-cache-file "<scenario>" classic`, which packs the tags
    and the bitmap pixels into the map file.
 

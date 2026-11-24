@@ -14,6 +14,12 @@ body items when one is present, and left absent when it is not.
 Usage:
     blender -b --python rig_items.py -- --items extracted --rig "master chief skeleton.blend"
         [--fp "fp arms.blend"] [--out rigged] [--no-fbx] [--no-jms] [--name NAME]
+        [--port "MyAvatar.glb"]
+
+``--port`` takes an avatar exported by 360sona and puts its body under the item:
+the head, the face and the patch of neck an item like the Marine armour leaves
+bare. The item itself is untouched - its geometry, UVs, masks and decal are the
+ones its container gave, and the export's own copy of the item is left out.
 """
 
 import json
@@ -34,6 +40,17 @@ try:
 except ImportError:  # run from somewhere that has not put this folder on the path
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from jms_check import check_jms
+
+# The avatar's own body comes from a .glb, read without bpy so the reading and
+# the choosing can be tested on their own. The TIFF writer is extraction's own,
+# because Blender's Python has no Pillow and the HEK maps are the same format.
+try:
+    import glb_model
+    from extract_items import tiff_bytes
+except ImportError:  # run from somewhere that has not put this folder on the path
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import glb_model
+    from extract_items import tiff_bytes
 
 # The biped is authored in Halo units: 100 units is a metre (0.03048 m each),
 # so a 1.83 m figure stands 60 units tall with its feet on z = 0.
@@ -65,8 +82,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v64"
-BUILD = "2026-11-23 exact-masks-four-builds-and-channel-docs"
+VERSION = "v65"
+BUILD = "2026-11-24 an-avatars-own-body-under-the-item"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -209,11 +226,11 @@ def nxe_armature(name="NXE skeleton"):
 def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parsed = {"items": "extracted", "rig": None, "fp": None, "out": "rigged",
-              "fbx": True, "jms": True, "name": None}
+              "fbx": True, "jms": True, "name": None, "port": None}
     index = 0
     while index < len(argv):
         word = argv[index]
-        if word in ("--items", "--rig", "--fp", "--out", "--name"):
+        if word in ("--items", "--rig", "--fp", "--out", "--name", "--port"):
             parsed[word[2:]] = argv[index + 1]
             index += 2
         elif word == "--no-fbx":
@@ -395,10 +412,134 @@ def import_obj(path):
     return meshes
 
 
+def item_stem(record):
+    """The one name this item is written under, in every folder.
+
+    Extraction names it once - its title, or its id when nothing names it - and
+    the .obj's own name is the fallback for a catalogue written by a build that
+    did not record it.
+    """
+    return record.get("stem") or os.path.splitext(
+        os.path.basename(record.get("obj") or record["id"]))[0]
+
+
+def port_material(mesh, stem, out, model):
+    """A Blender material for one ported mesh, and the pixels it needs.
+
+    The image is written beside the item as `<stem> <material>.png` so the .blend
+    can pack it like every other texture, and the same pixels are handed back as
+    raw RGBA for the `.tif` that tool.exe compiles. They are the same image the
+    export carried: nothing is resampled, and its size is reported when it is not
+    a power of two, because a bitmap compiler cannot take one that is not.
+    """
+    name = mesh["material"]
+    source = mesh.get("image")
+    if source is None or source >= len(model["images"]):
+        log("port: %s carries no image, so its material is a flat colour" % name)
+        return bpy.data.materials.new(name), None
+    image = model["images"][source]
+    rgba, width, height = glb_model.decode_png(image["data"])
+    picture = os.path.join(out, "%s %s.png" % (stem, name))
+    with open(picture, "wb") as handle:
+        handle.write(image["data"])
+    if not (glb_model.power_of_two(width) and glb_model.power_of_two(height)):
+        log("port: %s is %dx%d, which tool.exe cannot compile: a bitmap has to "
+            "be a power of two a side" % (os.path.basename(picture), width, height))
+    loaded = bpy.data.images.load(picture, check_existing=True)
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    texture = nodes.new("ShaderNodeTexImage")
+    texture.image = loaded
+    texture.location = (-320, 0)
+    surface = next((node for node in nodes if node.type == "BSDF_PRINCIPLED"), None)
+    if surface is not None:
+        links.new(texture.outputs["Color"], surface.inputs["Base Color"])
+    else:
+        output = next((node for node in nodes
+                       if node.type == "OUTPUT_MATERIAL"), None)
+        if output is not None:
+            links.new(texture.outputs["Color"], output.inputs["Surface"])
+    log("port: %s binds %s (%dx%d)"
+        % (name, os.path.basename(picture), width, height))
+    return material, (name, rgba, width, height)
+
+
+def import_port(path, stem, out):
+    """The avatar's own head and neck, as meshes to join under the item.
+
+    The export is in the space the items are authored in - y-up metres, the
+    avatar's own T-pose - so nothing is scaled or moved here: the head lands
+    where the avatar's head is, which is where the item's collar expects it. The
+    meshes come back unskinned; ``skin`` binds them to the biped and to the NXE
+    skeleton with everything else, so a body under an item needs no name map and
+    no weights carried across from the file.
+    """
+    model = glb_model.read(path)
+    kept, skipped = glb_model.choose(model, stem)
+    made = {}
+    textures = []
+    objects = []
+    for mesh in kept:
+        label = "%s - %s" % (stem, mesh["material"])
+        data = bpy.data.meshes.new(label)
+        data.from_pydata([tuple(point) for point in mesh["positions"]], [],
+                         [tuple(face) for face in mesh["triangles"]])
+        data.update()
+        layer = data.uv_layers.new(name="uv0")
+        # glTF stores v running down the picture and every other texture in this
+        # pipeline is bottom-up, so it is flipped once, here - the same flip the
+        # .obj writer makes when it reads the pack's own textures.
+        for loop in data.loops:
+            if loop.vertex_index < len(mesh["uvs"]):
+                u, v = mesh["uvs"][loop.vertex_index]
+                layer.data[loop.index].uv = (u, 1.0 - v)
+        for polygon in data.polygons:
+            polygon.use_smooth = True
+        material = made.get(mesh["material"])
+        if material is None:
+            material, written = port_material(mesh, stem, out, model)
+            made[mesh["material"]] = material
+            if written:
+                textures.append(written)
+        data.materials.append(material)
+        object_data = bpy.data.objects.new(label, data)
+        bpy.context.scene.collection.objects.link(object_data)
+        objects.append(object_data)
+        log("ported %s: %d verts, %d triangles"
+            % (mesh["name"], len(mesh["positions"]), len(mesh["triangles"])))
+    lines = glb_model.report(model, kept, skipped)
+    for line in lines:
+        log(line.strip())
+    return {"objects": objects, "textures": textures, "lines": lines}
+
+
 def join_meshes(meshes, name):
     if not meshes:
         return None
     if len(meshes) > 1:
+        # The OBJ importer leaves its axis matrix on the object and the item's
+        # points in the item's own space; join converts each object's points
+        # into the active object's space, so a mesh this tool built (matrix
+        # identity) would be turned by that axis matrix while the item was not,
+        # and to_halo_space would then turn the turned one again. Every object
+        # is given the item's matrix first, so the join is a straight copy and
+        # the whole model reaches to_halo_space in one space.
+        matrix = meshes[0].matrix_world.copy()
+        # The same goes for texture coordinates. Join merges a layer by name,
+        # and the .obj importer calls its own UVMap while a mesh built here
+        # calls its uv0 - so the head's coordinates would land in a second layer
+        # while its faces read the item's, which is empty for them, and the
+        # painted face would sample one texel. One name, one layer.
+        wanted = (meshes[0].data.uv_layers[0].name
+                  if meshes[0].data.uv_layers else None)
+        for object_data in meshes[1:]:
+            object_data.matrix_world = matrix
+            layers = object_data.data.uv_layers
+            if wanted and len(layers):
+                layers[0].name = wanted
+        bpy.context.view_layer.update()
         bpy.ops.object.select_all(action="DESELECT")
         for object_data in meshes:
             object_data.select_set(True)
@@ -3649,6 +3790,8 @@ def report_text(options, records, stems, armature, nxe=None):
             if record.get("arms_torn"):
                 lines.append("              %s" % record["arms_torn"])
         lines.append("  vertices  : %d" % (record.get("model", {}).get("vertices") or 0))
+        # What an avatar's own export added under the item, and what it did not.
+        lines.extend(record.get("port") or [])
         lines.append("")
     lines.extend(rig_scene_lines(armature, nxe))
     return "\n".join(lines)
@@ -4010,6 +4153,10 @@ def main():
         log("base body in the catalogue: %s" % (body[0].get("name") or body[0]["id"]))
 
     rigged = []
+    # Textures the ported body needs in the HEK tree, per item: they belong to a
+    # model that only exists once this pass has joined and skinned it, so they
+    # are written with the model rather than by extraction.
+    port_textures = {}
     for record, path in items:
         meshes = import_obj(path)
         label = record.get("name") or record["id"]
@@ -4021,6 +4168,22 @@ def main():
         if body and not is_body and tallest < 1.45:
             log("%s stops at %.2f m, merging the base body in" % (label, tallest))
             meshes = meshes + import_obj(body[1])
+        # An avatar can be given as well: its own head, face and the patch of
+        # neck the item leaves bare. Only a whole body has parts like that - a
+        # hat or a tee is worn on the catalogue's body, which already brings a
+        # head, and two bodies under one item is not a smaller mistake than none.
+        if options["port"] and not is_body:
+            if tallest >= 1.45:
+                ported = import_port(options["port"], item_stem(record),
+                                     options["out"])
+                if ported["objects"]:
+                    meshes = meshes + ported["objects"]
+                    record["port"] = ported["lines"]
+                    port_textures[item_stem(record)] = ported["textures"]
+            else:
+                log("--port not used for %s: it stops at %.2f m, so it is worn on a "
+                    "body - the catalogue's body fills what it leaves bare"
+                    % (label, tallest))
         merged = join_meshes(meshes, options["name"] or label)
         if not merged:
             continue
@@ -4112,14 +4275,23 @@ def main():
         # nothing names it - so this pass writes into the same data\<item>\
         # that holds the bitmaps. The .obj's own name is the fallback for a
         # catalogue written by a build that did not record it.
-        stem = record.get("stem") or os.path.splitext(
-            os.path.basename(record.get("obj") or record["id"]))[0]
+        stem = item_stem(record)
         stems.append(stem)
                 # data\<item>\ is what tool.exe takes as its source directory, and it
         # looks inside models\ for the .jms and animations\ for animation data.
         # hek_folders() makes that tree for both orders, arms folder and all,
         # so the two cannot drift apart.
         folders = hek_folders(out, stem)
+        # The ported body's textures go beside each build's other maps, in both
+        # channel orders: hek_builds copies every .tif in an order's folder into
+        # all four of its builds and into fp\bitmaps, so a body that is the same
+        # in every build is written once here and is complete everywhere.
+        for texture, pixels, width, height in port_textures.get(stem, []):
+            name = "%s %s.tif" % (stem, texture)
+            for tree in folders.values():
+                with open(os.path.join(tree["bitmaps"], name), "wb") as handle:
+                    handle.write(tiff_bytes(pixels, width, height))
+            log("wrote %s for both channel orders" % name)
         models_dir = folders["pc"]["models"]
         item_dir = folders["pc"]["item"]
         source_dir = folders["pc"]["source"]

@@ -1978,7 +1978,7 @@ def write_tga(path, rgba, width, height):
         handle.write(header + bytes(body))
 
 
-def write_tiff(path, rgba, width, height):
+def tiff_bytes(rgba, width, height):
     """Baseline little-endian TIFF, 8 bits per channel, RGBA, one strip."""
     entries = [
         (256, 4, [width]),            # ImageWidth
@@ -2013,11 +2013,20 @@ def write_tiff(path, rgba, width, height):
         if tag == 273:
             at = index * 12 + 8
             table[at:at + 4] = struct.pack("<I", pixels_at)
-    data = (b"II*\x00" + struct.pack("<I", 8)
+    return (b"II*\x00" + struct.pack("<I", 8)
             + struct.pack("<H", len(entries)) + bytes(table) + struct.pack("<I", 0)
             + bytes(overflow) + rgba)
+
+
+def write_tiff(path, rgba, width, height):
+    """The same TIFF, written to a file.
+
+    The writer is separate from the path because the rigging pass runs inside
+    Blender, where Pillow is not installed: it asks for the bytes and puts them
+    beside the build itself.
+    """
     with open(path, "wb") as handle:
-        handle.write(data)
+        handle.write(tiff_bytes(rgba, width, height))
 
 
 # --------------------------------------------------------------------- output
