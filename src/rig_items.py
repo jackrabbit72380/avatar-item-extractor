@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v83"
-BUILD = "2026-11-24 banded-tone"
+VERSION = "v84"
+BUILD = "2026-11-24 shared-sheet-fix"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -799,6 +799,11 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
                 if tone_here[channel] else 1.0 for channel in range(3))
     halves = [mesh for mesh in sheets if mesh["image"] in decoded]
     joins = []
+    # False for the avatars whose two halves share ONE sheet: there is no second
+    # sheet to bring across, so the whole-sheet gain still does the work. This was
+    # read before it was set on exactly those avatars, and the build died before
+    # it wrote anything - the avatar had no rig because there was no file.
+    toned = False
     if len(halves) > 1:
         ref = halves[0]
         ref_pixels, ref_w, ref_h = decoded[ref["image"]]
