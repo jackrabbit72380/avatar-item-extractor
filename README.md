@@ -817,15 +817,22 @@ python rig_items.py --items extracted --out extracted \
     --port MyAvatar.glb --keep-shape
 ```
 
-The avatar keeps its own metres: a 1.85 m avatar stays 1.85 m. Items are
-authored against a 1.40 m avatar, so an avatar of H metres wants the item at
-H / 1.40 - on a 1.85 m avatar this item comes out 1.881 x 1.994 x 0.551 m, still
-the size it was drawn to relative to the body it covers.
+Halo cannot rescale a biped. The model's nodes are the skeleton its
+animation graph drives by name, and everything the game places - the weapon in
+the hand, the pickup, the collision capsule - is placed from them. A model whose
+nodes sit at some other height does not line up with any of that, so the model
+has to come onto Halo's scale, not the other way round.
 
-Two simpler rules were tried and both are wrong. Normalising the whole model to
-the biped's 1.91 m, which this did until v70, made a 1.85 m avatar a 1.45 m one.
-Leaving both at their authored size, which v70 did, put a 1.51 m armour on a
-1.85 m body - armour that is too small for the avatar wearing it.
+It comes there by one uniform factor per part, never by stretching an axis:
+
+* the avatar is scaled to the biped's height - 1.909 m here, measured from the
+  rig rather than typed in - so a 1.850 m avatar goes x1.032 and keeps its shape;
+* the item, authored for the 1.40 m avatar body, goes by the biped / 1.40 fit,
+  x1.364, so it still covers the body it was made for.
+
+Both are single factors on all three axes, so nothing is squashed. What the old
+code did until v70 was scale the whole model by the *item's* height instead of
+the avatar's, which turned a 1.85 m avatar into 1.45 m.
 
 A `keep_shape.txt` beside the `.bat` asks for it on a double-click, the way
 `tint_mask.png` asks for a team-colour mask.

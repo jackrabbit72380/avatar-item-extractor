@@ -84,8 +84,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v71"
-BUILD = "2026-11-24 item-grows-to-the-avatar"
+VERSION = "v72"
+BUILD = "2026-11-24 model-on-the-biped-scale"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -4383,17 +4383,31 @@ def main():
                     heights = [merged.data.vertices[index].co.y for index in avatar]
                     avatar_height = (max(heights) - min(heights)) if heights else 0.0
                     if avatar_height > 0 and len(avatar) < len(merged.data.vertices):
-                        grow = avatar_height / AUTHORED_BODY_HEIGHT
+                        # Halo cannot rescale a biped: the .jms nodes ARE the
+                        # skeleton its animation graph drives by name, and the
+                        # attachments (weapon on the hand, pickup, the collision
+                        # capsule) are all placed from them. A model whose nodes
+                        # sit at their own height therefore does not line up with
+                        # the game - feet sink, weapons miss the hand. So the
+                        # model is brought onto Halo's own scale instead, and it
+                        # is brought there by ONE factor per part, never by
+                        # stretching an axis: the avatar goes to the biped's
+                        # height (fit x the 1.40 m body items are authored for),
+                        # and the item, authored for that same 1.40 m body, goes
+                        # by fit. Both keep their shape exactly.
+                        biped_height = fit * AUTHORED_BODY_HEIGHT
+                        to_biped = biped_height / avatar_height
                         for index, vertex in enumerate(merged.data.vertices):
-                            if index in avatar:
-                                continue
+                            grow = to_biped if index in avatar else fit
                             vertex.co = (vertex.co.x * grow, vertex.co.y * grow,
                                          vertex.co.z * grow)
                         merged.data.update()
-                        log("%s grown to the avatar: x%.3f, its %.3f m on to "
-                            "a %.3f m avatar (items are authored for %.2f m)"
-                            % (merged.name, grow, authored, avatar_height,
-                               AUTHORED_BODY_HEIGHT))
+                        log("%s brought onto Halo's scale: avatar x%.3f, %.3f m "
+                            "to the biped's %.3f m (its own shape, one factor); "
+                            "item x%.3f, authored for a %.2f m body, now on a "
+                            "%.2f m one"
+                            % (merged.name, to_biped, avatar_height, biped_height,
+                               fit, AUTHORED_BODY_HEIGHT, biped_height))
                     scale = 1.0
                     log("%s kept at the size the avatar was authored: %.3f m "
                         "tall, x1.000" % (merged.name, authored))
