@@ -215,25 +215,6 @@ def flatten(name):
     return " ".join((name or "").replace("_", " ").replace("-", " ").split()).lower()
 
 
-def body_span(model, stem, also_skip=()):
-    """How tall the meshes this export lends stand, in the file's own metres.
-
-    A 360sona export carries whatever the avatar was wearing when it was taken:
-    a head and neck, or a whole body with clothes on it. That difference decides
-    what the export can be the base for - a body can stand a tee on itself, a
-    head cannot - so it is measured here rather than assumed from the item being
-    rigged or from the export being handed to the tool at all.
-
-    The item's own copy is not counted: it is dropped by ``choose``, and its
-    height belongs to the container that is already in the run.
-    """
-    kept, _skipped = choose(model, stem, also_skip)
-    heights = [point[1] for mesh in kept for point in mesh["positions"]]
-    if not heights:
-        return 0.0
-    return max(heights) - min(heights)
-
-
 def choose(model, stem, also_skip=()):
     """The body meshes to keep, and the ones that are the item itself.
 

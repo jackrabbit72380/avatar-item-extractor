@@ -84,8 +84,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v67"
-BUILD = "2026-11-24 avatar-body-under-garments"
+VERSION = "v66"
+BUILD = "2026-11-24 eyes-looking-forward"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -559,7 +559,6 @@ def import_port(path, stem, out, eyes_forward=False):
                    [max(point[axis] for point in points) for axis in range(3)])
     return {"objects": objects, "textures": textures, "lines": lines,
             "material_objects": list(made.values()), "box": box,
-            "span": glb_model.body_span(model, stem),
             "head_material": made.get(head_name) if head_name else None}
 
 
@@ -4272,50 +4271,32 @@ def main():
         ported_box = None
         is_body = body is not None and record is body[0]
         # Avatar space is y-up in metres, so anything stopping below 1.45 m is
-        # missing its head and shoulders and needs a base body underneath.
+        # missing its head and shoulders and needs the base body underneath.
         tallest = max((vertex.co.y for item in meshes for vertex in item.data.vertices),
                       default=0.0)
-        # An avatar can be given as well: its own head, and - if it was exported
-        # with one - its own body. A whole body is fitted joint by joint with the
-        # item riding it, so a garment shorter than a body just needs a body under
-        # it. Whether this export has one is measured, not assumed: a head and
-        # neck cannot stand a tee on itself, and using both it and the catalogue's
-        # body would put two heads under one hat. So a garment below 1.45 m takes
-        # the avatar's body only when the export actually carries a body; either
-        # way its head is what fills the item's collar.
-        port_wanted = False
-        if options["port"] and not is_body:
-            if tallest >= 1.45:
-                port_wanted = True
-            else:
-                carried = glb_model.body_span(glb_model.read(options["port"]),
-                                              item_stem(record))
-                port_wanted = carried >= 0.8 * AUTHORED_BODY_HEIGHT
-                if port_wanted:
-                    log("%s stops at %.2f m, and the avatar's own body (%.2f m) "
-                        "stands under it instead of the catalogue's"
-                        % (label, tallest, carried))
-                else:
-                    log("--port not used for %s: it stops at %.2f m and the "
-                        "export carries no body (%.2f m of it), so it is worn on "
-                        "the catalogue's body, which brings its own head"
-                        % (label, tallest, carried))
-        if port_wanted:
-            ported = import_port(options["port"], item_stem(record),
-                                 options["out"],
-                                 eyes_forward=options["eyes_forward"])
-            if ported["objects"]:
-                meshes = meshes + ported["objects"]
-                record["port"] = ported["lines"]
-                port_textures[item_stem(record)] = ported["textures"]
-                ported_materials = ported["material_objects"]
-                ported_head_material = ported["head_material"]
-                ported_box = ported["box"]
-        # Only when the port did not bring a body of its own: a whole body is
-        # already standing there, and the catalogue's would only be a second one.
-        if body and not is_body and tallest < 1.45 and not port_wanted:
+        if body and not is_body and tallest < 1.45:
             log("%s stops at %.2f m, merging the base body in" % (label, tallest))
             meshes = meshes + import_obj(body[1])
+        # An avatar can be given as well: its own head, face and the patch of
+        # neck the item leaves bare. Only a whole body has parts like that - a
+        # hat or a tee is worn on the catalogue's body, which already brings a
+        # head, and two bodies under one item is not a smaller mistake than none.
+        if options["port"] and not is_body:
+            if tallest >= 1.45:
+                ported = import_port(options["port"], item_stem(record),
+                                     options["out"],
+                                     eyes_forward=options["eyes_forward"])
+                if ported["objects"]:
+                    meshes = meshes + ported["objects"]
+                    record["port"] = ported["lines"]
+                    port_textures[item_stem(record)] = ported["textures"]
+                    ported_materials = ported["material_objects"]
+                    ported_head_material = ported["head_material"]
+                    ported_box = ported["box"]
+            else:
+                log("--port not used for %s: it stops at %.2f m, so it is worn on a "
+                    "body - the catalogue's body fills what it leaves bare"
+                    % (label, tallest))
         merged = join_meshes(meshes, options["name"] or label)
         if not merged:
             continue
