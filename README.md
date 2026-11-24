@@ -717,6 +717,28 @@ hat or a tee is worn on the catalogue's body, which brings its own head, and two
 heads under one item is not a smaller mistake than none. `report.txt` says which
 of the two happened.
 
+### Eyes that look forward
+
+A painted face keeps its gaze in the paint, and these faces are drawn as one
+stroke per eye: a thin tail at the outer corner that swells into the pupil at
+the inner one. On the Marine face this was measured at 73% and 69% of the way
+across each eye, both toward the same side, so under a helmet the avatar looks
+off to one side in every frame while his head geometry faces straight ahead.
+Nothing in the mesh or the UVs causes it, and nothing in them can fix it.
+
+`--eyes-forward` (or an `eyes_forward.txt` beside the `.bat`) redraws the pupil
+in the middle of each eye before the face map is written. It is deliberately
+small: the eyelid line stays exactly where it was drawn, the skin tone is the
+face's own, and only the swelling moves, so both eyes come out level. It is
+off unless asked for, because it edits the avatar's own art rather than the
+item's.
+
+```
+python rig_items.py --items extracted --out extracted \
+    --rig "master chief skeleton.blend" --fp "fp arms.blend" \
+    --port MyAvatar.glb --keep-shape --eyes-forward
+```
+
 ## Keeping the item's own shape
 
 A whole-body item is fitted to the biped **joint by joint**: every joint the

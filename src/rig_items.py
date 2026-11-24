@@ -14,7 +14,7 @@ body items when one is present, and left absent when it is not.
 Usage:
     blender -b --python rig_items.py -- --items extracted --rig "master chief skeleton.blend"
         [--fp "fp arms.blend"] [--out rigged] [--no-fbx] [--no-jms] [--name NAME]
-        [--port "MyAvatar.glb"] [--keep-shape]
+        [--port "MyAvatar.glb"] [--keep-shape] [--eyes-forward]
 
 ``--port`` takes an avatar exported by 360sona and puts its body under the item:
 the head, the face and the patch of neck an item like the Marine armour leaves
@@ -45,10 +45,12 @@ except ImportError:  # run from somewhere that has not put this folder on the pa
 # the choosing can be tested on their own. The TIFF writer is extraction's own,
 # because Blender's Python has no Pillow and the HEK maps are the same format.
 try:
+    import face_eyes
     import glb_model
     from extract_items import tiff_bytes
 except ImportError:  # run from somewhere that has not put this folder on the path
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import face_eyes
     import glb_model
     from extract_items import tiff_bytes
 
@@ -83,7 +85,7 @@ ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
 VERSION = "v65"
-BUILD = "2026-11-24 an-avatars-own-body-under-the-item"
+BUILD = "2026-11-24 shape-kept-body-and-level-eyes"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -227,7 +229,7 @@ def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parsed = {"items": "extracted", "rig": None, "fp": None, "out": "rigged",
               "fbx": True, "jms": True, "name": None, "port": None,
-              "keep_shape": False}
+              "keep_shape": False, "eyes_forward": False}
     index = 0
     while index < len(argv):
         word = argv[index]
@@ -242,6 +244,9 @@ def args():
             index += 1
         elif word == "--keep-shape":
             parsed["keep_shape"] = True
+            index += 1
+        elif word == "--eyes-forward":
+            parsed["eyes_forward"] = True
             index += 1
         else:
             index += 1
@@ -427,7 +432,7 @@ def item_stem(record):
         os.path.basename(record.get("obj") or record["id"]))[0]
 
 
-def port_material(mesh, stem, out, model):
+def port_material(mesh, stem, out, model, eyes_forward=False):
     """A Blender material for one ported mesh, and the pixels it needs.
 
     The image is written beside the item as `<stem> <material>.png` so the .blend
@@ -444,8 +449,18 @@ def port_material(mesh, stem, out, model):
     image = model["images"][source]
     rgba, width, height = glb_model.decode_png(image["data"])
     picture = os.path.join(out, "%s %s.png" % (stem, name))
+    written = image["data"]
+    # A painted face keeps its gaze wherever the artist left it, and these faces
+    # are drawn with the pupil at one end of the eye: under Halo's helmet the
+    # avatar then looks off to one side in every frame. --eyes-forward redraws
+    # that pupil in the middle, which is opt-in because it changes the art.
+    if eyes_forward and "face" in name.lower():
+        rgba, notes = face_eyes.centre_pupils(rgba, width, height, force=True)
+        for line in notes:
+            log("port: %s" % line)
+        written = face_eyes.png_bytes(rgba, width, height)
     with open(picture, "wb") as handle:
-        handle.write(image["data"])
+        handle.write(written)
     if not (glb_model.power_of_two(width) and glb_model.power_of_two(height)):
         log("port: %s is %dx%d, which tool.exe cannot compile: a bitmap has to "
             "be a power of two a side" % (os.path.basename(picture), width, height))
@@ -470,7 +485,7 @@ def port_material(mesh, stem, out, model):
     return material, (name, rgba, width, height)
 
 
-def import_port(path, stem, out):
+def import_port(path, stem, out, eyes_forward=False):
     """The avatar's own head and neck, as meshes to join under the item.
 
     The export is in the space the items are authored in - y-up metres, the
@@ -503,7 +518,8 @@ def import_port(path, stem, out):
             polygon.use_smooth = True
         material = made.get(mesh["material"])
         if material is None:
-            material, written = port_material(mesh, stem, out, model)
+            material, written = port_material(mesh, stem, out, model,
+                                              eyes_forward=eyes_forward)
             made[mesh["material"]] = material
             if written:
                 textures.append(written)
@@ -4267,7 +4283,8 @@ def main():
         if options["port"] and not is_body:
             if tallest >= 1.45:
                 ported = import_port(options["port"], item_stem(record),
-                                     options["out"])
+                                     options["out"],
+                                     eyes_forward=options["eyes_forward"])
                 if ported["objects"]:
                     meshes = meshes + ported["objects"]
                     record["port"] = ported["lines"]
