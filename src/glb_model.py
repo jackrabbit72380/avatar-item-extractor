@@ -697,6 +697,111 @@ def paint_uv_patch(rgba, width, height, uv_triangles, colour, pale=236):
     return pixels, painted
 
 
+def tone_curve(rgba, mask, channel, bins=256):
+    """The cumulative share of a sheet's texels at or below each value."""
+    hist = [0] * bins
+    for at in range(0, len(rgba), 4):
+        if mask is not None and not mask[at >> 2]:
+            continue
+        hist[rgba[at + channel]] += 1
+    total = sum(hist)
+    running = 0
+    curve = []
+    for value in hist:
+        running += value
+        curve.append(running / float(total) if total else 1.0)
+    return curve
+
+
+def match_histogram(rgba, width, height, mask, reference, ref_mask):
+    """Give a sheet the tone distribution the other half of the face shows.
+
+    Two sheets, two gradings, and the grading is a CURVE, not a gain: on this
+    head the halves were a few levels apart at the cheek and nineteen at the
+    forehead, which is why matching their medians left a visible line - the
+    middle came out level and the ends did not. A curve is what a histogram
+    equalises: each value is moved to the value that the other sheet has the
+    same share of texels at or below, so the two halves end up with the same
+    distribution of tones however they were graded.
+
+    Measured over the texels each half actually shows, not over the whole
+    sheets, because a sheet is mostly padding. Returns (pixels, true) or the
+    sheet unchanged when there is nothing to measure.
+    """
+    if mask is None or ref_mask is None:
+        return bytearray(rgba), False
+    tables = []
+    for channel in range(3):
+        here = tone_curve(rgba, mask, channel)
+        there = tone_curve(reference, ref_mask, channel)
+        table = []
+        for value in range(256):
+            want = here[value]
+            best, best_gap = 0, 9.0
+            for other in range(256):
+                gap = abs(there[other] - want)
+                if gap < best_gap:
+                    best_gap, best = gap, other
+            table.append(best)
+        tables.append(table)
+    pixels = bytearray(rgba)
+    for at in range(0, len(pixels), 4):
+        for channel in range(3):
+            pixels[at + channel] = tables[channel][pixels[at + channel]]
+    return pixels, True
+
+
+def bleed_padding(rgba, width, height, passes=6, tolerance=6, neutral=18):
+    """Carry painted colour out into a sheet's padding, a few texels deep.
+
+    A sheet is an island of paint on padding, and a mesh's UVs run right up to
+    the island's edge - so the outermost ring of a face's texels is one texel of
+    skin and then padding. Two halves of one head therefore draw a pale line
+    down the join whatever colour their paint is, because each half's edge line
+    lands on padding, not paint. Measured on this head, that line was the last
+    thing left of "two colours" once the two sheets had been brought to one
+    tone.
+
+    So the paint is grown outwards into the padding, breadth first and only into
+    neutral texels, a few texels deep. Nothing is invented: every texel it
+    writes is the colour of the paint beside it. Returns (pixels, bled).
+    """
+    pixels = bytearray(rgba)
+    total = width * height
+    blank = bytearray(total)
+    queue = deque()
+    for at in range(total):
+        base = at * 4
+        red, green, blue = pixels[base], pixels[base + 1], pixels[base + 2]
+        flat = max(red, green, blue) - min(red, green, blue) <= neutral
+        grey = (abs(red - UNPAINTED) <= tolerance
+                and abs(green - UNPAINTED) <= tolerance
+                and abs(blue - UNPAINTED) <= tolerance)
+        if flat or grey:
+            blank[at] = 1
+        else:
+            queue.append((at, 0))
+    bled = 0
+    head = 0
+    while head < len(queue):
+        at, depth = queue[head]
+        head += 1
+        if depth >= passes:
+            continue
+        x, y = at % width, at // width
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if nx < 0 or ny < 0 or nx >= width or ny >= height:
+                continue
+            other = ny * width + nx
+            if not blank[other]:
+                continue
+            blank[other] = 0
+            pixels[other * 4:other * 4 + 4] = pixels[at * 4:at * 4 + 4]
+            bled += 1
+            queue.append((other, depth + 1))
+    return pixels, bled
+
+
 def uv_coverage(width, height, uv_triangles):
     """The texels a set of triangles reads, as one byte a texel.
 

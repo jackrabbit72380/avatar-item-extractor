@@ -571,6 +571,17 @@ def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
                 "%s, the hair colour the brows are drawn in"
                 % (name, dashed, hair_tone))
             written = face_eyes.png_bytes(rgba, width, height)
+    # The last of the two-tone: each half's UVs run to its island's edge, so the
+    # join is one texel of skin and then padding - a pale line down the nose
+    # however well the two sheets are matched. The paint is grown into the
+    # padding so the edge a mesh samples is paint.
+    if "face" in name.lower():
+        rgba, bled = glb_model.bleed_padding(rgba, width, height)
+        if bled:
+            log("port: %s grew its paint %d texels out into the sheet's padding, "
+                "so the edge of the head samples paint instead of padding"
+                % (name, bled))
+            written = face_eyes.png_bytes(rgba, width, height)
     with open(picture, "wb") as handle:
         handle.write(written)
     if not (glb_model.power_of_two(width) and glb_model.power_of_two(height)):
@@ -680,6 +691,7 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
     # sheet is painted in, and every sheet is brought to it.
     tone = None
     tone_masks = {}
+    decoded = {}
     sheets = [mesh for mesh in kept
               if "face" in mesh["material"].lower() and mesh.get("image") is not None]
     if len(sheets) > 1:
@@ -695,6 +707,7 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
             counted.add(mesh["image"])
             pixels, width, height = glb_model.decode_png(
                 model["images"][mesh["image"]]["data"])
+            decoded[mesh["image"]] = (pixels, width, height)
             # Measured over the texels THIS half's triangles read. A sheet is
             # much bigger than the part of it a half shows, and the two sheets'
             # whole-sheet medians can agree while the skin each half draws with
@@ -711,6 +724,33 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
             log("port: the face is painted on %d sheets at different brightness "
                 "(%s), so each is brought to %s - one face, one colour"
                 % (len(measured), ", ".join(str(each) for each in measured), tone))
+    # The two halves of the head are graded differently, and a grading is a
+    # curve rather than a gain, so one tone a sheet is not enough: measured on
+    # this head the halves were a few levels apart at the cheek and nineteen at
+    # the forehead - level in the middle, a line at the ends. The second half's
+    # tones are therefore matched to the first half's as a DISTRIBUTION, over
+    # the texels each half actually shows. That removes the curve itself and
+    # leaves both halves' own painting where it is.
+    halves = [mesh for mesh in sheets if mesh["image"] in decoded]
+    if len(halves) > 1:
+        ref = halves[0]
+        ref_pixels, ref_w, ref_h = decoded[ref["image"]]
+        for other in halves[1:]:
+            if other["image"] == ref["image"]:
+                continue
+            pixels, width, height = decoded[other["image"]]
+            matched, done = glb_model.match_histogram(
+                pixels, width, height, tone_masks.get(other["image"]),
+                ref_pixels, tone_masks.get(ref["image"]))
+            if not done:
+                continue
+            model["images"][other["image"]]["data"] = face_eyes.png_bytes(
+                matched, width, height)
+            decoded[other["image"]] = (matched, width, height)
+            log("port: the second half of the head is graded differently from "
+                "the first - a curve, not a gain - so its tones are matched to "
+                "the first as a distribution over the texels each half shows, "
+                "and the join is one tone from brow to chin")
     # The hair's colour, read off the face before anything is written: see the
     # note in port_material, where the grey hair sheet is painted with it.
     hair_tone = None
