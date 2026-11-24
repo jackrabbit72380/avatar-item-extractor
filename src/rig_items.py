@@ -452,9 +452,9 @@ def port_material(mesh, stem, out, model, eyes_forward=False):
     written = image["data"]
     # A painted face keeps its gaze wherever the artist left it, and these faces
     # are drawn with the pupil at one end of the eye: under Halo's helmet the
-    # avatar then looks off to one side in every frame. --eyes-forward keeps the
-    # painted lid and draws the pupil again in the middle of it, which is opt-in
-    # because it changes the art.
+    # avatar then looks off to one side in every frame. --eyes-forward draws the
+    # painted eye again, finer: one smooth lash at the weight it was painted with
+    # and one pupil in the middle of it. That is opt-in because it changes art.
     if eyes_forward and "face" in name.lower():
         rgba, notes = face_eyes.centre_pupils(rgba, width, height, force=True)
         for line in notes:

@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Pin the face fix: the painted lid is kept, the old pupil is moved to the middle.
+"""Pin the face fix: one pupil in the middle, a lash that keeps its shape.
 
 The faces an avatar exports carry their gaze in the paint. The Marine face this
-was written against has each eye drawn as one stroke - a thin tail at the outer
-corner swelling into the pupil at the inner one - so the avatar looks down his
-nose in every frame Halo renders. The head's UVs then mirror one eye while the
-drawn pair is itself mirrored, so the two eyes do not even match each other.
+was written against has each eye drawn as one stroke - a thin tail at one corner
+swelling into the pupil at the other - so the avatar looks down his nose in
+every frame Halo renders. The head's UVs then run left to right on both sides
+of the nose, so the pair has to be mirrored to match.
 
-So one eye is treated as the pattern and copied:
+So one eye is measured and drawn again:
 
-  * the lid is kept texel for texel, exactly as painted,
-  * the swelling under it is erased to the cheek's own tone and a pupil is
-    drawn in the middle of the lid, hanging from it,
-  * the finished eye is stamped into both drawn eyes, mirrored into the second,
-    so the pair matches across the nose.
+  * the lash follows a curve fitted through the painted stroke's top edge, at
+    the weight the stroke was painted with,
+  * one pupil is an ellipse hung under the middle of that lash,
+  * both are sampled many times per texel, so their edges are smooth,
+  * the finished eye is stamped into both drawn eyes, mirrored into the second.
 
 A synthetic face is painted here, so the test runs without Blender and without
 an asset on the machine:
 
-  * a pupil drawn at one end ends up centred, alone, and under the lid,
-  * the lid's own rows are untouched, byte for byte,
+  * a pupil drawn at one end ends up alone, centred, and under the lash,
+  * the lash keeps the painted top edge and the painted weight,
   * the second drawn eye ends up the exact mirror of the first,
   * a face already level, or with no eyes at all, is left byte for byte alone,
   * the PNG written out reads back as the same pixels the fix produced.
@@ -44,9 +44,9 @@ LEFT_EYE = (40, 110)
 RIGHT_EYE = (146, 216)
 TOP = 96
 BOTTOM = 130
-LID = 3          # rows of painted lid in every column
-RISE = 6         # how far the lid climbs from one corner to the other
-SWELL = 9        # rows the pupil was painted under the lid
+LID = 5          # rows of painted lash in every column
+RISE = 5         # how far the lash climbs from one corner to the other
+SWELL = 9        # rows the pupil was painted under the lash
 
 
 def canvas(colour=SKIN):
@@ -62,7 +62,7 @@ def paint(pixels, x, y, colour=INK):
 
 
 def paint_eye(pixels, left, right, swell):
-    """One eye: a lid across the span, swelling into a pupil at `swell`.
+    """One eye: a lash across the span, swelling into a pupil at `swell`.
 
     `swell` is 0.0 for a pupil at the left corner and 1.0 for the right, which
     is how these faces are drawn - the pupil sits at one end of the stroke, not
@@ -89,21 +89,32 @@ def texels(pixels, left, right, first=TOP, last=BOTTOM):
             for y in range(first, last + 1) if ink(pixels, x, y)}
 
 
-def lid_top(pixels, left, right):
-    """The row each column's painted lid starts on."""
-    tops = {}
+def top_row(pixels, left, right):
+    """The row each column's ink starts on, which is the lash's top edge."""
+    rows = {}
     for x in range(left, right + 1):
         for y in range(TOP - 8, BOTTOM + 8):
             if ink(pixels, x, y):
-                tops[x] = y
+                rows[x] = y
                 break
-    return tops
+    return rows
 
 
-def below_lid(pixels, left, right):
-    tops = lid_top(pixels, left, right)
+def pupil(pixels, left, right):
+    """Everything painted under the lash: the pupil, if the fix did its job."""
+    rows = top_row(pixels, left, right)
     return {(x, y) for x, y in texels(pixels, left, right)
-            if y >= tops.get(x, TOP) + LID}
+            if y > rows.get(x, TOP) + LID + 1}
+
+
+def touching(pixels, points, left, right):
+    """The columns of `points` whose ink starts right under that column's lash."""
+    rows = top_row(pixels, left, right)
+    columns = {}
+    for x, y in points:
+        columns.setdefault(x, []).append(y)
+    return [x for x, ys in columns.items()
+            if min(ys) <= rows.get(x, TOP) + LID + 2]
 
 
 def blob_count(points):
@@ -131,14 +142,6 @@ def centre(points, left, right):
         / float(right - left)
 
 
-def lid_bytes(pixels, left, right):
-    """The painted lid of each column, row for row, as the bytes it was drawn with."""
-    tops = lid_top(pixels, left, right)
-    return [bytes(pixels[((tops[x] + row) * WIDTH + x) * 4:
-                        ((tops[x] + row) * WIDTH + x) * 4 + 4])
-            for x in range(left, right + 1) for row in range(LID)]
-
-
 def rectangle(pixels, left, right):
     """One eye's rectangle, as rows of texels, for comparing two of them."""
     return [[bytes(pixels[(y * WIDTH + x) * 4:(y * WIDTH + x) * 4 + 4])
@@ -158,52 +161,51 @@ def main():
             failures.append(name)
 
     # The case that started this: both pupils drawn at one end of their stroke,
-    # so that eye is drawn twice rather than mirrored.
+    # each toward its own corner.
     face = canvas()
     paint_eye(face, LEFT_EYE[0], LEFT_EYE[1], 0.9)
     paint_eye(face, RIGHT_EYE[0], RIGHT_EYE[1], 0.1)
-    before = centre(below_lid(face, LEFT_EYE[0], LEFT_EYE[1]),
+    before = centre(pupil(face, LEFT_EYE[0], LEFT_EYE[1]),
                     LEFT_EYE[0], LEFT_EYE[1])
     fixed, notes = face_eyes.centre_pupils(face, WIDTH, HEIGHT, force=True)
     report("drawn at one end: the pupil was off centre",
            before is not None and abs(before - 0.5) > 0.1, " (%.2f)" % (before or 0))
 
-    # One pupil, in the middle, hanging from the lid.
-    pupil = below_lid(fixed, LEFT_EYE[0], LEFT_EYE[1])
-    where = centre(pupil, LEFT_EYE[0], LEFT_EYE[1])
-    report("one pupil is drawn, not two", blob_count(pupil) == 1,
-           " (%d blob(s), %d texels)" % (blob_count(pupil), len(pupil)))
+    # One pupil, in the middle, hanging from the lash.
+    drawn = pupil(fixed, LEFT_EYE[0], LEFT_EYE[1])
+    where = centre(drawn, LEFT_EYE[0], LEFT_EYE[1])
+    hanging = touching(fixed, drawn, LEFT_EYE[0], LEFT_EYE[1])
+    report("one pupil is drawn, not two", blob_count(drawn) == 1,
+           " (%d blob(s), %d texels)" % (blob_count(drawn), len(drawn)))
     report("it sits on the middle of the eye",
            where is not None and abs(where - 0.5) <= 0.08, " (%.2f)" % (where or 0))
-    tops = lid_top(fixed, LEFT_EYE[0], LEFT_EYE[1])
-    by_column = {}
-    for x, y in pupil:
-        by_column.setdefault(x, []).append(y)
-    report("it hangs from the lid",
-           any(min(rows) <= tops.get(x, TOP) + LID for x, rows in by_column.items()),
-           " (%d of its %d columns touch the lid)"
-           % (sum(1 for x, rows in by_column.items()
-                  if min(rows) <= tops.get(x, TOP) + LID), len(by_column)))
+    report("it hangs from the lash", bool(hanging),
+           " (%d of its columns touch the lash)" % len(hanging))
     report("it is no wider than the eye it is in",
-           bool(pupil)
-           and max(x for x, _ in pupil) - min(x for x, _ in pupil)
-           <= 0.45 * (LEFT_EYE[1] - LEFT_EYE[0]),
+           bool(drawn)
+           and max(x for x, _ in drawn) - min(x for x, _ in drawn)
+           <= 0.5 * (LEFT_EYE[1] - LEFT_EYE[0]),
            " (%d of %d columns)"
-           % (max(x for x, _ in pupil) - min(x for x, _ in pupil),
+           % (max(x for x, _ in drawn) - min(x for x, _ in drawn),
               LEFT_EYE[1] - LEFT_EYE[0]))
     report("both eyes reported", len(notes) == 2, " (%d notes)" % len(notes))
 
-    # The lid is not redrawn: its rows are the ones that were painted, and none
-    # of those bytes moved.
-    report("the lid is kept exactly as painted",
-           lid_bytes(fixed, LEFT_EYE[0], LEFT_EYE[1])
-           == lid_bytes(face, LEFT_EYE[0], LEFT_EYE[1]),
-           " (%d columns, %d rows)" % (LEFT_EYE[1] - LEFT_EYE[0] + 1, LID))
-    report("the lid keeps its painted top edge",
-           lid_top(fixed, LEFT_EYE[0], LEFT_EYE[1])
-           == lid_top(face, LEFT_EYE[0], LEFT_EYE[1]),
-           " (%d columns on the row they were drawn on)"
-           % len(lid_top(face, LEFT_EYE[0], LEFT_EYE[1])))
+    # The lash is redrawn from the painting, not invented: its top edge lands on
+    # the painted rows, and it keeps the weight the stroke was painted with.
+    painted_top = top_row(face, LEFT_EYE[0], LEFT_EYE[1])
+    fixed_top = top_row(fixed, LEFT_EYE[0], LEFT_EYE[1])
+    on_row = sum(1 for x in painted_top
+                 if abs(painted_top[x] - fixed_top.get(x, -99)) <= 1)
+    report("the lash keeps the painted top edge",
+           on_row >= 0.9 * len(painted_top),
+           " (%d of %d columns within a row)" % (on_row, len(painted_top)))
+    weight = sorted(fixed_top[x] for x in fixed_top)
+    spread = sorted(max(y for y in range(TOP - 8, BOTTOM + 8) if ink(fixed, x, y))
+                    - fixed_top[x] + 1 for x in fixed_top if x < LEFT_EYE[0] + 8)
+    report("the lash keeps the painted weight",
+           spread and abs(sorted(spread)[len(spread) // 2] - LID) <= 1,
+           " (%s rows at the ends, painted %d)"
+           % (sorted(spread)[len(spread) // 2] if spread else "?", LID))
 
     # A pair has to match across the nose. The head's UVs run left to right on
     # both sides of the face, so the second eye is the first one mirrored - a

@@ -732,27 +732,31 @@ comes out with both lash tails on the same side of the nose and both lids on
 the same slant - a pair that does not match.
 
 The pupil is the heavy end of that same stroke, so it cannot simply be trimmed
-off: a lid rebuilt around a removed pupil is a hairline where a bold, sharp
-stroke was painted, which is exactly what the first attempts produced.
-`--eyes-forward` (or an `eyes_forward.txt` beside the `.bat`) keeps the lid and
-moves the gaze instead:
+off: a lid left behind by a removed pupil is a hairline where a bold, sharp
+stroke was painted. The eye is drawn at 512 texels too - about seventy by
+twenty of them - so cutting it about a texel at a time leaves a staircase,
+which is what the earlier attempts looked like on the head.
+`--eyes-forward` (or an `eyes_forward.txt` beside the `.bat`) therefore measures
+the drawing and draws it again, finer:
 
-  * the lid's underside is the line the stroke follows where it is not swollen -
-    fitted through the thin columns and run on through the swollen ones,
-  * every texel above that line is kept **exactly as painted**, so the lid keeps
-    its weight, its sharp edge and its shape; the lid is never redrawn,
-  * the ink below it is erased to the cheek's own tone, and a pupil is drawn on
-    the middle of the lid, hanging from it, in the eye's own ink,
-  * that finished eye is stamped into both drawn eyes, **mirrored into the
-    second**. The head's UVs were measured on the file: `du/dx` is positive on
-    both sides of the nose, so the UVs do not mirror, and two straight copies
-    would put both lash tails toward the same side and both lids on the same
-    slant. Mirrored, the pair matches across the nose.
+  * the lash's centre line is a curve fitted through the stroke's painted top
+    edge, so it keeps the shape it was drawn with and loses the steps,
+  * its weight is the weight the stroke was painted with where it was not
+    swollen, so the bold line stays bold, and it tapers to a point at both
+    corners,
+  * one pupil is an ellipse the width of the middle of the eye, hung from the
+    lash and rounded underneath, in the eye's own ink,
+  * both are sampled six times per texel and averaged down, which is what makes
+    their edges smooth instead of stepped, and the finished eye is stamped into
+    both drawn eyes, **mirrored into the second**. The head's UVs were measured
+    on the file: `du/dx` is positive on both sides of the nose, so the UVs do
+    not mirror, and two straight copies would put both lash tails on the same
+    side of the nose. Mirrored, the pair matches across the nose.
 
 It is off unless asked for, because it edits the avatar's own art rather than
-the item's. Verified on the Marine face: 0 of the lid's texels change in any of
-the 72 columns, the new pupil is one blob of 198 texels centred at 0.501 of the
-eye, and the second eye is the exact mirror of the first afterwards.
+the item's. Verified on the Marine face: one pupil, centred at 0.50 of the eye;
+the lash's top edge on the painted row for every column it could be compared
+on; the second eye the exact mirror of the first.
 
 ```
 python rig_items.py --items extracted --out extracted \
