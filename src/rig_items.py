@@ -4452,11 +4452,25 @@ def main():
                             avatar.update(polygon.vertices)
                     placed = keep_shape_scale(merged, avatar, fit)
                     if placed is None:
-                        log("%s: the avatar under this item is not a body - it "
-                            "measures under 0.60 m tall - so nothing was scaled. "
-                            "Check the .glb: a mesh with a handful of triangles "
-                            "is a broken export, and scaling it would make a "
-                            "giant" % merged.name)
+                        # No body under the item. That is the normal shape of a
+                        # 360sona export for a full suit: the avatar is WEARING
+                        # the armour, so the armour is the body and the file
+                        # carries only the head above it. The head was authored
+                        # on the same body the item was, so the item is the body
+                        # reference and the whole model takes the item's factor:
+                        # one uniform scale, head and item together, exactly as
+                        # the file drew them relative to each other.
+                        for vertex in merged.data.vertices:
+                            vertex.co = (vertex.co.x * fit, vertex.co.y * fit,
+                                         vertex.co.z * fit)
+                        merged.data.update()
+                        log("%s: the .glb carries no body under this item - the "
+                            "avatar is wearing the suit, so the armour IS the "
+                            "body and only the head sits above it. The whole "
+                            "model is scaled x%.3f (the biped against the %.2f m "
+                            "body items are authored for), keeping the head where "
+                            "the file put it on the collar"
+                            % (merged.name, fit, AUTHORED_BODY_HEIGHT))
                     if placed is not None:
                         # Each part's own height, not the model's: reporting the
                         # merged height as the item's is what made the log read

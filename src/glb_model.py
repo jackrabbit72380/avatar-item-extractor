@@ -205,6 +205,7 @@ def read(path):
             uvs = (_accessor(document, binary, primitive["attributes"]["TEXCOORD_0"])
                    if "TEXCOORD_0" in primitive["attributes"] else [])
             name, image = material_of(primitive)
+            name, image = material_of(primitive)
             if len(positions) >= 40 and len(triangles) * 2 < len(positions):
                 # A body of 1137 vertices carrying 34 triangles is how a broken
                 # export arrives; carried through silently it becomes a body a
