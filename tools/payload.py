@@ -86,16 +86,23 @@ def unpack(bat, out):
 
 
 def collect(src):
-    """Every .py under src, keyed by its path relative to src."""
+    """Every .py and .bat under src, keyed by its path relative to src.
+
+    The .bat is the script that drives tool.exe after extraction, and it has to
+    travel with the code: rig_items.py looks for build-hek.bat beside itself and
+    writes it beside the builds, so a payload carrying only .py files left every
+    player to go and find one. It is stored as the text it is, exactly as read.
+    """
     modules = {}
     for root, _dirs, files in os.walk(src):
         for name in sorted(files):
-            if not name.endswith(".py"):
+            if not name.endswith((".py", ".bat")):
                 continue
             path = os.path.join(root, name)
             key = os.path.relpath(path, src).replace(os.sep, "/")
             with open(path, encoding="utf-8", newline="") as handle:
-                modules[key] = handle.read().replace("\r\n", "\n")
+                text = handle.read()
+            modules[key] = text if name.endswith(".bat") else text.replace("\r\n", "\n")
     if not modules:
         raise SystemExit("no .py files under %s" % src)
     return modules

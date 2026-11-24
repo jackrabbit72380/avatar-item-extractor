@@ -206,6 +206,18 @@ def main():
                 with open(path, "w", encoding="utf-8", newline="") as handle:
                     handle.write(value)
 
+        # The script that drives tool.exe is part of what a player gets:
+        # rig_items.py writes build-hek.bat from beside itself into the output,
+        # so a payload carrying only .py files shipped nothing to run and left
+        # people with an older copy. That copy asked where tool.exe was even
+        # when the kit sat in its own folder, so both halves are checked here:
+        # it travels, and it looks beside itself before it asks.
+        shipped_bat = entries.get("build-hek.bat")
+        if not isinstance(shipped_bat, str) or "%OUT%tool.exe" not in shipped_bat:
+            print("FAIL: the payload does not carry the build-hek.bat that finds "
+                  "a kit beside itself")
+            return 1
+
         sys.path.insert(0, work)
         import avatar_mesh
         import extract_items

@@ -9,19 +9,21 @@ rem    tool bitmaps "<build>\bitmaps"    .tif -> .bitmap tags
 rem    tool model   "<build>"            .jms -> .gbxmodel
 rem
 rem  Put this file in the item's output folder - beside "extracted for hek
-rem  users" - and run it. It asks once where the editing kit is and remembers
-rem  the answer in hek_path.txt. Everything it does is logged to build-hek.log,
-rem  which is what to paste if something fails.
+rem  users" - and run it. A kit that is already unpacked in the same place is
+rem  found on its own: tool.exe beside this file, one folder up or one folder
+rem  down is used without asking anything. hek_path.txt is only the fallback for
+rem  a kit somewhere else. Everything it does is logged to build-hek.log, which
+rem  is what to paste if something fails.
 rem
-rem  Four data folders are built per channel order:
-rem    <item> sp          the item's own colours, plain base map (the faithful one)
-rem    <item> sp-decals   the item's own colours, decal blended in
-rem    <item> mp          the team-colour mask bound, plain base map
-rem    <item> mp-decals   team colour and decal
+rem  One data folder is built per channel order: data\<item>\ - the item's own
+rem  colours with the team-colour mask bound and any decal blended into the base
+rem  map. Only the multiplayer version uses team colour, so there is no sp/mp
+rem  pair to choose between: what is built is the version that takes a colour.
 rem
-rem  For an item whose tint slot is blank and which carries no colour table
-rem  (the Marine armour is one), the mp mask is black: nothing tints. Author one
-rem  with extract_items.py --tint full|derived|<mask.png> and run it again.
+rem  The team-colour mask is the alpha of <item> multipurpose: white where the
+rem  armour takes red or blue, black where it keeps the colour it was painted.
+rem  For an item whose tint slot is blank and which carries no colour table (the
+rem  Marine armour is one) that mask is worked out from the base map.
 rem
 rem  The model needs a shader tag named after each .jms material, and tool.exe
 rem  will ask for one if it cannot find it. Make that shader once (README.md,
@@ -35,7 +37,15 @@ set "ORDER=%~1"
 if not defined ORDER set "ORDER=pc"
 set "OUT=%~dp0"
 set "LOG=%OUT%build-hek.log"
+rem  The kit is usually right here - H1-EK unpacked beside the builds, or this
+rem  file dropped into H1-EK - so look beside this file, one folder up and one
+rem  folder down before asking where it is. Typing a path that is already
+rem  sitting next to the script is not a step anybody should have to take.
 set "HEK="
+if exist "%OUT%tool.exe" set "HEK=%OUT:~0,-1%"
+if not defined HEK if exist "%OUT%..\tool.exe" set "HEK=%OUT%.."
+if not defined HEK for /d %%D in ("%OUT%*") do if not defined HEK if exist "%%D\tool.exe" set "HEK=%%D"
+if defined HEK goto run
 if exist "%OUT%hek_path.txt" set /p HEK=<"%OUT%hek_path.txt"
 if not defined HEK goto ask
 if not exist "%HEK%\tool.exe" goto ask
@@ -43,6 +53,7 @@ goto run
 
 :ask
 echo.
+echo   No tool.exe was found beside this file, one folder up or one folder down.
 echo   Where is your Halo editing kit? That is the folder holding tool.exe,
 echo   data\ and tags\, for example:
 echo     C:\Program Files ^(x86^)\Steam\steamapps\common\Halo The Master Chief Collection\halo1\H1-EK
@@ -63,6 +74,7 @@ if not exist "%OUT%extracted for hek users\%ORDER%\data" (
   exit /b 1
 )
 echo Build started %DATE% %TIME% > "%LOG%"
+echo   kit: "%HEK%"
 echo kit: "%HEK%" >> "%LOG%"
 echo order: %ORDER% >> "%LOG%"
 rem A tool.exe verb takes a path inside the kit's own data\ folder, so each

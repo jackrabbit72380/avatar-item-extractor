@@ -9,9 +9,11 @@ rem    tool bitmaps "<build>\bitmaps"    .tif -> .bitmap tags
 rem    tool model   "<build>"            .jms -> .gbxmodel
 rem
 rem  Put this file in the item's output folder - beside "extracted for hek
-rem  users" - and run it. It asks once where the editing kit is and remembers
-rem  the answer in hek_path.txt. Everything it does is logged to build-hek.log,
-rem  which is what to paste if something fails.
+rem  users" - and run it. A kit that is already unpacked in the same place is
+rem  found on its own: tool.exe beside this file, one folder up or one folder
+rem  down is used without asking anything. hek_path.txt is only the fallback for
+rem  a kit somewhere else. Everything it does is logged to build-hek.log, which
+rem  is what to paste if something fails.
 rem
 rem  One data folder is built per channel order: data\<item>\ - the item's own
 rem  colours with the team-colour mask bound and any decal blended into the base
@@ -35,7 +37,15 @@ set "ORDER=%~1"
 if not defined ORDER set "ORDER=pc"
 set "OUT=%~dp0"
 set "LOG=%OUT%build-hek.log"
+rem  The kit is usually right here - H1-EK unpacked beside the builds, or this
+rem  file dropped into H1-EK - so look beside this file, one folder up and one
+rem  folder down before asking where it is. Typing a path that is already
+rem  sitting next to the script is not a step anybody should have to take.
 set "HEK="
+if exist "%OUT%tool.exe" set "HEK=%OUT:~0,-1%"
+if not defined HEK if exist "%OUT%..\tool.exe" set "HEK=%OUT%.."
+if not defined HEK for /d %%D in ("%OUT%*") do if not defined HEK if exist "%%D\tool.exe" set "HEK=%%D"
+if defined HEK goto run
 if exist "%OUT%hek_path.txt" set /p HEK=<"%OUT%hek_path.txt"
 if not defined HEK goto ask
 if not exist "%HEK%\tool.exe" goto ask
@@ -43,6 +53,7 @@ goto run
 
 :ask
 echo.
+echo   No tool.exe was found beside this file, one folder up or one folder down.
 echo   Where is your Halo editing kit? That is the folder holding tool.exe,
 echo   data\ and tags\, for example:
 echo     C:\Program Files ^(x86^)\Steam\steamapps\common\Halo The Master Chief Collection\halo1\H1-EK
@@ -63,6 +74,7 @@ if not exist "%OUT%extracted for hek users\%ORDER%\data" (
   exit /b 1
 )
 echo Build started %DATE% %TIME% > "%LOG%"
+echo   kit: "%HEK%"
 echo kit: "%HEK%" >> "%LOG%"
 echo order: %ORDER% >> "%LOG%"
 rem A tool.exe verb takes a path inside the kit's own data\ folder, so each
