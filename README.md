@@ -817,11 +817,15 @@ python rig_items.py --items extracted --out extracted \
     --port MyAvatar.glb --keep-shape
 ```
 
-On the same item that gives 1.424 x 1.509 x 0.417 m - the size the file
-authored, to the millimetre - where the fit gives a 2.47 m body with the torso
-stretched. Normalising it to the biped's 1.91 m instead, which this did until
-v70, made a 1.85 m avatar a 1.45 m one: every proportion intact, but plainly not
-the avatar's own size.
+The avatar keeps its own metres: a 1.85 m avatar stays 1.85 m. Items are
+authored against a 1.40 m avatar, so an avatar of H metres wants the item at
+H / 1.40 - on a 1.85 m avatar this item comes out 1.881 x 1.994 x 0.551 m, still
+the size it was drawn to relative to the body it covers.
+
+Two simpler rules were tried and both are wrong. Normalising the whole model to
+the biped's 1.91 m, which this did until v70, made a 1.85 m avatar a 1.45 m one.
+Leaving both at their authored size, which v70 did, put a 1.51 m armour on a
+1.85 m body - armour that is too small for the avatar wearing it.
 
 A `keep_shape.txt` beside the `.bat` asks for it on a double-click, the way
 `tint_mask.png` asks for a team-colour mask.

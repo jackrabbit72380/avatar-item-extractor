@@ -84,8 +84,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v70"
-BUILD = "2026-11-24 avatar-keeps-its-own-size"
+VERSION = "v71"
+BUILD = "2026-11-24 item-grows-to-the-avatar"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -4365,12 +4365,35 @@ def main():
                 heights = [vertex.co.y for vertex in merged.data.vertices]
                 authored = (max(heights) - min(heights)) if heights else 0.0
                 if ported_materials is not None:
-                    # A metre is a metre: an avatar beside the item is carried
-                    # through at 1:1, so it comes out the size its own file
-                    # authored. Normalising the model to the biped instead -
-                    # which this did until v70 - turned a 1.85 m avatar into a
-                    # 1.45 m one: every proportion intact, but not the avatar,
-                    # and a body that has been shrunk reads as squashed.
+                    # The avatar keeps its own metres - a metre is a metre, so a
+                    # 1.85 m avatar stays 1.85 m - and the ITEM is what grows to
+                    # it. Items are authored against a 1.40 m avatar, so an
+                    # avatar of H metres wants the item at H / 1.40: the two keep
+                    # the relationship their files authored, and neither is
+                    # squashed. Shrinking the avatar to the biped instead (which
+                    # this did until v70) made a 1.85 m avatar a 1.45 m one;
+                    # leaving them both at 1:1 (v70) left a 1.51 m armour on a
+                    # 1.85 m body, which is the armour-too-small that follows.
+                    ported_slots = {index for index, slot in enumerate(merged.material_slots)
+                                    if slot.material in ported_materials}
+                    avatar = set()
+                    for polygon in merged.data.polygons:
+                        if polygon.material_index in ported_slots:
+                            avatar.update(polygon.vertices)
+                    heights = [merged.data.vertices[index].co.y for index in avatar]
+                    avatar_height = (max(heights) - min(heights)) if heights else 0.0
+                    if avatar_height > 0 and len(avatar) < len(merged.data.vertices):
+                        grow = avatar_height / AUTHORED_BODY_HEIGHT
+                        for index, vertex in enumerate(merged.data.vertices):
+                            if index in avatar:
+                                continue
+                            vertex.co = (vertex.co.x * grow, vertex.co.y * grow,
+                                         vertex.co.z * grow)
+                        merged.data.update()
+                        log("%s grown to the avatar: x%.3f, its %.3f m on to "
+                            "a %.3f m avatar (items are authored for %.2f m)"
+                            % (merged.name, grow, authored, avatar_height,
+                               AUTHORED_BODY_HEIGHT))
                     scale = 1.0
                     log("%s kept at the size the avatar was authored: %.3f m "
                         "tall, x1.000" % (merged.name, authored))
