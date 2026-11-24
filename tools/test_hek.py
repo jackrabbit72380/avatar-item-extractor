@@ -188,10 +188,12 @@ def main():
         write(os.path.join(base, "bitmaps", "%s multipurpose.tif" % stem),
               "team colour %s" % order)
         write(os.path.join(base, "bitmaps", "%s change colour.tif" % stem), "change")
-        # Extraction hands the kit one base map, its pixels already carrying the
-        # decal, so there is no second file to copy over it here.
+        # Both base maps extraction writes: the item's own, and the copy with
+        # its decal blended in. Neither is copied over the other here.
         write(os.path.join(base, "bitmaps", "%s base map.tif" % stem),
               "base %s" % order)
+        write(os.path.join(base, "bitmaps", "%s base map + decal.tif" % stem),
+              "decal base %s" % order)
         # A later test wrote a model into models\ to check mirror_jms; the
         # build starts from what extraction leaves, which is no model there.
         for stale in ("models", os.path.join("fp", "models")):
@@ -241,15 +243,20 @@ def main():
         check(os.path.exists(change),
               "%s has no change-colour map, so nothing could be team coloured"
               % order)
-        # The base map is the one extraction wrote, decal and all: hek_builds
-        # copies nothing over it, so the HEK folder and the Blender folder hold
-        # the same texels under the same name.
-        shipped = os.path.join(target, "bitmaps", "%s base map.tif" % stem)
-        wanted_base = "base %s" % order
-        check(os.path.exists(shipped) and read(shipped) == wanted_base,
-              "%s's base map is %r, expected %r"
-              % (order, read(shipped) if os.path.exists(shipped) else None,
-                 wanted_base))
+        # Both maps reach the bitmaps folder, and the plain one keeps its own
+        # pixels: the item's own map is never overwritten by the blend.
+        for name, wanted_base in (("%s base map.tif" % stem, "base %s" % order),
+                                  ("%s base map + decal.tif" % stem,
+                                   "decal base %s" % order)):
+            shipped = os.path.join(target, "bitmaps", name)
+            check(os.path.exists(shipped) and read(shipped) == wanted_base,
+                  "%s's %s is %r, expected %r"
+                  % (order, name,
+                     read(shipped) if os.path.exists(shipped) else None,
+                     wanted_base))
+            arms_map = os.path.join(target, "fp", "bitmaps", name)
+            check(os.path.exists(arms_map) and read(arms_map) == wanted_base,
+                  "%s's arms do not carry %s" % (order, name))
         model = os.path.join(target, "models", "%s.jms" % stem)
         check(os.path.exists(model), "%s has no model" % order)
         present = sorted(name for name in os.listdir(os.path.join(target, "models"))
