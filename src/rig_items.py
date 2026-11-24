@@ -433,6 +433,17 @@ def item_stem(record):
         os.path.basename(record.get("obj") or record["id"]))[0]
 
 
+def uv_tris(mesh):
+    """A mesh's triangles as (u, v) triples, skipping any a short uv list lacks."""
+    uvs = mesh.get("uvs") or []
+    out = []
+    for triangle in mesh["triangles"]:
+        if any(index >= len(uvs) for index in triangle):
+            continue
+        out.append(tuple(tuple(uvs[index]) for index in triangle))
+    return out
+
+
 def back_uvs(mesh):
     """The UV triangles of a head's rear - the part no face sheet paints.
 
@@ -463,7 +474,7 @@ def back_uvs(mesh):
 
 
 def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
-                  hair_tone=None, scalp_uvs=None):
+                  hair_tone=None, scalp_uvs=None, tone_mask=None):
     """A Blender material for one ported mesh, and the pixels it needs.
 
     The image is written beside the item as `<stem> <material>.png` so the .blend
@@ -506,7 +517,7 @@ def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
     # remove. Measuring the painted sheet first and filling afterwards, from the
     # skin the gain has just matched, leaves 8: the file's own difference.
     if "face" in name.lower() and tone:
-        rgba, gain = glb_model.match_tone(rgba, width, height, tone)
+        rgba, gain = glb_model.match_tone(rgba, width, height, tone, mask=tone_mask)
         if gain:
             log("port: %s painted x%.2f x%.2f x%.2f on to %s, the skin tone "
                 "of the whole face" % ((name,) + gain + (tone,)))
@@ -668,6 +679,7 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
     # dull grey one on the same head - so the target is the average of what each
     # sheet is painted in, and every sheet is brought to it.
     tone = None
+    tone_masks = {}
     sheets = [mesh for mesh in kept
               if "face" in mesh["material"].lower() and mesh.get("image") is not None]
     if len(sheets) > 1:
@@ -683,9 +695,16 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
             counted.add(mesh["image"])
             pixels, width, height = glb_model.decode_png(
                 model["images"][mesh["image"]]["data"])
-            painted = glb_model.skin_tones(pixels, width, height)
+            # Measured over the texels THIS half's triangles read. A sheet is
+            # much bigger than the part of it a half shows, and the two sheets'
+            # whole-sheet medians can agree while the skin each half draws with
+            # does not: that is a face that still reads as two colours after
+            # the tone was "matched".
+            mask = glb_model.uv_coverage(width, height, uv_tris(mesh))
+            painted = glb_model.skin_tones(pixels, width, height, mask)
             if painted:
                 measured.append(painted)
+                tone_masks[mesh["image"]] = mask
         if len(measured) > 1 and len(set(measured)) > 1:
             tone = tuple(sum(each[channel] for each in measured) // len(measured)
                          for channel in range(3))
@@ -749,9 +768,10 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
             scalp = (back_uvs(mesh)
                      if hair_tone and "face" in mesh["material"].lower()
                      else None)
-            material, written = port_material(shot, stem, out, model,
-                                              eyes_forward=eyes_forward, tone=tone,
-                                              hair_tone=hair_tone, scalp_uvs=scalp)
+            material, written = port_material(
+                shot, stem, out, model, eyes_forward=eyes_forward, tone=tone,
+                hair_tone=hair_tone, scalp_uvs=scalp,
+                tone_mask=tone_masks.get(mesh.get("image")))
             made[key] = material
             if written:
                 textures.append(written)

@@ -697,15 +697,49 @@ def paint_uv_patch(rgba, width, height, uv_triangles, colour, pale=236):
     return pixels, painted
 
 
-def skin_tones(rgba, width, height):
+def uv_coverage(width, height, uv_triangles):
+    """The texels a set of triangles reads, as one byte a texel.
+
+    Two halves of one face can be painted on two sheets and each sheet can hold
+    far more than its half - padding, the other side of the head, a smear. The
+    tone that matters is the tone of the texels this half's triangles actually
+    land on, and this says which those are. Triangles are (u, v) in glTF's
+    convention, v up from the bottom of the picture.
+    """
+    mask = bytearray(width * height)
+    for a, b, c in uv_triangles:
+        det = ((b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]))
+        if abs(det) < 1e-12:
+            continue
+        xs = [a[0] * width, b[0] * width, c[0] * width]
+        ys = [a[1] * height, b[1] * height, c[1] * height]
+        x0, x1 = max(0, int(min(xs))), min(width - 1, int(max(xs)) + 1)
+        y0, y1 = max(0, int(min(ys))), min(height - 1, int(max(ys)) + 1)
+        for y in range(y0, y1 + 1):
+            py = (y + 0.5) / height
+            for x in range(x0, x1 + 1):
+                px = (x + 0.5) / width
+                one = ((b[1] - c[1]) * (px - c[0]) + (c[0] - b[0]) * (py - c[1])) / det
+                two = ((c[1] - a[1]) * (px - c[0]) + (a[0] - c[0]) * (py - c[1])) / det
+                if one < 0.0 or two < 0.0 or one + two > 1.0:
+                    continue
+                mask[y * width + x] = 1
+    return mask
+
+
+def skin_tones(rgba, width, height, mask=None):
     """The colour of the skin a sheet is painted in: the median of its skin texels.
 
     Median, not average, so one white highlight or one brown shadow does not
     move it. Texels counted are warm ones (red well above blue) in the mid
-    range, which is skin and not a highlight or a hair edge.
+    range, which is skin and not a highlight or a hair edge. A mask, from
+    uv_coverage, limits the count to the texels some geometry reads: two halves
+    of one face match by what they SHOW, not by what their sheets contain.
     """
     samples = []
     for at in range(0, len(rgba), 4):
+        if mask is not None and not mask[at >> 2]:
+            continue
         red, green, blue = rgba[at], rgba[at + 1], rgba[at + 2]
         if red - blue > 30 and 110 < red < 215:
             samples.append((red, green, blue))
@@ -715,7 +749,8 @@ def skin_tones(rgba, width, height):
     return samples[len(samples) // 2]
 
 
-def match_tone(rgba, width, height, target, limit=0.45, passes=6, close=2):
+def match_tone(rgba, width, height, target, limit=0.45, passes=6, close=2,
+               mask=None):
     """Bring a sheet's skin to a target colour, by one gain across the sheet.
 
     A 360sona export paints the two halves of a face on two sheets, and the two
@@ -740,12 +775,12 @@ def match_tone(rgba, width, height, target, limit=0.45, passes=6, close=2):
     face by it would be worse than the two-tone it was meant to fix.
     """
     total = [1.0, 1.0, 1.0]
-    if skin_tones(rgba, width, height) is None:
+    if skin_tones(rgba, width, height, mask) is None:
         return bytearray(rgba), None
     pixels = bytearray(rgba)
     moved = False
     for _ in range(passes):
-        measured = skin_tones(pixels, width, height)
+        measured = skin_tones(pixels, width, height, mask)
         if measured is None:
             break
         if all(abs(measured[channel] - target[channel]) <= close
