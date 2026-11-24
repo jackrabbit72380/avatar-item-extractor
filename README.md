@@ -712,10 +712,17 @@ The armour is not touched. With and without `--port` its geometry comes out
 identical to the last bit - all 4,876 triangles, 0.000000 units of movement -
 because the fit is driven by joints, and the head only supplies one more cap.
 
-`--port` is used only for a whole body, an item that reaches 1.45 m or more. A
-hat or a tee is worn on the catalogue's body, which brings its own head, and two
-heads under one item is not a smaller mistake than none. `report.txt` says which
-of the two happened.
+`--port` fills a head into any item. Whether it can also stand in for the body
+is measured from the export rather than assumed: the meshes the port keeps span
+1.4 m on an export that carries a body, and 0.3 m on one that is only a head and
+neck. When there is a body, an item shorter than 1.45 m - a tee, boots, a hat -
+hangs off it instead of the catalogue's body, and the pair is fitted to Halo's
+biped joint by joint with the garment riding it. When there is no body, a
+garment keeps the catalogue's body, because that body already brings a head and
+two heads under one hat is not a smaller mistake than none. A whole-body item
+(1.45 m or more) is unchanged: it is its own body, and the port supplies its
+head, face and the patch of neck the armour leaves bare. `report.txt` says which
+of the routes was taken and how tall the export's own geometry measured.
 
 ### Eyes that look forward
 

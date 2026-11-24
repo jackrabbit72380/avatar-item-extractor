@@ -257,6 +257,23 @@ def main():
           len(glb_model.choose(model, "test-item")[1]) == 1,
           str(len(glb_model.choose(model, "test-item")[1])))
 
+    # ------------------------------------------------------- the base it can be
+    # A garment shorter than a body has to hang off one, and a head is not a
+    # body: what the export can stand an item on is measured here, not assumed
+    # from the tool being handed a .glb at all.
+    print("measuring what the export can be the base for")
+    check("the avatar's own body and head span 1.40 m",
+          abs(glb_model.body_span(model, "Test Item") - 1.40) < 1e-6,
+          "%.3f m" % glb_model.body_span(model, "Test Item"))
+    head_only = {"meshes": [mesh for mesh in model["meshes"]
+                            if mesh["name"] == "head"]}
+    check("a head and neck cannot stand a garment on itself",
+          glb_model.body_span(head_only, "Test Item") < 0.8 * 1.4,
+          "%.3f m" % glb_model.body_span(head_only, "Test Item"))
+    check("the item's own copy is never counted",
+          abs(glb_model.body_span(model, "Something Else") - 1.50) < 1e-6,
+          "%.3f m" % glb_model.body_span(model, "Something Else"))
+
     # ----------------------------------------------------------- the images
     print("turning an embedded PNG into pixels")
     for filt in (0, 1, 2):
