@@ -720,6 +720,12 @@ The armour is not touched. With and without `--port` its geometry comes out
 identical to the last bit - all 4,876 triangles, 0.000000 units of movement -
 because the fit is driven by joints, and the head only supplies one more cap.
 
+With `MyAvatar.glb` beside the `.bat`, `--keep-shape` and `--eyes-forward` are
+asked for as well, because those are the two things that keep the model looking
+like the avatar it came from: its own proportions, and pupils drawn in the
+middle of its eyes. `keep_shape.txt` and `eyes_forward.txt` still request them
+on their own, and `rig_items.py` run without the flags gives the plain fit.
+
 `--port` is used only for a whole body, an item that reaches 1.45 m or more. A
 hat or a tee is worn on the catalogue's body, which brings its own head, and two
 heads under one item is not a smaller mistake than none. `report.txt` says which

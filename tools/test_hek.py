@@ -195,8 +195,18 @@ def main():
               "base %s" % order)
         write(os.path.join(base, "bitmaps", "%s base map + decal.tif" % stem),
               "decal base %s" % order)
-        write(os.path.join(base, "models", "%s.jms" % stem), jms)
-        write(os.path.join(base, "fp", "models", "%s - fp arms.jms" % stem), jms)
+        # A later test wrote a model into models\ to check mirror_jms; the
+        # builds start from what extraction leaves, which is no model there.
+        for stale in ("models", os.path.join("fp", "models")):
+            folder = os.path.join(base, stale)
+            for name in os.listdir(folder):
+                if name.lower().endswith(".jms"):
+                    os.remove(os.path.join(folder, name))
+        # The exported model lives in source\, not models\: data\<item> sp\ is
+        # the sp build's own folder, and tool.exe compiles every .jms in
+        # models\, so a copy there would become a second tag.
+        write(os.path.join(base, "source", "%s.jms" % stem), jms)
+        write(os.path.join(base, "fp", "source", "%s - fp arms.jms" % stem), jms)
 
     renamed = module.jms_material_names(jms, "_sp")
     check("boot_shader_sp\t<none>" in renamed
@@ -255,6 +265,11 @@ def main():
                      wanted_base))
             model = os.path.join(target, "models", "%s %s.jms" % (stem, build))
             check(os.path.exists(model), "%s %s has no model" % (order, build))
+            present = sorted(name for name in os.listdir(os.path.join(target, "models"))
+                             if name.lower().endswith(".jms"))
+            check(present == ["%s %s.jms" % (stem, build)],
+                  "%s %s\\models holds %r, expected only the model named for "
+                  "the build" % (order, build, present))
             if os.path.exists(model):
                 # A JMS material name becomes a tag name, so the suffix is the
                 # build with underscores: _sp_decals, not _sp-decals.

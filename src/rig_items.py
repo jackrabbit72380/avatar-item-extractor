@@ -84,8 +84,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v67"
-BUILD = "2026-11-24 painted-materials-not-plastic"
+VERSION = "v68"
+BUILD = "2026-11-24 avatar-fixes-on-by-default-and-one-model-per-build"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -4140,9 +4140,9 @@ def hek_builds(out, stems):
                 # becomes a tag name, and hyphens have no place in those.
                 suffix = "_" + build.replace("-", "_")
                 for source, name, home in (
-                        (os.path.join(tree["models"], "%s.jms" % stem),
+                        (os.path.join(tree["source"], "%s.jms" % stem),
                          "%s %s.jms" % (stem, build), models),
-                        (os.path.join(tree["fp_models"],
+                        (os.path.join(tree["fp_source"],
                                       "%s - fp arms.jms" % stem),
                          "%s %s - fp arms.jms" % (stem, build), fp_models)):
                     if not os.path.exists(source):
@@ -4455,8 +4455,13 @@ def main():
         # that cannot read a .blend.
         if armature:
             if options["jms"]:
+                # Into source\, not models\: data\<item> sp\ is also the sp
+                # build, and tool.exe compiles every .jms in models\, so the
+                # plain model would become a second tag beside the build's own.
+                # It is the file the model was exported from, which is what a
+                # source\ folder is for.
                 record["jms_errors"] = export_jms(
-                    merged, armature, os.path.join(models_dir, "%s.jms" % stem))
+                    merged, armature, os.path.join(source_dir, "%s.jms" % stem))
             # The file is named for the game it is for, not for the program that
             # wrote it: "- halo" is the answer to "which of these do I open?"
             # when the folder also holds the NXE and unrigged copies.
@@ -4481,7 +4486,7 @@ def main():
                 if options["jms"] and arms_item.data.vertices:
                     record["jms_arms_errors"] = export_jms(
                         arms_item, arms_rig,
-                        os.path.join(fp_models, "%s - fp arms.jms" % stem))
+                        os.path.join(fp_source, "%s - fp arms.jms" % stem))
                 record["arms_file"] = "%s - halo fp arms.blend" % stem
                 # The arms are carried onto Halo's own first-person rig, so
                 # that rig is the one in the file - the game's animations drive
