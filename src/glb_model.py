@@ -299,6 +299,16 @@ ACCESSORY_SLOTS = frozenset((
     "glasses", "ring", "wristwear", "earring", "earrings", "necklace",
 ))
 
+# What the suit covers rather than replaces. Jewellery on a wrist or a finger
+# is under the armour's glove, and the export draws it where its own body's hand
+# was, not where the suit's glove ends up: on the Marine armour the ring and the
+# watch both came out floating beside the glove, untextured. Eyewear is the one
+# accessory a suit leaves showing, and it stays.
+COVERED_BY_COSTUME = frozenset((
+    "ring", "rings", "wristwear", "watch", "watches", "bracelet", "bracelets",
+    "necklace", "necklaces", "glasses", "sunglasses", "eyewear",
+))
+
 
 def choose(model, stem, also_skip=(), item_box=None, costume=False):
     """The body meshes to keep, and the ones that are the item itself.
@@ -332,13 +342,59 @@ def choose(model, stem, also_skip=(), item_box=None, costume=False):
             skipped.append(mesh)
         elif item_box and box and same_box(box, item_box):
             skipped.append(mesh)
-        elif costume and own in REPLACED_BY_COSTUME:
+        elif costume and (own in REPLACED_BY_COSTUME
+                          or own in COVERED_BY_COSTUME):
             skipped.append(mesh)
         else:
             kept.append(mesh)
     if not kept:
         return list(model["meshes"]), []
-    return kept, skipped
+    return one_of_each(kept, skipped), skipped
+
+
+def vertex_key(mesh):
+    """A mesh's vertices as a value that compares two meshes by where they are."""
+    return tuple(sorted(tuple(round(value, 6) for value in point)
+                        for point in mesh["positions"]))
+
+
+def triangle_key(mesh):
+    """A mesh's triangles as a value, for telling a copy from another part.
+
+    Two meshes can share a vertex pool and still be two different pieces: this
+    export writes the face as two objects over one set of vertices, one holding
+    the triangles left of the nose and one holding the triangles right of it.
+    Dropping either as a "duplicate" leaves half a face, and half a face reads
+    as a dark band down precisely the middle of it. A copy is the same vertices
+    AND the same triangles, and nothing less.
+    """
+    return tuple(sorted(tuple(sorted(triangle)) for triangle in mesh["triangles"]))
+
+
+def one_of_each(kept, skipped):
+    """One mesh per piece, where the export writes the same piece more than once.
+
+    A copy here is the same vertices in the same triangles, which is the only
+    thing that cannot be drawn twice without fighting itself. The copy with the
+    most triangles is kept; between two the same size the first is kept, because
+    that is the one the exporter wrote first. Dropped copies are marked, so the
+    caller can say how many it dropped.
+    """
+    chosen = {}
+    order = []
+    for mesh in kept:
+        key = (vertex_key(mesh), triangle_key(mesh))
+        if key not in chosen:
+            chosen[key] = mesh
+            order.append(key)
+        elif len(mesh["triangles"]) > len(chosen[key]["triangles"]):
+            chosen[key]["duplicate"] = True
+            skipped.append(chosen[key])
+            chosen[key] = mesh
+        else:
+            mesh["duplicate"] = True
+            skipped.append(mesh)
+    return [chosen[key] for key in order]
 
 
 # ------------------------------------------------------------------- images
@@ -451,25 +507,40 @@ UNPAINTED = 128
 
 
 def fill_unpainted(rgba, width, height, value=UNPAINTED, tolerance=6):
-    """Grow the painted pixels into the flat grey the exporter left, in place.
+    """Grow the painted skin into the flat grey the exporter left, in place.
 
-    Each grey texel takes the colour of the nearest painted one, which is how a
-    hole in a painted sheet is filled without inventing anything: it is the skin
-    round the hole spreading into it, so a brow keeps its brow's tone and a
-    cheek its cheek's. Returns (pixels, number filled).
+    Each grey texel takes the colour of the nearest painted *skin* texel. Skin,
+    not just "anything painted": a face sheet also holds near-white highlights
+    and pale scalp, and growing those into the holes drew a cream stripe down
+    the nose and a white smear across a cheek. Growing skin into the holes keeps
+    both the colour and the shading a face has, and it is still nothing that was
+    not painted somewhere on the same face. Returns (pixels, number filled).
 
-    Breadth-first from every painted texel at once, so the fill is by distance
-    and not by passes over the image.
+    Only the flat grey is filled. Everything else on the sheet is paint: a
+    pupil, a lash, a brow, a lip, the white of an eye. The fill used to grow
+    into every texel that was not skin-coloured, which is nearly all of a face -
+    it painted the pupils over with the skin beside them and left the eyes as
+    pale almond shapes with no centre in them, and took the lash and the brow
+    with them. On the right avatar's sheet, which has no grey in it at all, it
+    rewrote 21760 texels of a 512x512 face for nothing.
+
+    Breadth-first from every skin texel at once, so the fill is by distance and
+    not by passes over the image.
     """
     pixels = bytearray(rgba)
     total = width * height
     painted = bytearray(total)
+    blank = bytearray(total)
     queue = deque()
     for at in range(total):
         base = at * 4
-        if not (abs(pixels[base] - value) <= tolerance
-                and abs(pixels[base + 1] - value) <= tolerance
-                and abs(pixels[base + 2] - value) <= tolerance):
+        red, green, blue = pixels[base], pixels[base + 1], pixels[base + 2]
+        if (abs(red - value) <= tolerance
+                and abs(green - value) <= tolerance
+                and abs(blue - value) <= tolerance):
+            blank[at] = 1
+        # Warm, mid-bright, and not the near-white the highlights are: skin.
+        elif red - blue > 30 and red > 110 and not (red > 246 and green > 216):
             painted[at] = 1
             queue.append(at)
     if not queue:
@@ -482,13 +553,66 @@ def fill_unpainted(rgba, width, height, value=UNPAINTED, tolerance=6):
             if nx < 0 or ny < 0 or nx >= width or ny >= height:
                 continue
             other = ny * width + nx
-            if painted[other]:
+            # A hole is flat grey and nothing else. Stopping at paint is what
+            # keeps the fill inside the holes instead of over the face.
+            if painted[other] or not blank[other]:
                 continue
             painted[other] = 1
             pixels[other * 4:other * 4 + 4] = pixels[at * 4:at * 4 + 4]
             filled += 1
             queue.append(other)
     return pixels, filled
+
+
+def skin_tones(rgba, width, height):
+    """The colour of the skin a sheet is painted in: the median of its skin texels.
+
+    Median, not average, so one white highlight or one brown shadow does not
+    move it. Texels counted are warm ones (red well above blue) in the mid
+    range, which is skin and not a highlight or a hair edge.
+    """
+    samples = []
+    for at in range(0, len(rgba), 4):
+        red, green, blue = rgba[at], rgba[at + 1], rgba[at + 2]
+        if red - blue > 30 and 110 < red < 215:
+            samples.append((red, green, blue))
+    if not samples:
+        return None
+    samples.sort()
+    return samples[len(samples) // 2]
+
+
+def match_tone(rgba, width, height, target, limit=0.45):
+    """Bring a sheet's skin to a target colour, by one gain across the sheet.
+
+    A 360sona export paints the two halves of a face on two sheets, and the two
+    sheets are not painted the same: on one avatar the right half's skin is
+    (211, 154, 102) and the left half's is (166, 137, 113) - a warm bright face
+    and a dull grey one on the same head. One gain per channel, applied to the
+    whole sheet, keeps every painted feature where it is and only moves the
+    colour, so the face ends up one colour instead of two.
+
+    Returns (pixels, gain) or (pixels, None) when the sheet has no skin to
+    measure. The gain is refused if it is far enough out to be a mistake rather
+    than a grading difference.
+    """
+    pixels = bytearray(rgba)
+    measured = skin_tones(rgba, width, height)
+    if measured is None:
+        return pixels, None
+    gain = []
+    for channel in range(3):
+        want = float(target[channel]) / max(measured[channel], 1)
+        if not (1.0 - limit <= want <= 1.0 + limit):
+            return pixels, None
+        gain.append(want)
+    # One lookup table a channel, rather than a multiply per texel.
+    tables = [[min(255, int(round(value * gain[channel]))) for value in range(256)]
+              for channel in range(3)]
+    for at in range(0, len(pixels), 4):
+        for channel in range(3):
+            pixels[at + channel] = tables[channel][pixels[at + channel]]
+    return pixels, tuple(round(g, 3) for g in gain)
 
 
 def power_of_two(value):

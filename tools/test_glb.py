@@ -376,6 +376,15 @@ def main():
           filled_pixels[-4:] == bytes(skin), str(tuple(filled_pixels[-4:])))
     _, none = glb_model.fill_unpainted(bytearray(bytes(skin) * 4), 4, 1)
     check("a painted sheet is left alone", none == 0, str(none))
+    # A face sheet also carries paint that is not skin: a pupil, a lash, a brow,
+    # a lip. The fill is for the flat grey only - growing skin over the paint is
+    # what left the eyes as pale almonds with no pupils in them.
+    pupil = (40, 30, 28, 255)
+    mixed = bytearray(bytes(skin) + bytes(grey) + bytes(pupil) + bytes(grey))
+    kept, count = glb_model.fill_unpainted(mixed, 4, 1)
+    check("a pupil is not painted over", kept[8:12] == bytes(pupil),
+          str(tuple(kept[8:12])))
+    check("the hole beside it still fills", count == 1, str(count))
 
     if FAILURES:
         print("FAILED: %d check(s)" % len(FAILURES))

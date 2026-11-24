@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v74"
-BUILD = "2026-11-24 broken-export-guard"
+VERSION = "v75"
+BUILD = "2026-11-24 fetch-avatar"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -433,7 +433,7 @@ def item_stem(record):
         os.path.basename(record.get("obj") or record["id"]))[0]
 
 
-def port_material(mesh, stem, out, model, eyes_forward=False):
+def port_material(mesh, stem, out, model, eyes_forward=False, tone=None):
     """A Blender material for one ported mesh, and the pixels it needs.
 
     The image is written beside the item as `<stem> <material>.png` so the .blend
@@ -461,12 +461,32 @@ def port_material(mesh, stem, out, model, eyes_forward=False):
         for line in notes:
             log("port: %s" % line)
         written = face_eyes.png_bytes(rgba, width, height)
+    # The halves of one face are painted on two sheets and the two are not
+    # graded alike, so the head came out two colours: warm and bright on one
+    # side, dull and grey on the other. Both are brought to the one tone.
+    #
+    # This runs BEFORE the holes are filled, and the order is the whole of it.
+    # match_tone measures the sheet it is given, and a filled sheet is mostly
+    # fill: the grey it paints over is 40% of the picture and every filled texel
+    # is seeded from the paint next to it, so the median the gain is worked out
+    # from is the smear and not the face. Measured on the two halves of this
+    # head, filling first left the join at 28 levels of colour either side
+    # (221,145,79 against 197,149,107) where the file itself has 6 - the pass
+    # meant to make one tone was drawing the two-tone line it was added to
+    # remove. Measuring the painted sheet first and filling afterwards, from the
+    # skin the gain has just matched, leaves 8: the file's own difference.
+    if "face" in name.lower() and tone:
+        rgba, gain = glb_model.match_tone(rgba, width, height, tone)
+        if gain:
+            log("port: %s painted x%.2f x%.2f x%.2f on to %s, the skin tone "
+                "of the whole face" % ((name,) + gain + (tone,)))
+            written = face_eyes.png_bytes(rgba, width, height)
     # A face sheet arrives with holes in it: the exporter leaves flat grey where
     # it painted nothing, and 41% of the pieces of a head read that grey, so the
     # face shows blank patches. The holes are filled from the skin around them -
-    # nothing is drawn that was not painted somewhere on the same face. This runs
-    # after the eye pass, not before: on a filled sheet the eye pass reads the
-    # smooth skin next to the cheek as an eye and stamps one on to the chin.
+    # nothing is drawn that was not painted somewhere on the same face. After
+    # the eye pass, not before: on a filled sheet the eye pass reads the smooth
+    # skin next to the cheek as an eye and stamps one on to the chin.
     if "face" in name.lower():
         rgba, filled = glb_model.fill_unpainted(rgba, width, height)
         if filled:
@@ -557,10 +577,54 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
     if costume:
         gone = sorted({glb_model.flatten(mesh["name"]) for mesh in skipped
                        if glb_model.flatten(mesh["name"]) in glb_model.REPLACED_BY_COSTUME})
-        log("port: left out of the avatar what the costume replaces (%s); "
-            "glasses, rings and watches stay" % (", ".join(gone) or "nothing"))
+        covered = sorted({glb_model.flatten(mesh["name"]) for mesh in skipped
+                          if glb_model.flatten(mesh["name"]) in glb_model.COVERED_BY_COSTUME})
+        log("port: left out of the avatar what the costume replaces (%s)"
+            % (", ".join(gone) or "nothing"))
+        if covered:
+            log("port: the export draws %s on its own body, not on the suit - a "
+                "ring and a watch hang beside the armour's glove, and a pair of "
+                "glasses is the pair that avatar wore, not the one being worn "
+                "now - so they are left out" % ", ".join(covered))
+    copies = [glb_model.flatten(mesh["name"]) for mesh in skipped
+              if mesh.get("duplicate")]
+    if copies:
+        log("port: the export writes %s more than once at the same place, so "
+            "one copy of each is kept - two heads in one spot is a head with a "
+            "pale band down it, and two pairs of glasses is neither pair"
+            % ", ".join(sorted(set(copies))))
     made = {}
+    used_names = set()
     textures = []
+    # One tone for the whole face. The export paints the two halves of a head on
+    # two sheets, and the two are graded differently - a warm bright side and a
+    # dull grey one on the same head - so the target is the average of what each
+    # sheet is painted in, and every sheet is brought to it.
+    tone = None
+    sheets = [mesh for mesh in kept
+              if "face" in mesh["material"].lower() and mesh.get("image") is not None]
+    if len(sheets) > 1:
+        measured = []
+        counted = set()
+        for mesh in sheets:
+            # Two halves painted on ONE sheet are one painting, not two. An
+            # export that gives both halves the same image (a 512x512 face, on
+            # one avatar) has nothing to match, and averaging a tone with itself
+            # would only let the log claim a difference that is not there.
+            if mesh["image"] in counted:
+                continue
+            counted.add(mesh["image"])
+            pixels, width, height = glb_model.decode_png(
+                model["images"][mesh["image"]]["data"])
+            painted = glb_model.skin_tones(pixels, width, height)
+            if painted:
+                measured.append(painted)
+        if len(measured) > 1 and len(set(measured)) > 1:
+            tone = tuple(sum(each[channel] for each in measured) // len(measured)
+                         for channel in range(3))
+            log("port: the face is painted on %d sheets at different brightness "
+                "(%s), so each is brought to %s - one face, one colour"
+                % (len(measured), ", ".join(str(each) for each in measured), tone))
     objects = []
     for mesh in kept:
         label = "%s - %s" % (stem, mesh["material"])
@@ -578,11 +642,26 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
                 layer.data[loop.index].uv = (u, 1.0 - v)
         for polygon in data.polygons:
             polygon.use_smooth = True
-        material = made.get(mesh["material"])
+        # Two primitives can carry one material name and two different pictures.
+        # This export splits the face either side of the nose and each half has
+        # its own sheet. Keyed by the name alone they became a single material,
+        # so both halves were painted with whichever sheet came last: the half
+        # left on the other sheet landed on blank pixels and drew as a pale,
+        # featureless panel - half a face with nothing on it.
+        key = (mesh["material"], mesh.get("image"))
+        material = made.get(key)
         if material is None:
-            material, written = port_material(mesh, stem, out, model,
-                                              eyes_forward=eyes_forward)
-            made[mesh["material"]] = material
+            shot = mesh
+            if key[0] in used_names:
+                unique = "%s_%d" % (key[0], key[1] if key[1] is not None
+                                    else len(used_names))
+                while unique in used_names:
+                    unique += "x"
+                shot = dict(mesh, material=unique)
+            used_names.add(shot["material"])
+            material, written = port_material(shot, stem, out, model,
+                                              eyes_forward=eyes_forward, tone=tone)
+            made[key] = material
             if written:
                 textures.append(written)
         data.materials.append(material)
@@ -602,32 +681,37 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
     # The head can arrive as several primitives sharing one material - the
     # avatar's splits either side of the face - so the box is the union of every
     # mesh that material covers, not of the largest one, which is half a head.
-    counts = {}
-    for mesh in kept:
-        counts[mesh["material"]] = (counts.get(mesh["material"], 0)
-                                    + len(mesh["triangles"]))
-    head_name = max(counts, key=counts.get) if counts else None
-    box = None
-    if head_name is not None:
-        points = []
+    heads = [mesh for mesh in kept
+             if glb_model.flatten(mesh["name"]) == "head"]
+    if not heads:
+        counts = {}
         for mesh in kept:
-            if mesh["material"] != head_name:
-                continue
-            used = {index for triangle in mesh["triangles"] for index in triangle}
-            points.extend(mesh["positions"][index] for index in used)
-        if points:
-            box = ([min(point[axis] for point in points) for axis in range(3)],
-                   [max(point[axis] for point in points) for axis in range(3)])
-    body_name = next((mesh["material"] for mesh in kept
+            counts[mesh["material"]] = (counts.get(mesh["material"], 0)
+                                        + len(mesh["triangles"]))
+        biggest = max(counts, key=counts.get) if counts else None
+        heads = [mesh for mesh in kept if mesh["material"] == biggest]
+    box = None
+    points = []
+    for mesh in heads:
+        used = {index for triangle in mesh["triangles"] for index in triangle}
+        points.extend(mesh["positions"][index] for index in used)
+    if points:
+        box = ([min(point[axis] for point in points) for axis in range(3)],
+               [max(point[axis] for point in points) for axis in range(3)])
+    head_materials = [made[(mesh["material"], mesh.get("image"))]
+                      for mesh in heads
+                      if (mesh["material"], mesh.get("image")) in made]
+    body_mesh = next((mesh for mesh in kept
                       if glb_model.flatten(mesh["name"]) == glb_model.BODY_SLOT), None)
     return {"objects": objects, "textures": textures, "lines": lines,
             "material_objects": list(made.values()), "box": box,
             "costume": costume,
-            "body_material": made.get(body_name) if body_name else None,
-            "head_material": made.get(head_name) if head_name else None}
+            "body_material": (made.get((body_mesh["material"], body_mesh.get("image")))
+                              if body_mesh else None),
+            "head_material": head_materials or None}
 
 
-def refit_ported(object_data, materials, head_material, box):
+def refit_ported(object_data, materials, head_materials, box):
     """Give the ported head back the proportions the export authored.
 
     A whole body is fitted joint by joint, and the head straddles two of those
@@ -642,11 +726,15 @@ def refit_ported(object_data, materials, head_material, box):
     head, about the head's own centre - and only the ported vertices move, so
     the item's geometry is exactly what it was.
     """
-    if not box or not materials or head_material is None:
+    if head_materials is None:
+        return None
+    if not isinstance(head_materials, (list, tuple, set)):
+        head_materials = [head_materials]
+    if not box or not materials or not head_materials:
         return None
     mesh = object_data.data
     head_slots = {index for index, slot in enumerate(object_data.material_slots)
-                  if slot.material is head_material}
+                  if slot.material in head_materials}
     every_slot = {index for index, slot in enumerate(object_data.material_slots)
                   if slot.material in materials}
     moved = set()
@@ -686,7 +774,15 @@ def refit_ported(object_data, materials, head_material, box):
     return factors
 
 
-def cut_body(object_data, material):
+# How much neck to keep under the chin, as a share of the head's own height.
+# A collar sits below the jaw and the suit's own neck hole is narrower than the
+# head, so the band between the two is the avatar's neck and it is meant to be
+# skin. Cutting the whole body away took it with the torso and left the chin
+# resting on the collar - no neck at all - on every avatar whose body is whole.
+NECK_KEPT = 0.22
+
+
+def cut_body(object_data, material, head_materials=None, neck=NECK_KEPT):
     """Take the avatar's own body out from under a costume, once it is scaled.
 
     A costume is the whole figure: the site draws the suit instead of a body,
@@ -698,15 +794,37 @@ def cut_body(object_data, material):
     measures the avatar against: a head alone measures 0.55 m, the fit reads
     that as a broken export, and the model came out 2.5 m tall. So the body
     comes through the fit and is cut away here, after every scale is settled.
+
+    The neck stays. The body mesh is where the neck is, and the band under the
+    chin - from the jaw down about a fifth of the head's height - is what shows
+    between the head and the suit's collar. Cutting the material wholesale took
+    the neck with it and left the chin sitting on the armour; keeping this band
+    puts skin back where the suit's neck hole is, with the rest of the band
+    hidden inside the collar. Everything below it - torso, arms, legs - goes.
     """
     mesh = object_data.data
     slots = {index for index, slot in enumerate(object_data.material_slots)
              if slot.material is material}
     if not slots:
         return 0
+    # Where the jaw is, so the band can be measured from the head itself rather
+    # than from a number guessed per avatar. The mesh is still y-up here: the
+    # turn into Halo's axes happens after every scale is settled.
+    floor = None
+    head_slots = {index for index, slot in enumerate(object_data.material_slots)
+                  if head_materials and slot.material in head_materials}
+    if head_slots:
+        points = [mesh.vertices[index].co for polygon in mesh.polygons
+                  if polygon.material_index in head_slots
+                  for index in polygon.vertices]
+        if points:
+            low = min(point.y for point in points)
+            high = max(point.y for point in points)
+            floor = low - neck * (high - low)
     working = bmesh.new()
     working.from_mesh(mesh)
-    faces = [face for face in working.faces if face.material_index in slots]
+    faces = [face for face in working.faces if face.material_index in slots
+             and (floor is None or max(vert.co.y for vert in face.verts) < floor)]
     bmesh.ops.delete(working, geom=faces, context="FACES")
     working.to_mesh(mesh)
     working.free()
@@ -751,7 +869,58 @@ def join_meshes(meshes, name):
     return merged
 
 
+# How close two ported vertices have to be to be the same point on the surface.
+# A 360sona export cuts the face into a left half and a right half that meet
+# down the nose, and the two halves do not share a vertex: the halves' centreline
+# vertices were measured 5.1 micrometres apart, max, on this avatar. That is the
+# same point split across two objects, not a gap, so 20 micrometres welds it and
+# is far too small to touch anything the artist modelled.
+SEAM_WELD = 2e-5
+
 AUTHORED_BODY_HEIGHT = 1.4
+
+def weld_seam(object_data, materials, distance=SEAM_WELD):
+    """Weld the vertices an export splits where one surface meets itself.
+
+    The face arrives as two meshes, one holding the triangles right of the nose
+    and one the triangles left of it, and no vertex is shared between them. Blender
+    smooth-shades a vertex from the faces that use it, so at the join each half
+    averages only its own side: measured either side of this head's centreline,
+    the two normals differed by a median 24 degrees and up to 55. A surface with
+    a 24 degree kink down the middle of it draws exactly that - a crease along
+    the nose and forehead - whatever colour the two halves are painted.
+
+    Welding the coincident vertices makes the join one vertex with both halves'
+    faces around it, so one normal is computed for it and the surface shades as
+    the one continuous surface it is. Only the ported avatar's own vertices are
+    welded, so the item is left exactly as its container authored it. Returns
+    how many vertices were merged away.
+    """
+    if not materials:
+        return 0
+    mesh = object_data.data
+    slots = {index for index, slot in enumerate(object_data.material_slots)
+             if slot.material in materials}
+    if not slots:
+        return 0
+    wanted = set()
+    for polygon in mesh.polygons:
+        if polygon.material_index in slots:
+            wanted.update(polygon.vertices)
+    if not wanted:
+        return 0
+    working = bmesh.new()
+    working.from_mesh(mesh)
+    working.verts.ensure_lookup_table()
+    before = len(working.verts)
+    bmesh.ops.remove_doubles(working, verts=[working.verts[index]
+                                           for index in sorted(wanted)],
+                             dist=distance)
+    merged = before - len(working.verts)
+    working.to_mesh(mesh)
+    working.free()
+    mesh.update()
+    return merged
 
 
 def body_fit(armature, authored=AUTHORED_BODY_HEIGHT):
@@ -4485,6 +4654,16 @@ def main():
         merged = join_meshes(meshes, options["name"] or label)
         if not merged:
             continue
+        # The export's head is two half-meshes that meet at the nose without
+        # sharing a vertex. Welding the pairs that coincide turns the join into
+        # one surface, which is what gives it one shading normal instead of a
+        # 24 degree kink down the middle of the face.
+        if ported_materials:
+            welded = weld_seam(merged, ported_materials)
+            if welded:
+                log("port: the export cuts the face into two meshes that meet at "
+                    "the nose; welded %d vertex pair(s) along their join, so the "
+                    "head shades as one surface" % welded)
         prepare(merged)
         apply_uv_sets(merged, record)
         # The NXE copy stays in the item's own space - y-up metres, as the
@@ -4583,10 +4762,12 @@ def main():
                                           fit * AUTHORED_BODY_HEIGHT,
                                           scale / fit))
             if ported and ported.get("costume") and ported.get("body_material"):
-                cut = cut_body(merged, ported["body_material"])
+                cut = cut_body(merged, ported["body_material"],
+                               ported_head_material)
                 log("port: the costume replaces the body itself, so the avatar's "
                     "own body is cut away (%d faces) - the armour is the body "
-                    "from here, and the head, face and accessories stay" % cut)
+                    "from here, and the head, face, the neck under the chin and "
+                    "the accessories stay" % cut)
             to_halo_space(merged, scale, keep_position=prop, anchor=anchor)
             record["binding"] = skin(merged, armature, rigid=prop)
             # Only a prop rides one bone. Reading the binding line instead
