@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v84"
-BUILD = "2026-11-24 shared-sheet-fix"
+VERSION = "v85"
+BUILD = "2026-11-24 one-sheet-tone"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -687,6 +687,42 @@ def mesh_box_of(objects):
             [max(point[axis] for point in points) for axis in range(3)])
 
 
+def shared_tone(pixels, width, height, other, ref):
+    """Bring the second half to the first half's tone when both share one sheet.
+
+    Two islands on one picture, painted at different brightness, read as a
+    two-tone face exactly as two sheets do - and there is no sheet-to-sheet gain
+    that can touch it, because scaling the image scales both halves together.
+    The halves are two meshes over the same pixels, so the correction is the one
+    used across two sheets, with the same image on both sides: the second half's
+    island is measured against what the first half paints at the same place on
+    the head, in bands of 32 texels, and scaled to it. The first half's island is
+    not touched.
+
+    Returns (pixels or None, sentence or None): the pixels to write back when the
+    correction ran, and the line to log.
+    """
+    result = glb_model.tone_bands(pixels, width, height, other, pixels,
+                                  width, height, ref)
+    if not result:
+        gap = glb_model.join_difference(pixels, width, height, other, pixels,
+                                        width, height, ref)
+        if not gap:
+            return None, None
+        return None, ("the two halves differ by %.1f level(s) in bands where the "
+                      "eye reads a join, and the correction could not run on "
+                      "this sheet" % gap[0])
+    out_pixels, was, now, bands = result
+    if now > 6.0:
+        return out_pixels, ("%d band(s) of 32 texels: the two halves differ by "
+                            "%.1f level(s) from %.1f, and the correction could "
+                            "not close it - the join will show"
+                            % (bands, now, was))
+    return out_pixels, ("%d band(s) of 32 texels: the two halves differ by %.1f "
+                        "level(s) from %.1f on the one sheet they share - one "
+                        "tone" % (bands, now, was))
+
+
 def import_port(path, stem, out, eyes_forward=False, item_box=None):
     """The avatar's own head and neck, as meshes to join under the item.
 
@@ -808,7 +844,24 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
         ref = halves[0]
         ref_pixels, ref_w, ref_h = decoded[ref["image"]]
         for other in halves[1:]:
+            # An avatar that paints BOTH halves on one sheet has no second sheet
+            # to bring across - but its two islands can still be painted at
+            # different brightness, and that is the same two-tone face. There is
+            # nothing to compare sheet to sheet, so the second half is compared
+            # with the first INSIDE the one image: same pixels, the other half's
+            # triangles, and its island is scaled to match.
             if other["image"] == ref["image"]:
+                pixels, width, height = decoded[other["image"]]
+                toned_pixels, text = shared_tone(pixels, width, height, other,
+                                                 ref)
+                if text:
+                    joins.append(text)
+                    log("port: %s" % text)
+                if toned_pixels:
+                    model["images"][other["image"]]["data"] = \
+                        face_eyes.png_bytes(toned_pixels, width, height)
+                    decoded[other["image"]] = (toned_pixels, width, height)
+                    toned = True
                 continue
             pixels, width, height = decoded[other["image"]]
             result = glb_model.tone_bands(
