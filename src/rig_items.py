@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v85"
-BUILD = "2026-11-24 one-sheet-tone"
+VERSION = "v86"
+BUILD = "2026-11-24 open-eyes"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -230,7 +230,7 @@ def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parsed = {"items": "extracted", "rig": None, "fp": None, "out": "rigged",
               "fbx": True, "jms": True, "name": None, "port": None,
-              "keep_shape": False, "eyes_forward": False}
+              "keep_shape": False, "eyes_forward": True}
     index = 0
     while index < len(argv):
         word = argv[index]

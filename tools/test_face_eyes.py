@@ -117,6 +117,25 @@ def touching(pixels, points, left, right):
             if min(ys) <= rows.get(x, TOP) + LID + 2]
 
 
+def opening(pixels, left, right):
+    """The texels between the eye's own top and bottom ink: the opening itself.
+
+    Everything in that row range, white sclera included - ``texels`` only picks
+    ink, and the point of the drawing is that there is an opening to see.
+    """
+    rows = [y for x, y in texels(pixels, left, right)]
+    if not rows:
+        return set()
+    return {(x, y) for x in range(left, right + 1)
+            for y in range(min(rows) + 6, max(rows) - 5)}
+
+
+def pixels_at(pixels, point):
+    x, y = point
+    at = (y * WIDTH + x) * 4
+    return tuple(pixels[at:at + 3])
+
+
 def blob_count(points):
     """How many separate blobs a set of texels makes, touching at 8 corners."""
     left = set(points)
@@ -171,41 +190,55 @@ def main():
     report("drawn at one end: the pupil was off centre",
            before is not None and abs(before - 0.5) > 0.1, " (%.2f)" % (before or 0))
 
-    # One pupil, in the middle, hanging from the lash.
-    drawn = pupil(fixed, LEFT_EYE[0], LEFT_EYE[1])
-    where = centre(drawn, LEFT_EYE[0], LEFT_EYE[1])
-    hanging = touching(fixed, drawn, LEFT_EYE[0], LEFT_EYE[1])
-    report("one pupil is drawn, not two", blob_count(drawn) == 1,
-           " (%d blob(s), %d texels)" % (blob_count(drawn), len(drawn)))
+    # The eye has to come out OPEN, with one pupil in the middle of the opening:
+    # the avatars are drawn shut, both pupils under the same corner, which is the
+    # sideways stare this pass exists to remove.
+    left, right = LEFT_EYE
+    inside = opening(fixed, left, right)
+    white = [point for point in inside
+             if all(channel > 200 for channel in pixels_at(fixed, point))]
+    report("the eye is drawn open, not shut", len(white) >= 40,
+           " (%d sclera texels)" % len(white))
+    # The lid line runs into the corners, where the opening pinches shut; the
+    # pupil is what is dark in the middle half of the eye.
+    quarter = (right - left) // 4
+    dark = [point for point in inside if ink(fixed, point[0], point[1])
+            and left + quarter <= point[0] <= right - quarter]
+    where = centre(dark, left, right)
+    report("one pupil is drawn, not two", blob_count(dark) == 1,
+           " (%d blob(s), %d texels)" % (blob_count(dark), len(dark)))
     report("it sits on the middle of the eye",
-           where is not None and abs(where - 0.5) <= 0.08, " (%.2f)" % (where or 0))
-    report("it hangs from the lash", bool(hanging),
-           " (%d of its columns touch the lash)" % len(hanging))
-    report("it is no wider than the eye it is in",
-           bool(drawn)
-           and max(x for x, _ in drawn) - min(x for x, _ in drawn)
-           <= 0.5 * (LEFT_EYE[1] - LEFT_EYE[0]),
-           " (%d of %d columns)"
-           % (max(x for x, _ in drawn) - min(x for x, _ in drawn),
-              LEFT_EYE[1] - LEFT_EYE[0]))
+           where is not None and abs(where - 0.5) <= 0.08,
+           " (%.2f)" % (where if where is not None else -1))
+    report("it is clear of both corners",
+           bool(dark) and min(x for x, _ in dark) - left >= 3
+           and right - max(x for x, _ in dark) >= 3,
+           " (%d texels in from the nearest corner)"
+           % min(min(x for x, _ in dark) - left, right - max(x for x, _ in dark)))
+    report("it is round, not a stroke along the eye",
+           bool(dark) and max(y for _, y in dark) - min(y for _, y in dark)
+           <= 0.6 * (right - left),
+           " (%d rows tall in a %d wide eye)"
+           % (max(y for _, y in dark) - min(y for _, y in dark), right - left))
     report("both eyes reported", len(notes) == 2, " (%d notes)" % len(notes))
 
-    # The lash is redrawn from the painting, not invented: its top edge lands on
-    # the painted rows, and it keeps the weight the stroke was painted with.
-    painted_top = top_row(face, LEFT_EYE[0], LEFT_EYE[1])
-    fixed_top = top_row(fixed, LEFT_EYE[0], LEFT_EYE[1])
-    on_row = sum(1 for x in painted_top
-                 if abs(painted_top[x] - fixed_top.get(x, -99)) <= 1)
-    report("the lash keeps the painted top edge",
-           on_row >= 0.9 * len(painted_top),
-           " (%d of %d columns within a row)" % (on_row, len(painted_top)))
-    weight = sorted(fixed_top[x] for x in fixed_top)
-    spread = sorted(max(y for y in range(TOP - 8, BOTTOM + 8) if ink(fixed, x, y))
-                    - fixed_top[x] + 1 for x in fixed_top if x < LEFT_EYE[0] + 8)
-    report("the lash keeps the painted weight",
-           spread and abs(sorted(spread)[len(spread) // 2] - LID) <= 1,
-           " (%s rows at the ends, painted %d)"
-           % (sorted(spread)[len(spread) // 2] if spread else "?", LID))
+    # The drawing keeps the eye where it was painted - it does not wander off the
+    # cheek - and the brow above it is not touched.
+    painted_span = (min(x for x, _ in texels(face, left, right)),
+                    max(x for x, _ in texels(face, left, right)))
+    drawn_span = (min(x for x, _ in texels(fixed, left, right)),
+                  max(x for x, _ in texels(fixed, left, right)))
+    report("it stays in the painted eye's columns",
+           abs(painted_span[0] - drawn_span[0]) <= 1
+           and abs(painted_span[1] - drawn_span[1]) <= 1,
+           " (painted %d..%d, drawn %d..%d)"
+           % (painted_span + drawn_span))
+    brow = [pixels_at(face, (x, y)) for y in range(TOP - 8, TOP - 1)
+            for x in range(left, right + 1)]
+    brow_after = [pixels_at(fixed, (x, y)) for y in range(TOP - 8, TOP - 1)
+                  for x in range(left, right + 1)]
+    report("the brow above it is untouched", brow == brow_after,
+           " (%d texels)" % len(brow))
 
     # A pair has to match across the nose. The head's UVs run left to right on
     # both sides of the face, so the second eye is the first one mirrored - a
@@ -213,9 +246,18 @@ def main():
     report("both drawn eyes are a matching pair",
            rectangle(fixed, RIGHT_EYE[0], RIGHT_EYE[1])
            == [row[::-1] for row in rectangle(fixed, LEFT_EYE[0], LEFT_EYE[1])])
-    report("the second eye is not a straight copy of the first",
-           rectangle(fixed, RIGHT_EYE[0], RIGHT_EYE[1])
-           != rectangle(fixed, LEFT_EYE[0], LEFT_EYE[1]))
+    # Both eyes look the same way: the pupil of each sits on the middle of its own
+    # opening. A level gaze is symmetric, so the pair is a mirror of itself - what
+    # must not happen is one eye looking somewhere else than the other.
+    right_dark = [point for point in opening(fixed, RIGHT_EYE[0], RIGHT_EYE[1])
+                  if ink(fixed, point[0], point[1])]
+    right_where = centre(right_dark, RIGHT_EYE[0], RIGHT_EYE[1])
+    report("both eyes look the same way",
+           where is not None and right_where is not None
+           and abs((where - 0.5) + (right_where - 0.5)) <= 0.05,
+           " (left %.2f, right %.2f)"
+           % (where if where is not None else -1,
+              right_where if right_where is not None else -1))
     report("the right eye was redrawn too",
            rectangle(fixed, RIGHT_EYE[0], RIGHT_EYE[1])
            != rectangle(face, RIGHT_EYE[0], RIGHT_EYE[1]))

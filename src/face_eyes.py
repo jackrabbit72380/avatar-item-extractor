@@ -325,6 +325,92 @@ def _pattern(rgba, width, height, left, right, first, last, top, low, iris=None)
     return grid
 
 
+def _open_eye(span, rows, skin, ink, iris=None):
+    """One open eye, looking straight ahead, on a grid span x rows texels.
+
+    The avatars are drawn with the eye shut - a crescent lid with the pupil
+    tucked under one corner, both pupils on the same side of the face, so the
+    model stares off to the side in every frame. A gaze is not something that can
+    be moved by a gain or a copy: the eye itself has to be open. This draws it:
+
+      * an almond opening, superellipse so the corners come to points, filled
+        with sclera and edged with the stroke the avatar was painted with,
+      * an iris and a pupil as circles centred on the middle of the opening -
+        level, both eyes, whatever the drawing did before,
+      * the lid line along the top of the opening only, thickest in the middle
+        and tapering at both corners, so it reads as a lid rather than a bar,
+      * SAMPLES per texel in each direction, averaged down, because the eye is
+        about seventy texels wide and a texel-at-a-time circle is a staircase.
+
+    The grid is stamped into both eyes by the caller, the second one mirrored, so
+    the pair matches across the nose.
+    """
+    centre_x = (span - 1) / 2.0
+    radius_x = max(2.0, span / 2.0)
+    centre_y = rows * 0.50
+    radius_y = max(2.0, rows * 0.44)
+    power = 1.9
+    pupil = max(1.6, rows * 0.17)
+    ring = max(pupil + 1.4, rows * 0.29)
+    white = (246, 243, 238)
+    colour_iris = iris or (92, 64, 46)
+    skin_r, skin_g, skin_b = skin[:3]
+    ink_r, ink_g, ink_b = ink[:3]
+
+    def inside(px, py, rx, ry, p):
+        return (abs((px - centre_x) / rx) ** p
+                + abs((py - centre_y) / ry) ** p) <= 1.0
+
+    def lid_top(px):
+        u = min(1.0, abs((px - centre_x) / radius_x))
+        return centre_y - radius_y * (1.0 - u ** power) ** (1.0 / power)
+
+    def lid_bottom(px):
+        u = min(1.0, abs((px - centre_x) / radius_x))
+        return centre_y + radius_y * (1.0 - u ** power) ** (1.0 / power)
+
+    grid = {}
+    step = 1.0 / SAMPLES
+    for x in range(span):
+        for y in range(rows):
+            red = green = blue = 0.0
+            for sx in range(SAMPLES):
+                for sy in range(SAMPLES):
+                    px = x + (sx + 0.5) * step - 0.5
+                    py = y + (sy + 0.5) * step - 0.5
+                    if not inside(px, py, radius_x, radius_y, power):
+                        red += skin_r
+                        green += skin_g
+                        blue += skin_b
+                        continue
+                    # A lid is a line over the opening, not a fill: its weight
+                    # follows the curve, thick in the middle, gone at the corners.
+                    u = min(1.0, abs((px - centre_x) / radius_x))
+                    weight = 1.0 + 0.8 * (1.0 - u ** 1.4)
+                    if py < lid_top(px) + weight or py > lid_bottom(px) - 0.7:
+                        red += ink_r
+                        green += ink_g
+                        blue += ink_b
+                        continue
+                    reach = math.hypot(px - centre_x, py - centre_y)
+                    if reach <= pupil:
+                        red += ink_r
+                        green += ink_g
+                        blue += ink_b
+                    elif reach <= ring:
+                        red += colour_iris[0]
+                        green += colour_iris[1]
+                        blue += colour_iris[2]
+                    else:
+                        red += white[0]
+                        green += white[1]
+                        blue += white[2]
+            total = float(SAMPLES * SAMPLES)
+            grid[(x, y)] = (int(round(red / total)), int(round(green / total)),
+                            int(round(blue / total)), 255)
+    return grid
+
+
 def centre_pupils(rgba, width, height, force=False, iris=None):
     """A copy of the face with one painted eye stamped into both eyes.
 
@@ -354,11 +440,22 @@ def centre_pupils(rgba, width, height, force=False, iris=None):
         return bytearray(rgba), ["face: the eyes already look forward, texture untouched"]
 
     skin = _skin(rgba, width, height, groups[0][0], groups[-1][-1], first, last)
-    grid = _pattern(rgba, width, height, left, right, first, last, top, low,
-                    iris=iris)
-    if grid is None:
-        return bytearray(rgba), ["face: the eye has no opening to put a pupil in, "
-                                 "texture untouched"]
+    # The stroke the avatar was painted with, so the new eye belongs to it.
+    ink_pixels = [rgba[(y * width + x) * 4:(y * width + x) * 4 + 3]
+                  for y in range(first, last + 1)
+                  for x in range(left, right + 1)
+                  if _luma(rgba, width, x, y) < INK]
+    if ink_pixels:
+        ink = tuple(sorted(channel[i] for channel in ink_pixels)[len(ink_pixels) // 2]
+                    for i in range(3))
+    else:
+        ink = (38, 30, 26)
+    # Room under the shut lid for the opening and the lower lid: the cheek there
+    # is plain skin, which the stamp covers.
+    rows = max(8, (last - first + 1) * 2)
+    # Never past the bottom of the sheet: those texels belong to something else.
+    rows = min(rows, max(4, height - first - 1))
+    grid = _open_eye(right - left + 1, rows, skin, ink, iris=iris)
 
     pixels = bytearray(rgba)
     span = min(group[-1] - group[0] for group in groups)
@@ -392,8 +489,8 @@ def centre_pupils(rgba, width, height, force=False, iris=None):
                 at = ((first + oy) * width + x) * 4
                 pixels[at:at + 4] = bytes(colour)
 
-    notes = ["face: the painted lash redrawn from its own top edge and weight, "
-             "with one pupil drawn in the middle of it",
+    notes = ["face: the eye drawn open - sclera, iris and pupil centred on the "
+             "middle of the opening - so it looks straight ahead",
              "face: that eye stamped into both, mirrored into the second, so the "
              "pair matches across the nose"]
     return pixels, notes
