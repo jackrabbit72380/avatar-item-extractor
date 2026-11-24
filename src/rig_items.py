@@ -512,7 +512,92 @@ def import_port(path, stem, out):
     lines = glb_model.report(model, kept, skipped)
     for line in lines:
         log(line.strip())
-    return {"objects": objects, "textures": textures, "lines": lines}
+    # The head's own box, so it can be given back its proportions once the fit
+    # has been over it. It is taken from the vertices the triangles actually
+    # use: an export can carry one vertex buffer for the whole avatar and index
+    # a few faces out of it, so the head's mesh holds the arms and feet as well,
+    # unreferenced and enormous.
+    # The head can arrive as several primitives sharing one material - the
+    # avatar's splits either side of the face - so the box is the union of every
+    # mesh that material covers, not of the largest one, which is half a head.
+    counts = {}
+    for mesh in kept:
+        counts[mesh["material"]] = (counts.get(mesh["material"], 0)
+                                    + len(mesh["triangles"]))
+    head_name = max(counts, key=counts.get) if counts else None
+    box = None
+    if head_name is not None:
+        points = []
+        for mesh in kept:
+            if mesh["material"] != head_name:
+                continue
+            used = {index for triangle in mesh["triangles"] for index in triangle}
+            points.extend(mesh["positions"][index] for index in used)
+        if points:
+            box = ([min(point[axis] for point in points) for axis in range(3)],
+                   [max(point[axis] for point in points) for axis in range(3)])
+    return {"objects": objects, "textures": textures, "lines": lines,
+            "material_objects": list(made.values()), "box": box,
+            "head_material": made.get(head_name) if head_name else None}
+
+
+def refit_ported(object_data, materials, head_material, box):
+    """Give the ported head back the proportions the export authored.
+
+    A whole body is fitted joint by joint, and the head straddles two of those
+    joints - the neck and the head - whose bones the fit scales and turns by
+    different amounts. A face blended between the two comes out stretched: on
+    the first real export it arrived 6.7% wider and 3.5% shorter than the file's
+    own head, which reads as a squashed face and a brow that covers the eyes.
+    Halo's animations move the bones, not the mesh, so the shape has to be right
+    before the bones carry it.
+
+    The export's own proportions are restored, at the height the fit gave the
+    head, about the head's own centre - and only the ported vertices move, so
+    the item's geometry is exactly what it was.
+    """
+    if not box or not materials or head_material is None:
+        return None
+    mesh = object_data.data
+    head_slots = {index for index, slot in enumerate(object_data.material_slots)
+                  if slot.material is head_material}
+    every_slot = {index for index, slot in enumerate(object_data.material_slots)
+                  if slot.material in materials}
+    moved = set()
+    head_used = set()
+    for polygon in mesh.polygons:
+        if polygon.material_index in every_slot:
+            moved.update(polygon.vertices)
+            if polygon.material_index in head_slots:
+                head_used.update(polygon.vertices)
+    if not head_used or not moved:
+        return None
+    points = [mesh.vertices[index].co for index in head_used]
+    low = [min(point[axis] for point in points) for axis in range(3)]
+    high = [max(point[axis] for point in points) for axis in range(3)]
+    now = [high[axis] - low[axis] for axis in range(3)]
+    # Halo space is (depth, width, height); the export is (width, height, depth).
+    # The same three extents, turned once by to_halo_space.
+    want = [box[1][2] - box[0][2], box[1][0] - box[0][0], box[1][1] - box[0][1]]
+    if min(now) <= 0 or min(want) <= 0:
+        return None
+    # The height the fit gave the head is kept; width and depth are brought back
+    # into the export's own ratio to it.
+    scale = now[2] / want[2]
+    factors = [(want[axis] * scale) / now[axis] for axis in range(3)]
+    if not all(0.5 <= factor <= 2.0 for factor in factors):
+        log("port: the head's proportions are off by %s of the export's own - "
+            "too far to correct, left as the fit put it"
+            % ", ".join("x%.2f" % factor for factor in factors))
+        return None
+    centre = [(low[axis] + high[axis]) / 2.0 for axis in range(3)]
+    for index in moved:
+        point = mesh.vertices[index].co
+        mesh.vertices[index].co = tuple(
+            centre[axis] + (point[axis] - centre[axis]) * factors[axis]
+            for axis in range(3))
+    mesh.update()
+    return factors
 
 
 def join_meshes(meshes, name):
@@ -4160,6 +4245,9 @@ def main():
     for record, path in items:
         meshes = import_obj(path)
         label = record.get("name") or record["id"]
+        ported_materials = None
+        ported_head_material = None
+        ported_box = None
         is_body = body is not None and record is body[0]
         # Avatar space is y-up in metres, so anything stopping below 1.45 m is
         # missing its head and shoulders and needs the base body underneath.
@@ -4180,6 +4268,9 @@ def main():
                     meshes = meshes + ported["objects"]
                     record["port"] = ported["lines"]
                     port_textures[item_stem(record)] = ported["textures"]
+                    ported_materials = ported["material_objects"]
+                    ported_head_material = ported["head_material"]
+                    ported_box = ported["box"]
             else:
                 log("--port not used for %s: it stops at %.2f m, so it is worn on a "
                     "body - the catalogue's body fills what it leaves bare"
@@ -4238,6 +4329,15 @@ def main():
                 if fitted:
                     record["biped_fit"] = fitted
                     merged["biped_fit"] = fitted["lines"][0]
+                    # Before the rebind, so the weights are read off the shape
+                    # the head actually ships with.
+                    kept = refit_ported(merged, ported_materials,
+                                        ported_head_material, ported_box)
+                    if kept:
+                        record["port"] = (record.get("port") or []) + [
+                            "head shape: the export's own proportions at the "
+                            "height the fit gave it (width x%.3f, depth x%.3f)"
+                            % (kept[0], kept[1])]
                     record["binding"] = rebind(merged, armature)
             if arms_item is None and armature_fp:
                 # Nothing on an arm bone (a hat, a badge). The second set still

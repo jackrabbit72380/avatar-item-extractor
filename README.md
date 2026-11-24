@@ -685,7 +685,17 @@ The export is already in the space items are authored in - y-up metres, the
 avatar's own T-pose - so the head needs no scale and no offset. It lands where
 the avatar's head is, which is where the item's collar expects it. Only the
 texture coordinates are flipped once, because glTF runs them top-down and this
-pipeline runs them bottom-up. The face is static geometry: no blink, no eye
+pipeline runs them bottom-up.
+
+Its proportions are put back afterwards. A whole body is fitted joint by joint,
+and the head straddles two of those joints - the neck and the head - whose bones
+the fit scales and turns by different amounts, so a face blended between them
+comes out stretched: measured, 6.7% wider and 3.5% shorter than the file's own
+head, which reads as a squashed face with the brow down on the eyes. The port
+restores the export's own width and depth at the height the fit gave the head,
+and moves only the ported vertices - after that correction the head's
+width-to-height ratio matches the export's to four decimals (0.7275 against
+0.7274) and its depth-to-height to the same (0.9034 against 0.9034). The face is static geometry: no blink, no eye
 movement, nothing that needs an animation to look right from outside.
 
 What a ported item gains:
