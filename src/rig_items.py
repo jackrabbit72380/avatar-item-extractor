@@ -724,13 +724,13 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
             log("port: the face is painted on %d sheets at different brightness "
                 "(%s), so each is brought to %s - one face, one colour"
                 % (len(measured), ", ".join(str(each) for each in measured), tone))
-    # The two halves of the head are graded differently, and a grading is a
-    # curve rather than a gain, so one tone a sheet is not enough: measured on
-    # this head the halves were a few levels apart at the cheek and nineteen at
-    # the forehead - level in the middle, a line at the ends. The second half's
-    # tones are therefore matched to the first half's as a DISTRIBUTION, over
-    # the texels each half actually shows. That removes the curve itself and
-    # leaves both halves' own painting where it is.
+    # The two halves of the head are painted on two different sheets, and the
+    # sheets are graded differently - a few levels apart at the cheek, nineteen
+    # at the forehead. The halves are exact mirrors of one another, so the
+    # second half is simply given the first half's paint instead of having its
+    # own tones nudged towards it: every texel the second half shows is placed
+    # on the head, reflected across the midline, and taken from the point the
+    # first sheet paints there. One paint, so one colour, so no join.
     halves = [mesh for mesh in sheets if mesh["image"] in decoded]
     if len(halves) > 1:
         ref = halves[0]
@@ -739,18 +739,16 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
             if other["image"] == ref["image"]:
                 continue
             pixels, width, height = decoded[other["image"]]
-            matched, done = glb_model.match_histogram(
-                pixels, width, height, tone_masks.get(other["image"]),
-                ref_pixels, tone_masks.get(ref["image"]))
+            painted, done, missed = glb_model.repaint_through_mirror(
+                pixels, width, height, other, ref_pixels, ref_w, ref_h, ref)
             if not done:
                 continue
             model["images"][other["image"]]["data"] = face_eyes.png_bytes(
-                matched, width, height)
-            decoded[other["image"]] = (matched, width, height)
-            log("port: the second half of the head is graded differently from "
-                "the first - a curve, not a gain - so its tones are matched to "
-                "the first as a distribution over the texels each half shows, "
-                "and the join is one tone from brow to chin")
+                painted, width, height)
+            decoded[other["image"]] = (painted, width, height)
+            log("port: the second half of the head now wears the first half's "
+                "paint - %d texels taken through the mirror, %d left alone - so "
+                "the join is one colour" % (done, missed))
     # The hair's colour, read off the face before anything is written: see the
     # note in port_material, where the grey hair sheet is painted with it.
     hair_tone = None

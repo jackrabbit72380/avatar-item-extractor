@@ -697,58 +697,109 @@ def paint_uv_patch(rgba, width, height, uv_triangles, colour, pale=236):
     return pixels, painted
 
 
-def tone_curve(rgba, mask, channel, bins=256):
-    """The cumulative share of a sheet's texels at or below each value."""
-    hist = [0] * bins
-    for at in range(0, len(rgba), 4):
-        if mask is not None and not mask[at >> 2]:
-            continue
-        hist[rgba[at + channel]] += 1
-    total = sum(hist)
-    running = 0
-    curve = []
-    for value in hist:
-        running += value
-        curve.append(running / float(total) if total else 1.0)
-    return curve
+def _surface_samples(mesh, pixels, width, height):
+    """Walk a sheet's triangles: every texel it paints, where it sits on the head.
 
-
-def match_histogram(rgba, width, height, mask, reference, ref_mask):
-    """Give a sheet the tone distribution the other half of the face shows.
-
-    Two sheets, two gradings, and the grading is a CURVE, not a gain: on this
-    head the halves were a few levels apart at the cheek and nineteen at the
-    forehead, which is why matching their medians left a visible line - the
-    middle came out level and the ends did not. A curve is what a histogram
-    equalises: each value is moved to the value that the other sheet has the
-    same share of texels at or below, so the two halves end up with the same
-    distribution of tones however they were graded.
-
-    Measured over the texels each half actually shows, not over the whole
-    sheets, because a sheet is mostly padding. Returns (pixels, true) or the
-    sheet unchanged when there is nothing to measure.
+    Returns (points, colours, texels): the position each texel represents in
+    model space, the colour it currently shows, and its (x, y) in the sheet.
     """
-    if mask is None or ref_mask is None:
-        return bytearray(rgba), False
-    tables = []
-    for channel in range(3):
-        here = tone_curve(rgba, mask, channel)
-        there = tone_curve(reference, ref_mask, channel)
-        table = []
-        for value in range(256):
-            want = here[value]
-            best, best_gap = 0, 9.0
-            for other in range(256):
-                gap = abs(there[other] - want)
+    positions = mesh["positions"]
+    uvs = mesh["uvs"]
+    points = []
+    colours = []
+    texels = []
+    for tri in mesh["triangles"]:
+        try:
+            corners = [positions[int(i)] for i in tri]
+            uv = [(uvs[int(i)][0] * width, uvs[int(i)][1] * height) for i in tri]
+        except (IndexError, TypeError):
+            continue
+        (ax, ay), (bx, by), (cx, cy) = uv
+        det = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+        if abs(det) < 1e-12:
+            continue
+        x0, x1 = max(0, int(min(ax, bx, cx))), min(width - 1, int(max(ax, bx, cx)) + 1)
+        y0, y1 = max(0, int(min(ay, by, cy))), min(height - 1, int(max(ay, by, cy)) + 1)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        for y in range(y0, y1 + 1):
+            py = y + 0.5
+            for x in range(x0, x1 + 1):
+                px = x + 0.5
+                w0 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / det
+                w1 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / det
+                w2 = 1.0 - w0 - w1
+                if w0 < -1e-6 or w1 < -1e-6 or w2 < -1e-6:
+                    continue
+                at = (y * width + x) * 4
+                points.append((w0 * corners[0][0] + w1 * corners[1][0] + w2 * corners[2][0],
+                               w0 * corners[0][1] + w1 * corners[1][1] + w2 * corners[2][1],
+                               w0 * corners[0][2] + w1 * corners[1][2] + w2 * corners[2][2]))
+                colours.append((pixels[at], pixels[at + 1], pixels[at + 2]))
+                texels.append((x, y))
+    return points, colours, texels
+
+
+def repaint_through_mirror(pixels, width, height, mesh, source, src_width,
+                           src_height, src_mesh, cell=0.004):
+    """Paint a head half's sheet with the other half's paint, through the mirror.
+
+    A 360sona head is one surface in two halves on two sheets, and the two
+    sheets are graded differently - a few levels apart at the cheek and nineteen
+    at the forehead. Since the halves are exact mirrors of one another (the
+    pairing is good to five microns), the second half can simply WEAR the first
+    half's paint: each texel it shows is placed on the head, reflected across
+    the midline, and given the colour the other sheet shows at that same point.
+
+    That is the one thing a tone match cannot do - it makes the two halves
+    agree statistically, this makes them the same paint, so the join cannot show.
+
+    Point-to-point rather than triangle-to-triangle on purpose: the halves have
+    different vertex counts (455 and 496), so a triangle on one side does not
+    mirror onto a triangle on the other, only onto the same surface between a
+    few of them. Returns (pixels, painted, missed).
+    """
+    points, colours, texels = _surface_samples(mesh, pixels, width, height)
+    if not points:
+        return bytearray(pixels), 0, 0
+    src_points, src_colours, _ = _surface_samples(
+        src_mesh, source, src_width, src_height)
+    if not src_points:
+        return bytearray(pixels), 0, 0
+
+    # Bucket the other half's paint by where it lands once reflected, so each
+    # texel here only has to look in its own voxel and the ones around it.
+    buckets = {}
+    for at, (x, y, z) in enumerate(src_points):
+        key = (int(-x // cell), int(y // cell), int(z // cell))
+        buckets.setdefault(key, []).append(at)
+    nearby = [(dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)]
+
+    out = bytearray(pixels)
+    painted = 0
+    missed = 0
+    for at, point in enumerate(points):
+        key = (int(point[0] // cell), int(point[1] // cell), int(point[2] // cell))
+        best = None
+        best_gap = 1e18
+        for dx, dy, dz in nearby:
+            found = buckets.get((key[0] + dx, key[1] + dy, key[2] + dz))
+            if not found:
+                continue
+            for other in found:
+                sx, sy, sz = src_points[other]
+                gap = ((sx + point[0]) ** 2 + (sy - point[1]) ** 2 + (sz - point[2]) ** 2)
                 if gap < best_gap:
                     best_gap, best = gap, other
-            table.append(best)
-        tables.append(table)
-    pixels = bytearray(rgba)
-    for at in range(0, len(pixels), 4):
-        for channel in range(3):
-            pixels[at + channel] = tables[channel][pixels[at + channel]]
-    return pixels, True
+        x, y = texels[at]
+        to = (y * width + x) * 4
+        if best is None:
+            missed += 1
+            continue
+        r, g, b = src_colours[best]
+        out[to], out[to + 1], out[to + 2] = r, g, b
+        painted += 1
+    return out, painted, missed
 
 
 def bleed_padding(rgba, width, height, passes=6, tolerance=6, neutral=18):
