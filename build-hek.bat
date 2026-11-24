@@ -9,11 +9,13 @@ rem    tool bitmaps "<build>\bitmaps"    .tif -> .bitmap tags
 rem    tool model   "<build>"            .jms -> .gbxmodel
 rem
 rem  Put this file in the item's output folder - beside "extracted for hek
-rem  users" - and run it. A kit that is already unpacked in the same place is
-rem  found on its own: tool.exe beside this file, one folder up or one folder
-rem  down is used without asking anything. hek_path.txt is only the fallback for
-rem  a kit somewhere else. Everything it does is logged to build-hek.log, which
-rem  is what to paste if something fails.
+rem  users" - and run it. A kit that is already unpacked near it is found on its
+rem  own: the folder holding tool.exe beside this file, one folder up, one folder
+rem  down, or next to this folder is used without asking anything. The folder's
+rem  name is never looked at - H1-EK, HCEEK, hcex, whatever yours is called is a
+rem  kit because tool.exe is in it. hek_path.txt is only the fallback for a kit
+rem  somewhere else. Everything it does is logged to build-hek.log, which is what
+rem  to paste if something fails.
 rem
 rem  One data folder is built per channel order: data\<item>\ - the item's own
 rem  colours with the team-colour mask bound and any decal blended into the base
@@ -37,15 +39,26 @@ set "ORDER=%~1"
 if not defined ORDER set "ORDER=pc"
 set "OUT=%~dp0"
 set "LOG=%OUT%build-hek.log"
-rem  The kit is usually right here - H1-EK unpacked beside the builds, or this
-rem  file dropped into H1-EK - so look beside this file, one folder up and one
-rem  folder down before asking where it is. Typing a path that is already
-rem  sitting next to the script is not a step anybody should have to take.
+rem  The kit is usually right here - unpacked beside the builds under whatever
+rem  name its folder has, or with this file dropped into it - so look around
+rem  before asking: beside this file, one folder up, one folder down, and the
+rem  folders next to this one. tool.exe is the only thing that says a folder is
+rem  a kit, so the name never matters. Typing a path that is already sitting
+rem  next to the script is not a step anybody should have to take.
 set "HEK="
 if exist "%OUT%tool.exe" set "HEK=%OUT:~0,-1%"
 if not defined HEK if exist "%OUT%..\tool.exe" set "HEK=%OUT%.."
 if not defined HEK for /d %%D in ("%OUT%*") do if not defined HEK if exist "%%D\tool.exe" set "HEK=%%D"
-if defined HEK goto run
+if not defined HEK for /d %%D in ("%OUT%..\*") do if not defined HEK if exist "%%D\tool.exe" set "HEK=%%D"
+if not defined HEK goto saved
+rem  A folder found by looking around can be named with "..\" in its path; make
+rem  it the plain folder, so the log and the copy name the kit as it really is.
+pushd "%HEK%"
+set "HEK=%CD%"
+popd
+goto run
+
+:saved
 if exist "%OUT%hek_path.txt" set /p HEK=<"%OUT%hek_path.txt"
 if not defined HEK goto ask
 if not exist "%HEK%\tool.exe" goto ask
@@ -53,10 +66,12 @@ goto run
 
 :ask
 echo.
-echo   No tool.exe was found beside this file, one folder up or one folder down.
+echo   No tool.exe was found beside this file, one folder up, one folder down or
+echo   in a folder next to this one.
 echo   Where is your Halo editing kit? That is the folder holding tool.exe,
-echo   data\ and tags\, for example:
-echo     C:\Program Files ^(x86^)\Steam\steamapps\common\Halo The Master Chief Collection\halo1\H1-EK
+echo   data\ and tags\ - whatever that folder is called on your machine. For
+echo   example, a kit folder named HCEEK:
+echo     C:\Program Files ^(x86^)\Steam\steamapps\common\Halo The Master Chief Collection\halo1\HCEEK
 echo.
 set /p HEK=Path: 
 if not exist "%HEK%\tool.exe" (
