@@ -281,8 +281,14 @@ def same_box(one, other, share=0.01):
 # instead of clothes. So the pieces below are left out under one, and anything
 # else - glasses, a ring, a watch - stays: those sit on skin the costume does
 # not cover, and a person should not have to undress their avatar to wear it.
+# Hair is NOT in this list. A costume's headwear is a hat or a helmet, and it
+# sits on top of a head rather than replacing the hair on it: dropping the hair
+# with the clothes left a bare skull, and the skull is painted by the face
+# sheets, which carry nothing at the back - so the nape came out as pale
+# unpainted facets under the helmet's rim. The hair is the part that covers it.
+# The item's own copy is still dropped, by name and by its box, in choose().
 REPLACED_BY_COSTUME = frozenset((
-    "hair", "headwear", "shirt", "trousers", "shorts", "skirt", "dress",
+    "headwear", "shirt", "trousers", "shorts", "skirt", "dress",
     "coat", "jacket", "shoes", "socks", "boots", "gloves", "belt",
 ))
 # A costume is the whole figure, so it takes the place of the body itself and not
@@ -564,6 +570,133 @@ def fill_unpainted(rgba, width, height, value=UNPAINTED, tolerance=6):
     return pixels, filled
 
 
+def ink_tones(rgba, width, height, limit=300):
+    """The colour a face is drawn in where it is not skin: brows, lash, beard.
+
+    An export paints the hair sheet flat grey - the hair's colour is the site's,
+    applied when it draws the avatar, and never lands in the file - but it does
+    paint the same hair on the face, as brows and beard. So the colour the hair
+    is meant to be is already in the export, one sheet over: this reads it. The
+    median of the dark warm texels, so a black pupil or a white tooth does not
+    move it.
+    """
+    samples = []
+    for at in range(0, len(rgba), 4):
+        red, green, blue = rgba[at], rgba[at + 1], rgba[at + 2]
+        if red + green + blue < limit and red > blue + 8:
+            samples.append((red, green, blue))
+    if not samples:
+        return None
+    samples.sort()
+    return samples[len(samples) // 2]
+
+
+def paint_blank(rgba, width, height, colour, value=UNPAINTED, tolerance=6,
+                neutral=18):
+    """Paint the neutral texels of a sheet the export handed over unpainted.
+
+    The hair arrives like this: flat mid grey where the sheet was left alone,
+    a little white, and the rest neutral greys - the colour is the site's and
+    never lands in the file. On this sheet 61% of it is the flat grey, and
+    painting only that left the part the head's own triangles read still pale.
+
+    So it paints every texel that is neutral - max and min channel within
+    `neutral` of each other - which is grey, white and the shading between, and
+    leaves any texel with a colour alone. A hair sheet that WAS painted is warm
+    or cool hair, not grey, so it is not touched. Returns (pixels, painted).
+    """
+    pixels = bytearray(rgba)
+    painted = 0
+    for at in range(0, len(pixels), 4):
+        red, green, blue = pixels[at], pixels[at + 1], pixels[at + 2]
+        grey = (abs(red - value) <= tolerance
+                and abs(green - value) <= tolerance
+                and abs(blue - value) <= tolerance)
+        if grey or max(red, green, blue) - min(red, green, blue) <= neutral:
+            pixels[at], pixels[at + 1], pixels[at + 2] = colour
+            painted += 1
+    return pixels, painted
+
+
+def tint_base(rgba, width, height, colour, value=UNPAINTED, tolerance=6, limit=2.0):
+    """Colour a sheet whose paint is an untinted base, keeping its shading.
+
+    The hair is painted - there is a hair sheet, with strands on it - but it is
+    painted in the site's base colour and the hair's own colour is mixed in when
+    the avatar is drawn, so the file carries a cream head of hair whatever the
+    avatar's hair looks like. Filling the flat grey with brown (the first thing
+    tried here) leaves every strand cream and only browns the padding around
+    them, which is a white head with a brown background behind it.
+
+    So the base is measured - the median of the sheet's own paint, leaving out
+    the flat grey padding - and one gain a channel maps that base on to the
+    colour the hair is meant to be. The strands keep their light and dark, and
+    the whole sheet is the avatar's hair colour. Returns (pixels, gain).
+    """
+    samples = []
+    for at in range(0, len(rgba), 4):
+        red, green, blue = rgba[at], rgba[at + 1], rgba[at + 2]
+        if (abs(red - value) <= tolerance and abs(green - value) <= tolerance
+                and abs(blue - value) <= tolerance):
+            continue
+        samples.append((red, green, blue))
+    if not samples:
+        return bytearray(rgba), None
+    samples.sort()
+    base = samples[len(samples) // 2]
+    gain = [min(limit, float(colour[channel]) / max(base[channel], 1))
+            for channel in range(3)]
+    tables = [[min(255, int(round(pixel * gain[channel]))) for pixel in range(256)]
+              for channel in range(3)]
+    pixels = bytearray(rgba)
+    for at in range(0, len(pixels), 4):
+        for channel in range(3):
+            pixels[at + channel] = tables[channel][pixels[at + channel]]
+    return pixels, tuple(round(value, 3) for value in gain)
+
+
+def paint_uv_patch(rgba, width, height, uv_triangles, colour, pale=236):
+    """Paint the texels a set of triangles covers, where they are near-white.
+
+    The back of a 360sona head is not painted: the sheet carries white there,
+    the same white as the padding around the face, and the hair in the file is
+    a fringe that sits inside the skull, so nothing covers it. The scalp is on
+    the sheet as white, in the place the head's rear triangles read, and that
+    place is exactly what this fills - from the same hair colour the face's own
+    brows are drawn in.
+
+    Only near-white texels take the colour, so what the export DID paint at the
+    back - an ear, the nape, the line of a jaw - stays as it was painted.
+    Triangles come as three (u, v) pairs in glTF's convention, v up from the
+    bottom of the picture. Returns (pixels, number painted).
+    """
+    pixels = bytearray(rgba)
+    painted = 0
+    for a, b, c in uv_triangles:
+        det = ((b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]))
+        if abs(det) < 1e-12:
+            continue
+        xs = [a[0] * width, b[0] * width, c[0] * width]
+        ys = [a[1] * height, b[1] * height, c[1] * height]
+        x0, x1 = max(0, int(min(xs)) - 1), min(width - 1, int(max(xs)) + 1)
+        y0, y1 = max(0, int(min(ys)) - 1), min(height - 1, int(max(ys)) + 1)
+        for y in range(y0, y1 + 1):
+            py = (y + 0.5) / height
+            for x in range(x0, x1 + 1):
+                px = (x + 0.5) / width
+                one = ((b[1] - c[1]) * (px - c[0]) + (c[0] - b[0]) * (py - c[1])) / det
+                two = ((c[1] - a[1]) * (px - c[0]) + (a[0] - c[0]) * (py - c[1])) / det
+                three = 1.0 - one - two
+                if one < -0.02 or two < -0.02 or three < -0.02:
+                    continue
+                at = (y * width + x) * 4
+                if (pixels[at] >= pale and pixels[at + 1] >= pale
+                        and pixels[at + 2] >= pale):
+                    pixels[at], pixels[at + 1], pixels[at + 2] = colour
+                    painted += 1
+    return pixels, painted
+
+
 def skin_tones(rgba, width, height):
     """The colour of the skin a sheet is painted in: the median of its skin texels.
 
@@ -582,7 +715,7 @@ def skin_tones(rgba, width, height):
     return samples[len(samples) // 2]
 
 
-def match_tone(rgba, width, height, target, limit=0.45):
+def match_tone(rgba, width, height, target, limit=0.45, passes=6, close=2):
     """Bring a sheet's skin to a target colour, by one gain across the sheet.
 
     A 360sona export paints the two halves of a face on two sheets, and the two
@@ -592,27 +725,50 @@ def match_tone(rgba, width, height, target, limit=0.45):
     whole sheet, keeps every painted feature where it is and only moves the
     colour, so the face ends up one colour instead of two.
 
+    The gain is measured again after it is applied, and applied again if it did
+    not land. One pass is not enough to guarantee one tone: scaling the sheet
+    moves texels in and out of the warm mid-range skin_tones counts, so the
+    median it reads afterwards is not the median the gain was worked out from.
+    Measured on this head, one pass left the pale half at (207, 149, 99) against
+    the (192, 140, 93) both sheets were aimed at - 15 levels, which draws as a
+    line down the nose - and the second pass closed it to within 2.
+
     Returns (pixels, gain) or (pixels, None) when the sheet has no skin to
-    measure. The gain is refused if it is far enough out to be a mistake rather
-    than a grading difference.
+    measure or already sits on the target. A gain that would leave the sheet
+    more than `limit` away from where it started is refused: that is a mistake
+    in what was matched, not a grading difference, and stretching the whole
+    face by it would be worse than the two-tone it was meant to fix.
     """
+    total = [1.0, 1.0, 1.0]
+    if skin_tones(rgba, width, height) is None:
+        return bytearray(rgba), None
     pixels = bytearray(rgba)
-    measured = skin_tones(rgba, width, height)
-    if measured is None:
-        return pixels, None
-    gain = []
-    for channel in range(3):
-        want = float(target[channel]) / max(measured[channel], 1)
-        if not (1.0 - limit <= want <= 1.0 + limit):
-            return pixels, None
-        gain.append(want)
-    # One lookup table a channel, rather than a multiply per texel.
-    tables = [[min(255, int(round(value * gain[channel]))) for value in range(256)]
-              for channel in range(3)]
-    for at in range(0, len(pixels), 4):
-        for channel in range(3):
-            pixels[at + channel] = tables[channel][pixels[at + channel]]
-    return pixels, tuple(round(g, 3) for g in gain)
+    moved = False
+    for _ in range(passes):
+        measured = skin_tones(pixels, width, height)
+        if measured is None:
+            break
+        if all(abs(measured[channel] - target[channel]) <= close
+               for channel in range(3)):
+            break
+        step = [float(target[channel]) / max(measured[channel], 1)
+                for channel in range(3)]
+        wanted = [total[channel] * step[channel] for channel in range(3)]
+        if any(abs(value - 1.0) > limit for value in wanted):
+            if not moved:
+                return bytearray(rgba), None
+            break
+        # One lookup table a channel, rather than a multiply per texel.
+        tables = [[min(255, int(round(value * step[channel]))) for value in range(256)]
+                  for channel in range(3)]
+        for at in range(0, len(pixels), 4):
+            for channel in range(3):
+                pixels[at + channel] = tables[channel][pixels[at + channel]]
+        total = wanted
+        moved = True
+    if not moved:
+        return bytearray(rgba), None
+    return pixels, tuple(round(value, 3) for value in total)
 
 
 def power_of_two(value):

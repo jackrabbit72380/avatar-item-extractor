@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v75"
-BUILD = "2026-11-24 fetch-avatar"
+VERSION = "v76"
+BUILD = "2026-11-24 face-hair-fix"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -433,7 +433,37 @@ def item_stem(record):
         os.path.basename(record.get("obj") or record["id"]))[0]
 
 
-def port_material(mesh, stem, out, model, eyes_forward=False, tone=None):
+def back_uvs(mesh):
+    """The UV triangles of a head's rear - the part no face sheet paints.
+
+    A 360sona head is painted where a face is and left white everywhere else,
+    white being the sheet's own padding. Which place on the sheet that is is
+    only knowable from the geometry: these are the triangles whose own position
+    is behind the head, so the texels they read are the back of the skull.
+    """
+    points = mesh["positions"]
+    uvs = mesh["uvs"]
+    used = {index for triangle in mesh["triangles"] for index in triangle}
+    if not used or not uvs:
+        return []
+    low = min(points[index][2] for index in used)
+    high = max(points[index][2] for index in used)
+    if high - low <= 0:
+        return []
+    # The front 40% is the face and the sides; everything behind it is skull.
+    cut = high - 0.6 * (high - low)
+    behind = []
+    for triangle in mesh["triangles"]:
+        if sum(points[index][2] for index in triangle) / 3.0 > cut:
+            continue
+        if any(index >= len(uvs) for index in triangle):
+            continue
+        behind.append(tuple(tuple(uvs[index]) for index in triangle))
+    return behind
+
+
+def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
+                  hair_tone=None, scalp_uvs=None):
     """A Blender material for one ported mesh, and the pixels it needs.
 
     The image is written beside the item as `<stem> <material>.png` so the .blend
@@ -492,6 +522,43 @@ def port_material(mesh, stem, out, model, eyes_forward=False, tone=None):
         if filled:
             log("port: %s had %d unpainted texels of %d, filled from the skin "
                 "around them" % (name, filled, width * height))
+            written = face_eyes.png_bytes(rgba, width, height)
+    # Hair is handed over flat grey. Its colour is not lost from the file, it was
+    # never in it: the site mixes the hair colour when it draws the avatar, and
+    # the sheet it shares is the value a normal map is stored on. Left alone the
+    # hair - which is the whole back of the head under a helmet - draws as a
+    # white blob. The same hair IS painted on the face, as brows and beard, so
+    # the grey is painted in the colour those are drawn in.
+    if hair_tone and "hair" in name.lower():
+        rgba, hair_gain = glb_model.tint_base(rgba, width, height, hair_tone)
+        if hair_gain:
+            log("port: %s is painted in the site's untinted hair base - the "
+                "hair's own colour is mixed in when the avatar is drawn, and "
+                "never baked into the file - so the sheet is brought "
+                "x%.2f x%.2f x%.2f on to %s, the colour its own brows and beard "
+                "are drawn in" % ((name,) + hair_gain + (hair_tone,)))
+            written = face_eyes.png_bytes(rgba, width, height)
+        else:
+            rgba, painted = glb_model.paint_blank(rgba, width, height, hair_tone)
+            if painted:
+                log("port: %s arrived unpainted - the hair colour is the site's, "
+                    "not the file's - so its %d flat grey texels are painted in "
+                    "%s, the colour the face's own brows and beard are drawn in"
+                    % (name, painted, hair_tone))
+                written = face_eyes.png_bytes(rgba, width, height)
+    # The back of the head. Nothing paints it and nothing covers it: the hair
+    # in the file is a fringe, and it sits inside the skull's own surface, so a
+    # helmet leaves a head with a white back. The white is the sheet's padding,
+    # not paint, and only the geometry says which texels are the skull - so the
+    # rear triangles' texels are painted in the hair colour.
+    if scalp_uvs and hair_tone:
+        rgba, dashed = glb_model.paint_uv_patch(rgba, width, height, scalp_uvs,
+                                                hair_tone)
+        if dashed:
+            log("port: the back of %s is left unpainted - white, the padding's "
+                "white - so the %d texels its rear triangles read are painted in "
+                "%s, the hair colour the brows are drawn in"
+                % (name, dashed, hair_tone))
             written = face_eyes.png_bytes(rgba, width, height)
     with open(picture, "wb") as handle:
         handle.write(written)
@@ -625,6 +692,26 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
             log("port: the face is painted on %d sheets at different brightness "
                 "(%s), so each is brought to %s - one face, one colour"
                 % (len(measured), ", ".join(str(each) for each in measured), tone))
+    # The hair's colour, read off the face before anything is written: see the
+    # note in port_material, where the grey hair sheet is painted with it.
+    hair_tone = None
+    inks = []
+    seen_sheets = set()
+    for mesh in sheets:
+        if mesh["image"] is None or mesh["image"] in seen_sheets:
+            continue
+        seen_sheets.add(mesh["image"])
+        pixels, width, height = glb_model.decode_png(
+            model["images"][mesh["image"]]["data"])
+        found = glb_model.ink_tones(pixels, width, height)
+        if found:
+            inks.append(found)
+    if inks:
+        hair_tone = tuple(sum(each[channel] for each in inks) // len(inks)
+                          for channel in range(3))
+        log("port: the hair is drawn in the site's colour, not painted in the "
+            "file; the face's brows and beard are, at %s, so that is the colour "
+            "the hair is given" % (hair_tone,))
     objects = []
     for mesh in kept:
         label = "%s - %s" % (stem, mesh["material"])
@@ -659,8 +746,12 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
                     unique += "x"
                 shot = dict(mesh, material=unique)
             used_names.add(shot["material"])
+            scalp = (back_uvs(mesh)
+                     if hair_tone and "face" in mesh["material"].lower()
+                     else None)
             material, written = port_material(shot, stem, out, model,
-                                              eyes_forward=eyes_forward, tone=tone)
+                                              eyes_forward=eyes_forward, tone=tone,
+                                              hair_tone=hair_tone, scalp_uvs=scalp)
             made[key] = material
             if written:
                 textures.append(written)
@@ -781,6 +872,14 @@ def refit_ported(object_data, materials, head_materials, box):
 # resting on the collar - no neck at all - on every avatar whose body is whole.
 NECK_KEPT = 0.22
 
+# How wide the neck is, as a share of the narrower half-width of the head. The
+# cut keeps the band under the chin and nothing else, and the head's own box is
+# what says where the chin is, so the band is a cylinder up the head's axis. A
+# body is wider than this at the shoulders: on the avatar this was measured on
+# the head is 0.161 m either side of the nose and the T-pose arms reach 0.711 m,
+# so half the head's half-width keeps the neck and takes the rest.
+NECK_RADIUS = 0.5
+
 
 def cut_body(object_data, material, head_materials=None, neck=NECK_KEPT):
     """Take the avatar's own body out from under a costume, once it is scaled.
@@ -800,7 +899,11 @@ def cut_body(object_data, material, head_materials=None, neck=NECK_KEPT):
     between the head and the suit's collar. Cutting the material wholesale took
     the neck with it and left the chin sitting on the armour; keeping this band
     puts skin back where the suit's neck hole is, with the rest of the band
-    hidden inside the collar. Everything below it - torso, arms, legs - goes.
+    hidden inside the collar. Everything else - torso, arms, legs - goes, and
+    the arms are what need saying twice: they are held out at shoulder height,
+    so a cut drawn by height alone lets them through (see the axis measured
+    below), and a body left under a sleeve shows bare skin between the strips
+    of it. A face goes if it is below the floor OR away from the head's axis.
     """
     mesh = object_data.data
     slots = {index for index, slot in enumerate(object_data.material_slots)
@@ -811,6 +914,8 @@ def cut_body(object_data, material, head_materials=None, neck=NECK_KEPT):
     # than from a number guessed per avatar. The mesh is still y-up here: the
     # turn into Halo's axes happens after every scale is settled.
     floor = None
+    axis = None
+    radius = None
     head_slots = {index for index, slot in enumerate(object_data.material_slots)
                   if head_materials and slot.material in head_materials}
     if head_slots:
@@ -821,10 +926,34 @@ def cut_body(object_data, material, head_materials=None, neck=NECK_KEPT):
             low = min(point.y for point in points)
             high = max(point.y for point in points)
             floor = low - neck * (high - low)
+            # The head's axis, so the neck can be told from the shoulders. A
+            # height alone cannot do it: this avatar is 1.167 m tall at the top
+            # of the body and its T-pose arms sit at 1.05..1.17 m, which is
+            # ABOVE the head's bottom (1.129 m) - so a floor drawn below the
+            # head, which is what a share of the head's height below its lowest
+            # point is, leaves every one of those arm faces above the cut and
+            # they show through the sleeve. Distance from the head's axis does
+            # not care where the arms are held.
+            axis = ((min(point.x for point in points) + max(point.x for point in points)) / 2.0,
+                    (min(point.z for point in points) + max(point.z for point in points)) / 2.0)
+            radius = NECK_RADIUS * min(
+                (max(point.x for point in points) - min(point.x for point in points)) / 2.0,
+                (max(point.z for point in points) - min(point.z for point in points)) / 2.0)
     working = bmesh.new()
     working.from_mesh(mesh)
-    faces = [face for face in working.faces if face.material_index in slots
-             and (floor is None or max(vert.co.y for vert in face.verts) < floor)]
+    faces = []
+    for face in working.faces:
+        if face.material_index not in slots:
+            continue
+        verts = list(face.verts)
+        if floor is not None and max(vert.co.y for vert in verts) < floor:
+            faces.append(face)
+            continue
+        if axis is not None:
+            centre_x = sum(vert.co.x for vert in verts) / len(verts)
+            centre_z = sum(vert.co.z for vert in verts) / len(verts)
+            if ((centre_x - axis[0]) ** 2 + (centre_z - axis[1]) ** 2) ** 0.5 > radius:
+                faces.append(face)
     bmesh.ops.delete(working, geom=faces, context="FACES")
     working.to_mesh(mesh)
     working.free()
