@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v79"
-BUILD = "2026-11-24 hek-bitmaps"
+VERSION = "v80"
+BUILD = "2026-11-24 head-paint-gate"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -444,30 +444,63 @@ def uv_tris(mesh):
     return out
 
 
-def head_uvs(mesh):
-    """Every UV triangle of a head - all of it, for painting the bare parts.
+def skull_uvs(mesh, pixels, width, height):
+    """The UV triangles of the skull - the part of a head no sheet paints.
 
-    A 360sona head is painted where a face is and left white or flat grey
-    everywhere else: crown, nape, the sides, and the inside of a skull whose
-    faces are wound the other way. Which texels those are is not worth guessing
-    from the geometry - two attempts did, one by position and one by the
-    direction a triangle faces, and each left a bare patch the other did not -
-    so the whole head is nominated here and the colours decide: only the texels
-    with nothing painted on them take the skin (see paint_uv_patch and
-    bare_spread). The eyes are painted, so they are not touched.
+    A 360sona head is painted where a face is and left bare everywhere else:
+    white padding, the exporter's flat grey, and the inside of a skull whose
+    faces are wound the other way. Two rules find those places, and both are
+    needed. A triangle whose face points forward is the face and is left out
+    whole, which keeps the eyes and everything painted on them. Some of the
+    skull is wound the other way and points forward by its normal, so a triangle
+    also counts when the sheet has nothing painted where it reads AND its
+    position is behind the head's middle: the colour says it is bare, the
+    position says it is not the face.
+
+    Not every bare texel of the head, which was tried and which stamped flat
+    skin across the forehead of an avatar whose sheet is pale there as part of
+    its own face paint.
     """
+    points = mesh["positions"]
     uvs = mesh["uvs"]
-    triangles = []
+    used = {int(index) for triangle in mesh["triangles"] for index in triangle}
+    if not used or not uvs:
+        return []
+    depths = [points[index][2] for index in used if index < len(points)]
+    middle = (min(depths) + max(depths)) / 2.0 if depths else 0.0
+    skull = []
     for triangle in mesh["triangles"]:
-        if any(index >= len(uvs) for index in triangle):
+        if any(index >= len(uvs) or index >= len(points) for index in triangle):
             continue
-        triangles.append(tuple(tuple(uvs[int(index)]) for index in triangle))
-    return triangles
+        one, two, three = (points[int(index)] for index in triangle)
+        edge_one = [two[axis] - one[axis] for axis in range(3)]
+        edge_two = [three[axis] - one[axis] for axis in range(3)]
+        cross = (edge_one[1] * edge_two[2] - edge_one[2] * edge_two[1],
+                 edge_one[2] * edge_two[0] - edge_one[0] * edge_two[2],
+                 edge_one[0] * edge_two[1] - edge_one[1] * edge_two[0])
+        length = (cross[0] ** 2 + cross[1] ** 2 + cross[2] ** 2) ** 0.5
+        if length <= 0:
+            continue
+        behind = (one[2] + two[2] + three[2]) / 3.0 <= middle
+        take = (cross[2] / length) <= 0.3
+        if not take and behind and pixels is not None:
+            corners = [uvs[int(index)] for index in triangle]
+            x = min(width - 1, max(0, int(sum(corner[0] for corner in corners)
+                                      / 3.0 * width)))
+            y = min(height - 1, max(0, int(sum(corner[1] for corner in corners)
+                                       / 3.0 * height)))
+            at = (y * width + x) * 4
+            red, green, blue = pixels[at], pixels[at + 1], pixels[at + 2]
+            take = (max(red, green, blue) >= 100 and max(red, green, blue)
+                    - min(red, green, blue) <= 30)
+        if take:
+            skull.append(tuple(tuple(uvs[int(index)]) for index in triangle))
+    return skull
 
 
 def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
                   hair_tone=None, scalp_uvs=None, scalp_tone=None,
-                  tone_mask=None):
+                  tone_mask=None, outside_mask=None):
     """A Blender material for one ported mesh, and the pixels it needs.
 
     The image is written beside the item as `<stem> <material>.png` so the .blend
@@ -579,9 +612,9 @@ def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
     # Everything the head's own triangles do not read is padding, and a welded
     # seam can leave a corner reading it: laid down in skin, no stray corner can
     # show white on the head.
-    if scalp_tone and "face" in name.lower():
-        outside = glb_model.uv_coverage(width, height, uv_tris(mesh))
-        rgba = glb_model.paint_outside(rgba, width, height, outside, scalp_tone)
+    if scalp_tone and "face" in name.lower() and outside_mask is not None:
+        rgba = glb_model.paint_outside(rgba, width, height, outside_mask,
+                                       scalp_tone)
         written = face_eyes.png_bytes(rgba, width, height)
     with open(picture, "wb") as handle:
         handle.write(written)
@@ -748,16 +781,48 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
             if other["image"] == ref["image"]:
                 continue
             pixels, width, height = decoded[other["image"]]
-            painted, done, missed = glb_model.repaint_through_mirror(
+            painted, done, missed, gap, alike = glb_model.repaint_through_mirror(
                 pixels, width, height, other, ref_pixels, ref_w, ref_h, ref)
             if not done:
+                continue
+            # Only the same painting, graded twice, can be worn across. An avatar
+            # whose halves carry different art - one eye open, a brow, a scar -
+            # would have one side stamped over the other, which reads as half a
+            # face: the mirror is measured against what the texel already says,
+            # and if the two disagree the second half keeps its own paint.
+            if alike < 0.75:
+                log("port: the head's two sheets are not one face graded twice - "
+                    "their paintings agree only %.2f (1.0 is the same picture) - "
+                    "so the mirror copy is skipped and the second half keeps its "
+                    "own paint, %d levels off at the median"
+                    % (alike, gap))
                 continue
             model["images"][other["image"]]["data"] = face_eyes.png_bytes(
                 painted, width, height)
             decoded[other["image"]] = (painted, width, height)
             log("port: the second half of the head now wears the first half's "
-                "paint - %d texels taken through the mirror, %d left alone - so "
-                "the join is one colour" % (done, missed))
+                "paint - %d texels taken through the mirror, %d left alone, "
+                "agreeing %.2f - so the join is one colour"
+                % (done, missed, alike))
+    # What every mesh on a sheet reads, added up: a head painted on one sheet
+    # for both halves has two islands, and laying skin over "everything this
+    # half does not read" would paint the other half's face out - one eye, the
+    # rest flat skin, which is exactly what one avatar came back with.
+    outside = {}
+    for mesh in kept:
+        source = mesh.get("image")
+        if source is None or source >= len(model["images"]):
+            continue
+        size = decoded.get(source)
+        if size is None:
+            size = glb_model.decode_png(model["images"][source]["data"])
+            decoded[source] = size
+        width, height = size[1], size[2]
+        mask = outside.get(source)
+        if mask is None:
+            mask = bytearray(width * height)
+            outside[source] = mask
+        glb_model.uv_coverage(width, height, uv_tris(mesh), into=mask)
     # The hair's colour, read off the face before anything is written: see the
     # note in port_material, where the grey hair sheet is painted with it.
     # A bare head: with the hair gone there is nothing for the hair colour to
@@ -816,13 +881,18 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
                     unique += "x"
                 shot = dict(mesh, material=unique)
             used_names.add(shot["material"])
-            scalp = (head_uvs(mesh)
-                     if scalp_tone and "face" in mesh["material"].lower()
-                     else None)
+            scalp = None
+            if scalp_tone and "face" in mesh["material"].lower():
+                half = decoded.get(mesh["image"])
+                if half is None:
+                    half = glb_model.decode_png(
+                        model["images"][mesh["image"]]["data"])
+                scalp = skull_uvs(mesh, half[0], half[1], half[2])
             material, written = port_material(
                 shot, stem, out, model, eyes_forward=eyes_forward, tone=tone,
                 hair_tone=hair_tone, scalp_uvs=scalp, scalp_tone=scalp_tone,
-                tone_mask=tone_masks.get(mesh.get("image")))
+                tone_mask=tone_masks.get(mesh.get("image")),
+                outside_mask=outside.get(mesh.get("image")))
             made[key] = material
             if written:
                 textures.append(written)
