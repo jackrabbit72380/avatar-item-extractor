@@ -13,9 +13,9 @@ that way the tool needs nothing beside it, not even a ``rig`` folder.
 
 Unpack before editing, repack after:
 
-    python3 tools/payload.py unpack Extract-AvatarItem-v26.bat src/
+    python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v96.bat" src/
     # edit src/extract_items.py ...
-    python3 tools/payload.py pack Extract-AvatarItem-v26.bat src/ --rigs src/rig
+    python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v96.bat" src/ --rigs src/rig
 
 ``pack`` decodes its own output and refuses to write unless it matches the files
 it was given, so a half-written rebuild cannot be shipped.
@@ -146,7 +146,7 @@ def check_version(bat, head, version):
     problem = None
     if version not in os.path.basename(bat):
         problem = ("the file is called %s, but it carries VERSION %s - rename "
-                   "it, e.g. git mv to Extract-AvatarItem-%s.bat"
+                   "it, e.g. git mv to 'Extract <item> Avatar-%s.bat'"
                    % (os.path.basename(bat), version, version))
     elif ("Version : %s" % version) not in head:
         problem = ("its banner does not say 'Version : %s'" % version)

@@ -28,7 +28,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-BAT = max(glob.glob(os.path.join(ROOT, "Extract-AvatarItem-v*.bat")))
+BAT = max(glob.glob(os.path.join(ROOT, "Extract*v*.bat")))
 MODULES = os.environ.get("RIG_MODULES") or os.path.join(ROOT, "src")
 
 # Halo's two rig files. Without them there is no biped, so no halo set.

@@ -27,7 +27,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(HERE)
-BAT = max(glob.glob(os.path.join(ROOT_DIR, "Extract-AvatarItem-v*.bat")))
+BAT = max(glob.glob(os.path.join(ROOT_DIR, "Extract*v*.bat")))
 PACKAGE = "000000082C0C1281C54DAE304D5307E6"
 
 

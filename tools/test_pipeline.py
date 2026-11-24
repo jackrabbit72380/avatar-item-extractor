@@ -26,7 +26,7 @@ import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(HERE)
-BAT = max(glob.glob(os.path.join(ROOT_DIR, "Extract-AvatarItem-v*.bat")))
+BAT = max(glob.glob(os.path.join(ROOT_DIR, "Extract*v*.bat")))
 
 # Paths are the organised ones: max\ holds the model and its textures for Max,
 # blender\ holds the same textures for Blender's rigs, hek\<build>\data\ holds

@@ -22,7 +22,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-BAT = max(glob.glob(os.path.join(ROOT, "Extract-AvatarItem-v*.bat")))
+BAT = max(glob.glob(os.path.join(ROOT, "Extract*v*.bat")))
 
 
 def shipped(work):
