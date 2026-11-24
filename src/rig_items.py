@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v81"
-BUILD = "2026-11-24 eyes-intact"
+VERSION = "v82"
+BUILD = "2026-11-24 rig-audit"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -1678,6 +1678,41 @@ def retarget_body(object_data, armature, fit=1.0):
     log("fitted %s to the biped's bones: %s" % (object_data.name, line))
     return {"scale": scale, "height": tallest / HALO_UNITS_PER_METRE,
             "worst": worst, "joints": len(plan), "lines": ["biped fit : " + line]}
+
+
+def rig_audit(object_data, armature):
+    """Check that every vertex rides a bone, and say so in the report.
+
+    A model that ships with a vertex no bone claims is unrigged in Halo however
+    good it looks in Blender: tool.exe writes the weights it is given, and a
+    vertex with none collapses to the model's origin the moment the biped moves.
+    The check is cheap, so every item gets it, and it is written where the user
+    can read it rather than left to be discovered in game.
+    """
+    bones = {bone.name for bone in armature.data.bones} if armature else set()
+    groups = {group.index: group.name for group in object_data.vertex_groups}
+    total = len(object_data.data.vertices)
+    loose = 0
+    weakest = 1.0
+    on_bone = set()
+    for vertex in object_data.data.vertices:
+        ride = 0.0
+        for entry in vertex.groups:
+            name = groups.get(entry.group)
+            if name in bones and entry.weight > 0.0:
+                ride += entry.weight
+                on_bone.add(name)
+        if ride <= 0.0001:
+            loose += 1
+        weakest = min(weakest, ride)
+    line = ("%d vertices on %d bone(s), %d unweighted, lightest weight sum "
+            "%.3f" % (total, len(on_bone), loose, weakest if total else 0.0))
+    if loose:
+        log("rig: %s - %d of %d vertices ride no bone, so the model would be "
+            "unrigged in Halo" % (object_data.name, loose, total))
+    else:
+        log("rig: %s - %s" % (object_data.name, line))
+    return line
 
 
 def rebind(object_data, armature, rigid=False):
@@ -4465,6 +4500,8 @@ def report_text(options, records, stems, armature, nxe=None):
                 lines.append("  %s" % line)
         lines.append("  nxe rig   : %s" % (record.get("nxe_binding") or "not skinned"))
         lines.append("  bound to  : %s" % (record.get("binding") or "not skinned"))
+        if record.get("rig"):
+            lines.append("  rig check : %s" % record["rig"])
         if record.get("halo_file"):
             lines.append("  halo file : %s" % record["halo_file"])
         lines.append("  hek builds: data\\%s sp\\ (its own colours) and data\\%s"
@@ -5020,6 +5057,7 @@ def main():
                     "the accessories stay" % cut)
             to_halo_space(merged, scale, keep_position=prop, anchor=anchor)
             record["binding"] = skin(merged, armature, rigid=prop)
+            record["rig"] = rig_audit(merged, armature)
             # Only a prop rides one bone. Reading the binding line instead
             # takes any garment whose top-weighted bone happens to be an arm -
             # a tee's shoulders are on the upper arms - and puts the whole
@@ -5047,6 +5085,7 @@ def main():
                             "height the fit gave it (width x%.3f, depth x%.3f)"
                             % (kept[0], kept[1])]
                     record["binding"] = rebind(merged, armature)
+                    record["rig"] = rig_audit(merged, armature)
             if arms_item is None and armature_fp:
                 # Nothing on an arm bone (a hat, a badge). The second set still
                 # exists so every item has the pair tool.exe users expect, and
