@@ -84,8 +84,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v72"
-BUILD = "2026-11-24 model-on-the-biped-scale"
+VERSION = "v73"
+BUILD = "2026-11-24 item-height-in-the-log"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -697,6 +697,47 @@ def body_fit(armature, authored=AUTHORED_BODY_HEIGHT):
     if metres <= 0.0:
         return 1.0
     return metres / authored
+
+
+def keep_shape_scale(mesh, avatar, fit, authored=AUTHORED_BODY_HEIGHT):
+    """Bring a kept-shape model onto Halo's scale, one factor a part.
+
+    Halo cannot rescale a biped: the model's nodes are the skeleton its animation
+    graph drives by name, and the weapon in the hand, the pickup and the collision
+    capsule are all placed from them. So the model comes onto Halo's scale, and it
+    comes there by ONE uniform factor per part - never by stretching an axis,
+    which is what changes a mesh's shape:
+
+      * the avatar is scaled to the biped's height, fit x the 1.40 m body items
+        are authored for, so it ends exactly as tall as Halo's biped;
+      * the item, authored for that same 1.40 m body, is scaled by fit, so it
+        still covers the body it was made for.
+
+    `avatar` is the set of vertex indices belonging to the ported avatar; the
+    rest is the item. Returns the measurements that were applied, or None when
+    there is no avatar under the item to measure (nothing is moved then).
+    """
+    points = mesh.data.vertices
+    item = [vertex.co.y for index, vertex in enumerate(points)
+            if index not in avatar]
+    head = [points[index].co.y for index in avatar]
+    item_height = (max(item) - min(item)) if item else 0.0
+    avatar_height = (max(head) - min(head)) if head else 0.0
+    biped_height = fit * authored
+    if avatar_height <= 0.0 or item_height <= 0.0 or biped_height <= 0.0:
+        return None
+    to_biped = biped_height / avatar_height
+    for index, vertex in enumerate(points):
+        grow = to_biped if index in avatar else fit
+        vertex.co = (vertex.co.x * grow, vertex.co.y * grow, vertex.co.z * grow)
+    mesh.data.update()
+    return {"avatar_height": avatar_height,
+            "avatar_scale": to_biped,
+            "avatar_after": avatar_height * to_biped,
+            "item_height": item_height,
+            "item_scale": fit,
+            "item_after": item_height * fit,
+            "biped_height": biped_height}
 
 
 def biped_landmarks(armature):
@@ -4365,52 +4406,30 @@ def main():
                 heights = [vertex.co.y for vertex in merged.data.vertices]
                 authored = (max(heights) - min(heights)) if heights else 0.0
                 if ported_materials is not None:
-                    # The avatar keeps its own metres - a metre is a metre, so a
-                    # 1.85 m avatar stays 1.85 m - and the ITEM is what grows to
-                    # it. Items are authored against a 1.40 m avatar, so an
-                    # avatar of H metres wants the item at H / 1.40: the two keep
-                    # the relationship their files authored, and neither is
-                    # squashed. Shrinking the avatar to the biped instead (which
-                    # this did until v70) made a 1.85 m avatar a 1.45 m one;
-                    # leaving them both at 1:1 (v70) left a 1.51 m armour on a
-                    # 1.85 m body, which is the armour-too-small that follows.
                     ported_slots = {index for index, slot in enumerate(merged.material_slots)
                                     if slot.material in ported_materials}
                     avatar = set()
                     for polygon in merged.data.polygons:
                         if polygon.material_index in ported_slots:
                             avatar.update(polygon.vertices)
-                    heights = [merged.data.vertices[index].co.y for index in avatar]
-                    avatar_height = (max(heights) - min(heights)) if heights else 0.0
-                    if avatar_height > 0 and len(avatar) < len(merged.data.vertices):
-                        # Halo cannot rescale a biped: the .jms nodes ARE the
-                        # skeleton its animation graph drives by name, and the
-                        # attachments (weapon on the hand, pickup, the collision
-                        # capsule) are all placed from them. A model whose nodes
-                        # sit at their own height therefore does not line up with
-                        # the game - feet sink, weapons miss the hand. So the
-                        # model is brought onto Halo's own scale instead, and it
-                        # is brought there by ONE factor per part, never by
-                        # stretching an axis: the avatar goes to the biped's
-                        # height (fit x the 1.40 m body items are authored for),
-                        # and the item, authored for that same 1.40 m body, goes
-                        # by fit. Both keep their shape exactly.
-                        biped_height = fit * AUTHORED_BODY_HEIGHT
-                        to_biped = biped_height / avatar_height
-                        for index, vertex in enumerate(merged.data.vertices):
-                            grow = to_biped if index in avatar else fit
-                            vertex.co = (vertex.co.x * grow, vertex.co.y * grow,
-                                         vertex.co.z * grow)
-                        merged.data.update()
+                    placed = keep_shape_scale(merged, avatar, fit)
+                    if placed is not None:
+                        # Each part's own height, not the model's: reporting the
+                        # merged height as the item's is what made the log read
+                        # "its 1.850 m" for a 1.509 m armour.
                         log("%s brought onto Halo's scale: avatar x%.3f, %.3f m "
-                            "to the biped's %.3f m (its own shape, one factor); "
-                            "item x%.3f, authored for a %.2f m body, now on a "
-                            "%.2f m one"
-                            % (merged.name, to_biped, avatar_height, biped_height,
-                               fit, AUTHORED_BODY_HEIGHT, biped_height))
+                            "to the biped's %.3f m; item x%.3f, %.3f m to %.3f m "
+                            "(authored for a %.2f m body) - one uniform factor "
+                            "each, so neither changes shape"
+                            % (merged.name, placed["avatar_scale"],
+                               placed["avatar_height"], placed["biped_height"],
+                               placed["item_scale"], placed["item_height"],
+                               placed["item_after"], AUTHORED_BODY_HEIGHT))
+                    else:
+                        log("%s: no avatar under the item to measure, so it keeps "
+                            "the size it was authored: %.3f m"
+                            % (merged.name, authored))
                     scale = 1.0
-                    log("%s kept at the size the avatar was authored: %.3f m "
-                        "tall, x1.000" % (merged.name, authored))
                 elif authored > 0:
                     # No avatar to be the reference, so the item is what has to
                     # reach the biped: it grows to the biped's height, keeping
