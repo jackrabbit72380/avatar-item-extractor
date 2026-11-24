@@ -354,8 +354,8 @@ def main():
         # they are what the masks are read out of - so they are written as they
         # are, in their own colours, rather than only used and thrown away.
         slot_file = os.path.join(out2, "extracted for max users",
-                                 "Model Table Item slot 1 decal map.png")
-        print("  %s slot 1 decal map.png"
+                                 "Model Table Item decal map.png")
+        print("  %s decal map.png"
               % ("ok  " if os.path.exists(slot_file) else "MISS"))
         if not os.path.exists(slot_file):
             print("\nFAIL: the item's own decal slot was not written")
@@ -367,7 +367,7 @@ def main():
         for name in ("pc", "xbox"):
             tif = os.path.join(out2, "extracted for hek users", name, "data",
                                "Model Table Item", "bitmaps",
-                               "Model Table Item slot 1 decal map.tif")
+                               "Model Table Item decal map.tif")
             if not os.path.exists(tif):
                 print("\nFAIL: the slot .tif is missing from the %s bitmaps" % name)
                 return 1
@@ -785,7 +785,7 @@ def main():
         with open(os.path.join(out_tint, "report.txt"), encoding="utf-8") as handle:
             report_decal = handle.read()
         if ("base map + decal" not in report_decal
-                or "decal:     slot 2" not in report_decal):
+                or "decal:     material id 3 (table slot 2)" not in report_decal):
             print("\nFAIL: report.txt does not describe the decal blend")
             return 1
         # Both maps and the decal's own slot reach each channel order's bitmaps
@@ -796,7 +796,7 @@ def main():
                                    "data", "Tint Trap", "bitmaps")
             for name in ("Tint Trap base map.tif",
                          "Tint Trap base map + decal.tif",
-                         "Tint Trap slot 2 decal map.tif"):
+                         "Tint Trap decal map.tif"):
                 path = os.path.join(bitmaps, name)
                 if not os.path.exists(path) or os.path.getsize(path) == 0:
                     print("\nFAIL: the %s bitmaps are missing %s"

@@ -56,8 +56,11 @@ Test Item\
                         one colour layer and cannot blend a second texture at
                         run time. Both maps are in every folder, so the suit
                         can be looked at either way
-        Test Item slot 2 decal map.png  also .tga  the item's decal on its own,
-                        written as it came out of the model, colours and all
+        Test Item decal map.png  also .tga  the item's decal on its own, written
+                        as it came out of the model, colours and all. Named
+                        after the material id it is bound as (id 3), not its
+                        index in the texture table (slot 2) - the report gives
+                        both
         Test Item multipurpose.png  also .tga  Halo CE channel order
         Test Item change colour.png  also .tga  the team-colour mask
     extracted for blender users\
@@ -81,7 +84,7 @@ Test Item\
                         build the suit with its decal, or the plain .tif to
                         build it without
                         Test Item multipurpose.tif, Test Item change colour.tif,
-                        Test Item slot 2 decal map.tif  the item's own slots
+                        Test Item decal map.tif  the item's own slots
             models\     Test Item.jms  the model, named after the item
             animations\  empty until there are animation files to put here
             source\     Test Item - halo.blend, .fbx  what the model came from
@@ -550,7 +553,9 @@ suit can be built with the decal or without it.
 
   * `<stem> multipurpose.*` - Halo CE order. Colour change is the team colour,
     and the only thing an item states about it is its **tint mask** - a material's
-    parameter id 2, written beside the base map as `slot <n> tint mask`. The
+    parameter id 2, written beside the base map as `<stem> tint mask` - named after
+    the material id the shader binds, since the same texture is id 2 to the
+    material and some other index in the model's texture table. The
     avatar shader reads that mask as
     `lerp(base, red*C1 + green*C2 + blue*C3, alpha)`: red, green and blue pick
     which of the player's three custom colours a texel takes, and alpha is how
@@ -627,7 +632,7 @@ suit can be built with the decal or without it.
     it, or read `mask coverage:` in `report.txt`, for the fraction that takes
     the team colour. `multipurpose sp` is zero in every channel by design - it
     looks black because nothing is masked.
-  * `<stem> slot <n> tint mask.*`, `<stem> slot <n> decal map.*` - the item's
+  * `<stem> tint mask.*`, `<stem> decal map.*` - the item's
     own other textures, written as they came out of the model: real colour, real
     alpha, no resampling. The team colour is read out of the tint mask, and both
     are worth looking at beside the mask file, because a mask is black wherever

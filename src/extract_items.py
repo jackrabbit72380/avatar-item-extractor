@@ -606,7 +606,7 @@ HEK_KINDS = ("bitmaps", "models", "animations")
 def mask_orders(name):
     """Which Halo builds a bitmap is for: pc, xbox, or both."""
     low = name.lower()
-    if re.search(r" slot \d+ (tint mask|decal map)\.(png|tga|tif)$", low):
+    if re.search(r" (tint mask|decal map)\.(png|tga|tif)$", low):
         # A texture the item itself binds, so both builds get the .tif.
         return ("pc", "xbox")
     if "multipurpose" in low:
@@ -1835,14 +1835,16 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                          % (entry["slot"], entry["width"], entry["height"],
                             entry["name"]))
         else:
-            lines.append("slot %s:    %sx%s %s, written as %s slot %s %s.png/.tga/.tif"
+            lines.append("slot %s:    %sx%s %s (material id %s), written as"
+                         " %s %s.png/.tga/.tif"
                          % (entry["slot"], entry["width"], entry["height"],
-                            entry["name"], stem, entry["slot"], entry["name"]))
+                            entry["name"], entry["role"], stem, entry["name"]))
     overlay = facts.get("decal_overlay")
     if overlay:
-        lines.append("decal:     slot %s blended by its own alpha onto a copy of the"
-                     " base map - %s base map + decal.png/.tga/.tif; the item's own"
-                     " %s base map.png/.tga/.tif is left as it came"
+        lines.append("decal:     material id 3 (table slot %s) blended by its own"
+                     " alpha onto a copy of the base map - %s base map +"
+                     " decal.png/.tga/.tif; the item's own %s base map.png/.tga/.tif"
+                     " is left as it came"
                      % (overlay.get("slot"), stem, stem))
         lines.append("           %d of %d texels changed; read in UV set %s, the base"
                      " map's layout, because that is where its artwork traces the"
@@ -2375,7 +2377,12 @@ def main(argv=None):
                          "height": slot_texture["height"],
                          "blank": texture_flat(slot_texture)}
                 if not entry["blank"]:
-                    name = "%s slot %s %s" % (stem, entry["slot"], label)
+                    # Named after the slot the material binds it as, not its
+                    # index in the texture table: the same texture is "material
+                    # id 3" to the shader and "table slot 2" to the table, and
+                    # a file called "slot 2 decal map" read as though id 2 were
+                    # the decal. The report carries both numbers.
+                    name = "%s %s" % (stem, label)
                     base_name = os.path.join(out, name)
                     write_png(base_name + ".png", rgba, entry["width"], entry["height"])
                     write_tga(base_name + ".tga", rgba, entry["width"], entry["height"])
