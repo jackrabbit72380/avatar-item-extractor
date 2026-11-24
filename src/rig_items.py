@@ -84,8 +84,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v68"
-BUILD = "2026-11-24 avatar-fixes-on-by-default-and-one-model-per-build"
+VERSION = "v69"
+BUILD = "2026-11-24 bones-in-parent-space"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -3454,8 +3454,17 @@ def export_jms(object_data, armature, path):
 
     out = ["8200\t3251\t%d" % len(names)]
     for bone in bones:
-        turn = bone.matrix_local.to_quaternion()
-        head = bone.head_local
+        # Each node is written in its PARENT's space, not the model's. Halo's
+        # own biped says so: the marine's calf sits 15.87 along its thigh's X
+        # axis, not at its model-space position, and tool builds every bone from
+        # its parent's frame plus this line. Written in model space instead, the
+        # skeleton piles up - every bone placed as if it hung off the origin.
+        if bone.parent:
+            frame = bone.parent.matrix_local.inverted() @ bone.matrix_local
+        else:
+            frame = bone.matrix_local
+        turn = frame.to_quaternion()
+        head = frame.translation
         own = bone.name.replace(" ", "_")
         out.append("%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f" % (
             own, first_child[own], next_sibling[own],

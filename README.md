@@ -120,6 +120,14 @@ inside the item: `fp\bitmaps\` with the maps they compile against,
 `fp\models\` with their `.jms`, and `fp\source\` with their `.blend` and
 `.fbx`. There is deliberately no `tags\` in there: `tool.exe` writes its output
 to `tags\` at the HEK root, never inside `data\`.
+Each `.jms` writes every bone in its parent's space, because that is where Halo
+keeps a node: the marines' own model has its calf 15.87 along its thigh's axis,
+not at the calf's height above the floor. Written in the model's space instead,
+`tool.exe` builds the skeleton with every bone hung off the origin - a pile of
+garbage bones and no model in the viewer. The skeletons here rebuild from their
+`.jms` to within 0.00005 units of the armature they came from, and
+`tools/test_jms.py` fails if a node is ever written in the model's space again.
+
 Both channel orders ship because the port and the original Xbox read the masks
 differently; nothing is left for you to swap by hand. The `.png` and `.tga`
 copies are the same images as the `.tif`s, for the programs that do not read

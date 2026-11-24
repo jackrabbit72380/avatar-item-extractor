@@ -54,22 +54,32 @@ class Quaternion:
 
 
 class Matrix:
-    """Identity times a scalar - enough to check the writer, not to pose a rig."""
+    """A scale and a translation - enough to tell the model's space from the
+    parent's, which is the one thing a node line can get wrong."""
 
-    def __init__(self, scale=1.0):
+    def __init__(self, scale=1.0, translate=(0.0, 0.0, 0.0)):
         self.scale = scale
+        self.translate = tuple(float(value) for value in translate)
 
     def inverted(self):
-        return Matrix(1.0 / self.scale)
+        scale = 1.0 / self.scale
+        return Matrix(scale, tuple(-value * scale for value in self.translate))
 
     def to_3x3(self):
-        return self
+        return Matrix(self.scale)
 
     def __matmul__(self, other):
         if isinstance(other, Vector):
-            return Vector(other.x * self.scale, other.y * self.scale,
-                          other.z * self.scale)
-        return Matrix(self.scale * other.scale)
+            return Vector(self.translate[0] + other.x * self.scale,
+                          self.translate[1] + other.y * self.scale,
+                          self.translate[2] + other.z * self.scale)
+        return Matrix(self.scale * other.scale,
+                      tuple(self.translate[axis] + self.scale * other.translate[axis]
+                            for axis in range(3)))
+
+    @property
+    def translation(self):
+        return Vector(*self.translate)
 
     def to_quaternion(self):
         return Quaternion()
@@ -139,7 +149,10 @@ class Bone:
         self.name = name
         self.parent = parent
         self.head_local = head
-        self.matrix_local = Matrix()
+        # A bone's matrix_local puts its head where it is in the armature, so a
+        # bone away from the origin is what makes parent space and model space
+        # give different numbers.
+        self.matrix_local = Matrix(translate=(head.x, head.y, head.z))
 
 
 def build():
@@ -164,8 +177,8 @@ def build():
         vertex_groups=[Group(0, "bip01 pelvis"), Group(1, "bip01 spine")],
     )
 
-    pelvis = Bone("bip01 pelvis", None, Vector(0, 0, 0))
-    spine = Bone("bip01 spine", pelvis, Vector(0, 0, 1))
+    pelvis = Bone("bip01 pelvis", None, Vector(0, 0, 5.0))
+    spine = Bone("bip01 spine", pelvis, Vector(0, 0, 6.5))
     armature = types.SimpleNamespace(
         data=types.SimpleNamespace(bones=[pelvis, spine]),
         matrix_world=Matrix(),
@@ -213,6 +226,22 @@ def main():
     check(node[0] == "bip01_pelvis", "node name is %r" % node[0])
     check(node[1] == "1", "pelvis first child should be node 1, got %r" % node[1])
     check(node[2] == "-1", "pelvis next sibling should be -1, got %r" % node[2])
+    # The root is the one node whose translation is where it sits in the model.
+    check(abs(float(node[7])) < 1e-4 and abs(float(node[8])) < 1e-4
+          and abs(float(node[9]) - 5.0) < 1e-4,
+          "the root node should be where the armature puts it, got %r"
+          % (node[7:10],))
+
+    # Every other node is written in its PARENT's space. Halo builds the
+    # skeleton by walking the tree and adding each node's translation in its
+    # parent's frame, so a bone written in the model's space instead - 6.5 up
+    # rather than 1.5 above the pelvis - is a bone in the wrong place, and a
+    # skeleton of them is the pile a model viewer shows as garbage.
+    child = lines[2].split("\t")
+    check(abs(float(child[7])) < 1e-4 and abs(float(child[8])) < 1e-4
+          and abs(float(child[9]) - 1.5) < 1e-4,
+          "node 1 is not in its parent's space (expected 0 0 1.5): %r"
+          % (child[7:10],))
 
     cursor = 1 + len(armature.data.bones)
     check(lines[cursor] == "1", "material count is %r, expected 1" % lines[cursor])
