@@ -84,8 +84,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v66"
-BUILD = "2026-11-24 eyes-looking-forward"
+VERSION = "v67"
+BUILD = "2026-11-24 painted-materials-not-plastic"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -476,6 +476,19 @@ def port_material(mesh, stem, out, model, eyes_forward=False):
     surface = next((node for node in nodes if node.type == "BSDF_PRINCIPLED"), None)
     if surface is not None:
         links.new(texture.outputs["Color"], surface.inputs["Base Color"])
+        # The avatar's face and body are painted, not plastic: the export stores
+        # one colour per texel and no roughness, metalness or specular at all.
+        # A default Principled BSDF still gives it a 0.5 roughness sheen and a
+        # half-strength specular highlight, which is what made a ported face read
+        # as a shiny mask under Blender's lights. Halo's shader_model has no
+        # roughness channel either - it lights the base map and nothing else - so
+        # the material is set to match: fully rough, no metal, no specular.
+        for socket_name, value in (("Metallic", 0.0), ("Roughness", 1.0),
+                                   ("Specular IOR Level", 0.0),
+                                   ("Specular", 0.0)):
+            socket = surface.inputs.get(socket_name)
+            if socket is not None:
+                socket.default_value = value
     else:
         output = next((node for node in nodes
                        if node.type == "OUTPUT_MATERIAL"), None)

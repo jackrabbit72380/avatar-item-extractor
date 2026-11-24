@@ -676,6 +676,14 @@ Two things are deliberately not carried across:
   brighter, and the few that are darker are the mouth and chin. Halo lights the
   model itself, and the armour the head sits under has no vertex colours at all,
   so keeping them would light the face twice and from the wrong direction.
+- **Roughness, metalness and specular.** The export stores one colour per
+  texel and nothing else. A default Principled BSDF still gives that colour a
+  0.5-roughness sheen and a half-strength specular highlight, which reads as a
+  shiny mask on a painted face. The ported materials are therefore set fully
+  rough, non-metallic and with no specular, which is what Halo's
+  `shader_model` does with a base map. Blender's own view transform also
+  plays a part: `Standard` shows the texture as authored, `AgX` (the 5.x
+  default) washes it towards grey.
 - **The export's skeleton, weights and joints.** The head is bound to the biped
   and to the NXE skeleton by the same `skin()` pass as the item, so it needs no
   name map, no weight transfer and no retarget table: the joints that carry the
