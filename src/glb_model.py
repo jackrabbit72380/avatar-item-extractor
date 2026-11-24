@@ -180,23 +180,45 @@ def read(path):
         return (name, source)
 
     meshes = []
+    seen = set()
+    broken = []
     for mesh in document.get("meshes") or []:
         for primitive in mesh.get("primitives") or []:
             if primitive.get("mode", MODE_TRIANGLES) != MODE_TRIANGLES:
                 raise GlbError("%s is not drawn as triangles" % mesh.get("name"))
             if "POSITION" not in (primitive.get("attributes") or {}):
                 raise GlbError("%s has no positions" % mesh.get("name"))
-            positions = _accessor(document, binary, primitive["attributes"]["POSITION"])
+            positions = _accessor(document, binary,
+                                  primitive["attributes"]["POSITION"])
+            triangles = _indices(document, binary, primitive)
+            # The same geometry twice, whatever accessors or material index it
+            # was written under, draws twice. Two primitives that merely share a
+            # vertex array do not: a 360sona head is written as two halves over
+            # the same 648 vertices, 324 indices each and not one vertex shared,
+            # and dropping either would cut the head in two.
+            key = (tuple(tuple(round(value, 6) for value in point)
+                         for point in positions),
+                   tuple(tuple(triangle) for triangle in triangles))
+            if key in seen:
+                continue
+            seen.add(key)
             uvs = (_accessor(document, binary, primitive["attributes"]["TEXCOORD_0"])
                    if "TEXCOORD_0" in primitive["attributes"] else [])
             name, image = material_of(primitive)
+            if len(positions) >= 40 and len(triangles) * 2 < len(positions):
+                # A body of 1137 vertices carrying 34 triangles is how a broken
+                # export arrives; carried through silently it becomes a body a
+                # few centimetres tall and a model scaled x4.578 into a giant.
+                broken.append("%s: %d vertices but only %d triangles"
+                              % (mesh.get("name"), len(positions),
+                                 len(triangles)))
             meshes.append({
                 "name": mesh.get("name") or ("mesh%d" % len(meshes)),
                 "material": name,
                 "image": image,
                 "positions": positions,
                 "uvs": uvs,
-                "triangles": _indices(document, binary, primitive),
+                "triangles": triangles,
             })
 
     joints = []
@@ -205,6 +227,7 @@ def read(path):
             node = (document.get("nodes") or [{}])[index]
             joints.append(node.get("name") or ("node%d" % index))
     return {"meshes": meshes, "images": images, "joints": joints,
+            "broken": broken,
             "generator": (document.get("asset") or {}).get("generator", "")}
 
 

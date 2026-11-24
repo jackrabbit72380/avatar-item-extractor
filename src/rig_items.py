@@ -84,8 +84,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v73"
-BUILD = "2026-11-24 item-height-in-the-log"
+VERSION = "v74"
+BUILD = "2026-11-24 broken-export-guard"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -510,6 +510,9 @@ def import_port(path, stem, out, eyes_forward=False):
     no weights carried across from the file.
     """
     model = glb_model.read(path)
+    for note in model.get("broken") or []:
+        log("the .glb is not a body: %s - a mesh that thin is a broken export, "
+            "and the avatar it stands for cannot be measured or trusted" % note)
     kept, skipped = glb_model.choose(model, stem)
     made = {}
     textures = []
@@ -699,7 +702,32 @@ def body_fit(armature, authored=AUTHORED_BODY_HEIGHT):
     return metres / authored
 
 
-def keep_shape_scale(mesh, avatar, fit, authored=AUTHORED_BODY_HEIGHT):
+def stand_axis(mesh, avatar, low=0.60, high=3.00):
+    """Which axis the model stands up along.
+
+    Neither the item's file nor the avatar's is reliably y-up: an .obj arrives
+    z-up, a .glb y-up, and the port rotates one into the other's space. Reading
+    height off a fixed axis therefore measures whatever happens to lie along it
+    - on the 360sona avatar that was 0.417 m of depth, and the avatar was then
+    scaled x4.578 into a 6.9 m giant. The tallest span of the avatar itself is
+    its height, which is true of any standing figure, so that is the axis used.
+    """
+    points = mesh.data.vertices
+    spans = []
+    for axis in range(3):
+        values = [points[index].co[axis] for index in avatar]
+        if values:
+            spans.append(max(values) - min(values))
+        else:
+            spans.append(0.0)
+    order = sorted(range(3), key=lambda axis: -spans[axis])
+    for axis in order:
+        if low <= spans[axis] <= high:
+            return axis
+    return order[0]
+
+
+def keep_shape_scale(mesh, avatar, fit, authored=AUTHORED_BODY_HEIGHT, axis=None):
     """Bring a kept-shape model onto Halo's scale, one factor a part.
 
     Halo cannot rescale a biped: the model's nodes are the skeleton its animation
@@ -718,13 +746,22 @@ def keep_shape_scale(mesh, avatar, fit, authored=AUTHORED_BODY_HEIGHT):
     there is no avatar under the item to measure (nothing is moved then).
     """
     points = mesh.data.vertices
-    item = [vertex.co.y for index, vertex in enumerate(points)
+    if axis is None:
+        axis = stand_axis(mesh, avatar)
+    item = [vertex.co[axis] for index, vertex in enumerate(points)
             if index not in avatar]
-    head = [points[index].co.y for index in avatar]
+    head = [points[index].co[axis] for index in avatar]
     item_height = (max(item) - min(item)) if item else 0.0
     avatar_height = (max(head) - min(head)) if head else 0.0
     biped_height = fit * authored
     if avatar_height <= 0.0 or item_height <= 0.0 or biped_height <= 0.0:
+        return None
+    if avatar_height < 0.60:
+        # No avatar is 0.6 m tall. A height this small means the mesh it was
+        # measured from is not the body - a broken export, or a sliver of one -
+        # and scaling it to the biped would multiply the whole model into a
+        # giant: measured on a 360sona export carrying a 34-triangle body, the
+        # avatar went x4.578 and the model came out 6.9 m tall.
         return None
     to_biped = biped_height / avatar_height
     for index, vertex in enumerate(points):
@@ -737,7 +774,8 @@ def keep_shape_scale(mesh, avatar, fit, authored=AUTHORED_BODY_HEIGHT):
             "item_height": item_height,
             "item_scale": fit,
             "item_after": item_height * fit,
-            "biped_height": biped_height}
+            "biped_height": biped_height,
+            "axis": axis}
 
 
 def biped_landmarks(armature):
@@ -4413,18 +4451,25 @@ def main():
                         if polygon.material_index in ported_slots:
                             avatar.update(polygon.vertices)
                     placed = keep_shape_scale(merged, avatar, fit)
+                    if placed is None:
+                        log("%s: the avatar under this item is not a body - it "
+                            "measures under 0.60 m tall - so nothing was scaled. "
+                            "Check the .glb: a mesh with a handful of triangles "
+                            "is a broken export, and scaling it would make a "
+                            "giant" % merged.name)
                     if placed is not None:
                         # Each part's own height, not the model's: reporting the
                         # merged height as the item's is what made the log read
                         # "its 1.850 m" for a 1.509 m armour.
-                        log("%s brought onto Halo's scale: avatar x%.3f, %.3f m "
-                            "to the biped's %.3f m; item x%.3f, %.3f m to %.3f m "
-                            "(authored for a %.2f m body) - one uniform factor "
-                            "each, so neither changes shape"
-                            % (merged.name, placed["avatar_scale"],
-                               placed["avatar_height"], placed["biped_height"],
-                               placed["item_scale"], placed["item_height"],
-                               placed["item_after"], AUTHORED_BODY_HEIGHT))
+                        log("%s brought onto Halo's scale (up = %s): avatar "
+                            "x%.3f, %.3f m to the biped's %.3f m; item x%.3f, "
+                            "%.3f m to %.3f m (authored for a %.2f m body) - one "
+                            "uniform factor each, so neither changes shape"
+                            % (merged.name, "xyz"[placed["axis"]],
+                               placed["avatar_scale"], placed["avatar_height"],
+                               placed["biped_height"], placed["item_scale"],
+                               placed["item_height"], placed["item_after"],
+                               AUTHORED_BODY_HEIGHT))
                     else:
                         log("%s: no avatar under the item to measure, so it keeps "
                             "the size it was authored: %.3f m"
@@ -4614,6 +4659,21 @@ def main():
         log("copied %d .jms into the xbox folder" % copied)
 
     built = hek_builds(out, stems)
+    # The step after the data is the kit: tool.exe has to compile the .jms and
+    # the .tif files into tags. The script that does it is carried in this
+    # payload and written beside the builds, so it is never something to go and
+    # find.
+    beside = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "build-hek.bat")
+    if built and os.path.exists(beside):
+        target = os.path.join(out, "build-hek.bat")
+        if not os.path.exists(target) or open(target, "rb").read() != open(beside, "rb").read():
+            with open(beside, "rb") as handle:
+                data = handle.read()
+            with open(target, "wb") as handle:
+                handle.write(data)
+            log("wrote build-hek.bat beside the builds: run it to compile the .jms "
+                "and .tif files into tags with tool.exe")
     if built:
         log("wrote %d HEK builds (sp and mp for each order)" % len(built))
 

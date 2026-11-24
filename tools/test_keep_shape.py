@@ -216,6 +216,43 @@ def main():
               for i in range(len(before)) for axis in range(3)),
           "a fitted model (fit 1.0) was moved")
 
+    # The same model standing up along z instead of y: .obj arrives z-up and
+    # .glb y-up, and reading height off a fixed axis measured 0.417 m of depth on
+    # a real 360sona avatar and scaled it x4.578 into a 6.9 m giant.
+    mesh, avatar, _item = model(((0.0, 0.0, 0.0), (0.248, 0.815, 1.850)),
+                                ((0.0, 0.0, 0.0), (0.569, 1.941, 1.509)))
+    placed = module.keep_shape_scale(mesh, avatar, FIT)
+    check(placed is not None, "a z-up model reported nothing")
+    if placed:
+        check(placed["axis"] == 2,
+              "a z-up model was measured up axis %r, not z"
+              % (placed["axis"],))
+        check(abs(placed["avatar_height"] - 1.850) < 1e-9,
+              "a z-up avatar's height came out %.3f m, not 1.850 m"
+              % placed["avatar_height"])
+        check(abs(placed["item_height"] - 1.509) < 1e-9,
+              "a z-up item's height came out %.3f m, not 1.509 m"
+              % placed["item_height"])
+        check(abs(placed["avatar_after"] - BIPED) < 1e-9,
+              "a z-up avatar ends %.4f m, and the biped is %.4f m"
+              % (placed["avatar_after"], BIPED))
+
+    # An avatar that measures 0.417 m tall is not a body: on the real 360sona
+    # export it was a sliver, and scaling it to the biped multiplied the model
+    # x4.578 into a 6.9 m giant. Nothing may be scaled, and nothing may move.
+    # The sliver's own tallest span is the 0.417 m that fooled the measurement.
+    mesh, avatar, _item = model(((0.0, 0.0, 0.0), (0.301, 0.417, 0.204)),
+                                ((0.0, 0.0, 0.0), (1.424, 1.509, 0.417)))
+    before = [tuple(vertex.co[axis] for axis in range(3))
+              for vertex in mesh.data.vertices]
+    check(module.keep_shape_scale(mesh, avatar, FIT) is None,
+          "an avatar 0.417 m tall was scaled to the biped instead of refused")
+    after = [tuple(vertex.co[axis] for axis in range(3))
+             for vertex in mesh.data.vertices]
+    check(all(abs(after[i][axis] - before[i][axis]) < 1e-12
+              for i in range(len(before)) for axis in range(3)),
+          "a model whose avatar is a sliver was moved")
+
     if FAILURES:
         for line in FAILURES:
             print("FAIL: " + line)
