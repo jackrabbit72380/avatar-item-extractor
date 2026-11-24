@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v77"
-BUILD = "2026-11-24 one-face-colour"
+VERSION = "v78"
+BUILD = "2026-11-24 bare-head"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -444,37 +444,30 @@ def uv_tris(mesh):
     return out
 
 
-def back_uvs(mesh):
-    """The UV triangles of a head's rear - the part no face sheet paints.
+def head_uvs(mesh):
+    """Every UV triangle of a head - all of it, for painting the bare parts.
 
-    A 360sona head is painted where a face is and left white everywhere else,
-    white being the sheet's own padding. Which place on the sheet that is is
-    only knowable from the geometry: these are the triangles whose own position
-    is behind the head, so the texels they read are the back of the skull.
+    A 360sona head is painted where a face is and left white or flat grey
+    everywhere else: crown, nape, the sides, and the inside of a skull whose
+    faces are wound the other way. Which texels those are is not worth guessing
+    from the geometry - two attempts did, one by position and one by the
+    direction a triangle faces, and each left a bare patch the other did not -
+    so the whole head is nominated here and the colours decide: only the texels
+    with nothing painted on them take the skin (see paint_uv_patch and
+    bare_spread). The eyes are painted, so they are not touched.
     """
-    points = mesh["positions"]
     uvs = mesh["uvs"]
-    used = {index for triangle in mesh["triangles"] for index in triangle}
-    if not used or not uvs:
-        return []
-    low = min(points[index][2] for index in used)
-    high = max(points[index][2] for index in used)
-    if high - low <= 0:
-        return []
-    # The front 40% is the face and the sides; everything behind it is skull.
-    cut = high - 0.6 * (high - low)
-    behind = []
+    triangles = []
     for triangle in mesh["triangles"]:
-        if sum(points[index][2] for index in triangle) / 3.0 > cut:
-            continue
         if any(index >= len(uvs) for index in triangle):
             continue
-        behind.append(tuple(tuple(uvs[index]) for index in triangle))
-    return behind
+        triangles.append(tuple(tuple(uvs[int(index)]) for index in triangle))
+    return triangles
 
 
 def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
-                  hair_tone=None, scalp_uvs=None, tone_mask=None):
+                  hair_tone=None, scalp_uvs=None, scalp_tone=None,
+                  tone_mask=None):
     """A Blender material for one ported mesh, and the pixels it needs.
 
     The image is written beside the item as `<stem> <material>.png` so the .blend
@@ -557,19 +550,20 @@ def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
                     "%s, the colour the face's own brows and beard are drawn in"
                     % (name, painted, hair_tone))
                 written = face_eyes.png_bytes(rgba, width, height)
-    # The back of the head. Nothing paints it and nothing covers it: the hair
-    # in the file is a fringe, and it sits inside the skull's own surface, so a
-    # helmet leaves a head with a white back. The white is the sheet's padding,
-    # not paint, and only the geometry says which texels are the skull - so the
-    # rear triangles' texels are painted in the hair colour.
-    if scalp_uvs and hair_tone:
+    # The back of the head. Nothing paints it and nothing covers it: the white
+    # there is the sheet's padding, not paint, and only the geometry says which
+    # texels are the skull - so the rear triangles' texels are painted in the
+    # face's own skin. It is skin, not hair: the hair the export carries is
+    # dropped with the costume, and a bare head under a helmet is the head.
+    if scalp_uvs and scalp_tone:
         rgba, dashed = glb_model.paint_uv_patch(rgba, width, height, scalp_uvs,
-                                                hair_tone)
+                                                scalp_tone, bare_spread=34)
         if dashed:
-            log("port: the back of %s is left unpainted - white, the padding's "
-                "white - so the %d texels its rear triangles read are painted in "
-                "%s, the hair colour the brows are drawn in"
-                % (name, dashed, hair_tone))
+            log("port: %s carries bare texels - the padding's white and the "
+                "exporter's flat grey, where no sheet paints anything - so the "
+                "%d of them the head reads are painted in %s, the face's own "
+                "skin"
+                % (name, dashed, scalp_tone))
             written = face_eyes.png_bytes(rgba, width, height)
     # The last of the two-tone: each half's UVs run to its island's edge, so the
     # join is one texel of skin and then padding - a pale line down the nose
@@ -582,12 +576,27 @@ def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
                 "so the edge of the head samples paint instead of padding"
                 % (name, bled))
             written = face_eyes.png_bytes(rgba, width, height)
+    # Everything the head's own triangles do not read is padding, and a welded
+    # seam can leave a corner reading it: laid down in skin, no stray corner can
+    # show white on the head.
+    if scalp_tone and "face" in name.lower():
+        outside = glb_model.uv_coverage(width, height, uv_tris(mesh))
+        rgba = glb_model.paint_outside(rgba, width, height, outside, scalp_tone)
+        written = face_eyes.png_bytes(rgba, width, height)
     with open(picture, "wb") as handle:
         handle.write(written)
     if not (glb_model.power_of_two(width) and glb_model.power_of_two(height)):
         log("port: %s is %dx%d, which tool.exe cannot compile: a bitmap has to "
             "be a power of two a side" % (os.path.basename(picture), width, height))
-    loaded = bpy.data.images.load(picture, check_existing=True)
+    # Loaded fresh and packed: with check_existing Blender hands back the copy
+    # of this sheet it read earlier in the session, and every paint pass after
+    # that - the tone, the fill, the skin on the bare skull - stayed on disk and
+    # out of the .blend, which is why a head kept a bare patch the sheet no
+    # longer had. A reload before packing makes the blend carry what was
+    # actually painted.
+    loaded = bpy.data.images.load(picture, check_existing=False)
+    loaded.reload()
+    loaded.pack()
     material = bpy.data.materials.new(name)
     material.use_nodes = True
     nodes = material.node_tree.nodes
@@ -690,12 +699,12 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
     # dull grey one on the same head - so the target is the average of what each
     # sheet is painted in, and every sheet is brought to it.
     tone = None
+    measured = []
     tone_masks = {}
     decoded = {}
     sheets = [mesh for mesh in kept
               if "face" in mesh["material"].lower() and mesh.get("image") is not None]
     if len(sheets) > 1:
-        measured = []
         counted = set()
         for mesh in sheets:
             # Two halves painted on ONE sheet are one painting, not two. An
@@ -751,11 +760,15 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
                 "the join is one colour" % (done, missed))
     # The hair's colour, read off the face before anything is written: see the
     # note in port_material, where the grey hair sheet is painted with it.
+    # A bare head: with the hair gone there is nothing for the hair colour to
+    # paint, so the scalp takes the skin the face is drawn in.
+    scalp_tone = tone or (measured[0] if measured else None)
     hair_tone = None
     inks = []
     seen_sheets = set()
-    for mesh in sheets:
-        if mesh["image"] is None or mesh["image"] in seen_sheets:
+    for mesh in kept:
+        if ("hair" not in mesh["name"].lower()
+                or mesh["image"] is None or mesh["image"] in seen_sheets):
             continue
         seen_sheets.add(mesh["image"])
         pixels, width, height = glb_model.decode_png(
@@ -803,12 +816,12 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
                     unique += "x"
                 shot = dict(mesh, material=unique)
             used_names.add(shot["material"])
-            scalp = (back_uvs(mesh)
-                     if hair_tone and "face" in mesh["material"].lower()
+            scalp = (head_uvs(mesh)
+                     if scalp_tone and "face" in mesh["material"].lower()
                      else None)
             material, written = port_material(
                 shot, stem, out, model, eyes_forward=eyes_forward, tone=tone,
-                hair_tone=hair_tone, scalp_uvs=scalp,
+                hair_tone=hair_tone, scalp_uvs=scalp, scalp_tone=scalp_tone,
                 tone_mask=tone_masks.get(mesh.get("image")))
             made[key] = material
             if written:

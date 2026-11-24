@@ -291,6 +291,12 @@ REPLACED_BY_COSTUME = frozenset((
     "headwear", "shirt", "trousers", "shorts", "skirt", "dress",
     "coat", "jacket", "shoes", "socks", "boots", "gloves", "belt",
 ))
+# Hair is worn under a helmet, and a helmet is the whole head, so an avatar in
+# one does not show any: left in, a fringe of it pokes out through the visor and
+# round the rim of the helmet - the avatar's hair, not the armour's. It is
+# dropped with the rest of what the costume replaces; what the head itself loses
+# with it (it has no hair of its own painted on) is painted back in rig_items.
+COVERED_HAIR = frozenset(("hair", "hairs", "hairstyle", "fringe", "bangs"))
 # A costume is the whole figure, so it takes the place of the body itself and not
 # just its clothes. The body is NOT dropped when the export is read, though: it
 # is what the fit measures the avatar against, and a head on its own measures
@@ -349,7 +355,8 @@ def choose(model, stem, also_skip=(), item_box=None, costume=False):
         elif item_box and box and same_box(box, item_box):
             skipped.append(mesh)
         elif costume and (own in REPLACED_BY_COSTUME
-                          or own in COVERED_BY_COSTUME):
+                          or own in COVERED_BY_COSTUME
+                          or own in COVERED_HAIR):
             skipped.append(mesh)
         else:
             kept.append(mesh)
@@ -655,7 +662,8 @@ def tint_base(rgba, width, height, colour, value=UNPAINTED, tolerance=6, limit=2
     return pixels, tuple(round(value, 3) for value in gain)
 
 
-def paint_uv_patch(rgba, width, height, uv_triangles, colour, pale=236):
+def paint_uv_patch(rgba, width, height, uv_triangles, colour, pale=236,
+                   bare_spread=None):
     """Paint the texels a set of triangles covers, where they are near-white.
 
     The back of a 360sona head is not painted: the sheet carries white there,
@@ -666,7 +674,16 @@ def paint_uv_patch(rgba, width, height, uv_triangles, colour, pale=236):
     brows are drawn in.
 
     Only near-white texels take the colour, so what the export DID paint at the
-    back - an ear, the nape, the line of a jaw - stays as it was painted.
+    back stays as it was painted. Pass ``pale=None`` to paint every texel of the
+    triangles whatever colour it is.
+
+    ``bare_spread`` is the rule for a head's bare skin: a texel is taken when it
+    is BRIGHT and barely coloured - the sheet's padding white and the flat grey
+    the exporter leaves where it painted nothing are both like that, while skin
+    (192,144,104) is 88 apart and the painted eye is 95 apart, and the pupil is
+    dark enough to fail the floor. That is what makes it safe to hand this the
+    whole head rather than a guess at which triangles are its back: the colour
+    decides, and the sheet says plainly which texels were never painted.
     Triangles come as three (u, v) pairs in glTF's convention, v up from the
     bottom of the picture. Returns (pixels, number painted).
     """
@@ -690,8 +707,23 @@ def paint_uv_patch(rgba, width, height, uv_triangles, colour, pale=236):
                 if one < -0.02 or two < -0.02 or three < -0.02:
                     continue
                 at = (y * width + x) * 4
-                if (pixels[at] >= pale and pixels[at + 1] >= pale
-                        and pixels[at + 2] >= pale):
+                # The padding is white, but not neutral white: the sheets carry
+                # 255,244,207 at the back of the skull, whose blue is well
+                # under any per-channel floor - which is why a floor of 236 on
+                # all three painted nothing at all. What identifies it is that
+                # it is BRIGHT and barely coloured, so that is the test; skin
+                # is 192,144,104 and fails on brightness alone.
+                red, green, blue = pixels[at], pixels[at + 1], pixels[at + 2]
+                brightest = max(red, green, blue)
+                if bare_spread is not None:
+                    take = (brightest >= 100
+                            and brightest - min(red, green, blue) <= bare_spread)
+                elif pale is None:
+                    take = True
+                else:
+                    take = (brightest >= pale
+                            and brightest - min(red, green, blue) <= 72)
+                if take:
                     pixels[at], pixels[at + 1], pixels[at + 2] = colour
                     painted += 1
     return pixels, painted
@@ -800,6 +832,25 @@ def repaint_through_mirror(pixels, width, height, mesh, source, src_width,
         out[to], out[to + 1], out[to + 2] = r, g, b
         painted += 1
     return out, painted, missed
+
+
+def paint_outside(rgba, width, height, mask, colour):
+    """Paint every texel a mesh does NOT read, so a stray UV cannot show padding.
+
+    A head's sheet is mostly padding, and the mesh is welded down its midline -
+    which can leave a triangle or two whose corners no longer agree on a UV.
+    Such a triangle samples whatever is at that place on the sheet, and on a
+    sheet that is white padding, so the crown came out as a pale star while the
+    skin beside it was right. Padding is not paint and nothing needs it, so the
+    whole of it is laid down in skin: whatever a stray corner samples, it
+    samples the head.
+    """
+    pixels = bytearray(rgba)
+    for at in range(0, len(pixels), 4):
+        if mask[at >> 2]:
+            continue
+        pixels[at], pixels[at + 1], pixels[at + 2] = colour
+    return pixels
 
 
 def bleed_padding(rgba, width, height, passes=6, tolerance=6, neutral=18):
