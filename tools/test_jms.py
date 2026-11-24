@@ -297,6 +297,40 @@ def main():
     if all(u == "0.000000" and v == "0.000000" for u, v in uvs):
         failures.append("every UV is 0,0 - the texture coordinate is not being written")
 
+    # The item is carried into Halo's units by ONE factor, applied to all three
+    # axes. Scaling the height alone would keep a model's numbers and change its
+    # shape - the squashed mesh this pass exists to avoid - so the check is the
+    # one thing a scaler can get wrong: the ratios must not move.
+    class Box:
+        def __init__(self):
+            # glTF is y-up: 0.60 wide, 0.28 deep, 1.85 tall.
+            self.vertices = [types.SimpleNamespace(co=Vector(0.60, 1.85, 0.28)),
+                             types.SimpleNamespace(co=Vector(0.0, 0.0, 0.0))]
+
+        def update(self):
+            pass
+
+    class World:
+        @staticmethod
+        def Identity(_size):
+            return World()
+
+    holder = types.SimpleNamespace(name="item", matrix_world=World(),
+                                   data=Box())
+    module.to_halo_space(holder, 0.5)
+    first, floor = holder.data.vertices[0].co, holder.data.vertices[1].co
+    sizes = tuple(first[axis] - floor[axis] for axis in range(3))
+    ratios = (sizes[0] / sizes[2], sizes[1] / sizes[2])
+    # Halo's axes take the avatar's z as x and its x as y, so the depth lands
+    # on x and the width on y; only the size of each matters here.
+    check(abs(ratios[0] - 0.28 / 1.85) < 1e-6
+          and abs(ratios[1] - 0.60 / 1.85) < 1e-6,
+          "to_halo_space changed the shape: %r against depth/width/height "
+          "0.28/0.60/1.85" % (sizes,))
+    check(abs(sizes[2] - 1.85 * 100.0 / 3.048 * 0.5) < 1e-6,
+          "to_halo_space scaled the height to %r, expected 1.85 m x 0.5" % (sizes[2],))
+    print("  scaler   : uniform, ratios %r" % (ratios,))
+
     print("  nodes    : %d" % len(armature.data.bones))
     print("  vertices : %d (%.0f per triangle, unshared)" % (vertices, vertices / max(1, faces)))
     print("  faces    : %d" % faces)
