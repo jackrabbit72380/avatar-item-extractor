@@ -744,8 +744,8 @@ the drawing and draws it again, finer:
   * its weight is the weight the stroke was painted with where it was not
     swollen, so the bold line stays bold, and it tapers to a point at both
     corners,
-  * one pupil is an ellipse the width of the middle of the eye, hung from the
-    lash and rounded underneath, in the eye's own ink,
+  * one pupil is a **circle**, as big as the room under the lash allows and
+    sunk just far enough that the lash cuts its top off, in the eye's own ink:
   * both are sampled six times per texel and averaged down, which is what makes
     their edges smooth instead of stepped, and the finished eye is stamped into
     both drawn eyes, **mirrored into the second**. The head's UVs were measured

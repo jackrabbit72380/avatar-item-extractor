@@ -187,8 +187,8 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
       * its weight is the weight the stroke was painted with where it is not
         swollen, so the bold line stays bold, and it tapers to a point at both
         corners,
-      * the pupil is an ellipse the width of the middle of the eye, hung from
-        the lash and rounded underneath,
+      * the pupil is a circle, set so the lash cuts the top of it off - a pupil
+        seen under a lid rather than a pill drawn under a line,
       * both are sampled SAMPLES times per texel and averaged down, which is
         what makes their edges smooth instead of stepped.
 
@@ -252,9 +252,11 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
     opening = last - lash_bottom
     if opening < 3:
         return None
-    radius_x = max(2.5, columns * 0.24)
-    radius_y = max(1.5, opening * 0.85)
-    middle_y = lash_bottom + radius_y * 0.30
+    # A circle that fills the room under the lash, sunk just far enough that the
+    # lash cuts its top off: what is left showing is a round pupil with a lid
+    # over it, not a pill tucked under a line.
+    radius = max(2.0, (last - lash_bottom - 0.5) / 2.0)
+    middle_y = lash_bottom + radius - 0.8
     taper = max(3.0, columns * 0.07)
 
     grid = {}
@@ -276,11 +278,11 @@ def _pattern(rgba, width, height, left, right, first, last, top, low):
                     middle = centre(sample_x) + weight(sample_x) / 2.0
                     if abs(sample_y - middle) <= thick / 2.0:
                         lash_cover += 1
-                    across = (sample_x - centre_x) / radius_x
-                    if abs(across) < 1.0:
+                    across = (sample_x - centre_x) / radius
+                    down = (sample_y - middle_y) / radius
+                    if across * across + down * down <= 1.0:
                         under = centre(sample_x) + weight(sample_x)
-                        bottom = middle_y + radius_y * math.sqrt(1.0 - across * across)
-                        if under <= sample_y <= bottom:
+                        if sample_y >= under:
                             pupil_cover += 1
             tone = skin[x]
             colour = [tone[channel] * (1.0 - pupil_cover / share)
