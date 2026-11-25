@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v96.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v108.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -459,16 +459,24 @@ That is the slot Halo's shader tags read - one per vertex, which is all a
 `gbxmodel` vertex stores.
 
 Node names are Halo's own, spaces and all (`bip01 pelvis`, not
-`bip01_pelvis`): an animation graph binds its bones by name, so an underscored
-skeleton is one Halo's animations cannot drive. A biped model also carries the
-two markers the engine requires of one - `head` on `bip01 head` and `body` on
-`bip01 spine1`, each at the bone's own pivot and with the bone's own
-orientation, so no offset is invented. Without them the engine refuses the
-biped with "the biped '...' has no 'head' marker".
+`bip01_pelvis`), and so is their order: an animation graph binds its bones by
+name *and* addresses them by index, so both have to be Halo's. The node block is
+written in the order `characters\cyborg\cyborg.model_animations` stores - pelvis,
+left thigh, right thigh, spine, and so on - with that graph's own child and
+sibling links. `tool model` therefore stores the same node list checksum the
+retail graph carries, **1828349080**. The same 19 names in Blender's order are a
+different checksum, which the engine answers with "the model '...' and the
+animation graph '...' don't match". A biped model also carries the two markers
+the engine requires of one - `head` on `bip01 head` and `body` on `bip01 spine1`,
+each at the bone's own pivot and with the bone's own orientation, so no offset is
+invented. Without them the engine refuses the biped with "the biped '...' has no
+'head' marker".
 
 Every `.jms` is then read back by `jms_check.py`, which walks it by its counts
 the way `tool.exe` has to: the header, the node block and the hierarchy its
-child/sibling links describe, each corner's two node slots and their weights, the
+child/sibling links describe (including whether a 19-node biped's nodes are
+Halo's own, in Halo's own order), each corner's two node slots and their weights,
+the
 `u v w` slot with `w` at zero, and the faces against the vertex, material and
 region counts. The result is logged as it is written and recorded in `report.txt`
 as `jms check : ok`. That proves the file is well formed - only the compiler can
@@ -935,13 +943,18 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    folder. That is what makes the `head` and `body` markers compile rather than
    depend on a default.
 
-   The compiled model carries Halo's node names and the `head` and `body`
-   markers, so it can be the model of a biped tag. That tag also needs an
-   animation graph, and this tool writes no animations: point it at Halo's own
-   graph for the stock biped, `characters\cyborg\cyborg.model_animations`. The
-   model is skinned to that same 19-bone skeleton, so those animations are
-   already the right ones. An empty graph, or one built against different node
-   names, is the "units must have models and animation graphs" failure.
+   The compiled model carries Halo's node names, in Halo's own order, and the
+   `head` and `body` markers, so it can be the model of a biped tag. That tag
+   also needs an animation graph, and this tool writes no animations: point it
+   at Halo's own graph for the stock biped,
+   `characters\cyborg\cyborg.model_animations`. The model is skinned to that same
+   19-bone skeleton and its node block is written in that graph's order, so
+   `tool model` stores the graph's own node list checksum (1828349080) and the
+   two tags match. Copying that graph into the item's folder, keeping its node
+   list, works too; a new, empty graph does not. A graph built against other
+   node names or another node order is "the model '...' and the animation graph
+   '...' don't match", and no graph at all is the "units must have models and
+   animation graphs" failure.
 4. **Shader.** Make one `shader_model` per JMS material, at a tag path that
    matches the material name, and set:
 

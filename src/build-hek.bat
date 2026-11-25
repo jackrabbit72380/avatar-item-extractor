@@ -34,12 +34,16 @@ rem  superhigh LOD only: the word makes that LOD explicit instead of Tool's
 rem  undocumented default. Tool strips it off, so the permutation is still the
 rem  item's name.
 rem
-rem  The model carries Halo's own biped node names and the two markers a biped
-rem  must have - head on bip01 head, body on bip01 spine1 - so it can be the
-rem  model of a biped tag. That tag also needs an animation graph, and this tool
-rem  writes no animations: the character is skinned to Halo's own 19-bone biped,
-rem  so point the tag at characters\cyborg\cyborg.model_animations. An empty
-rem  graph is the "units must have models and animation graphs" failure.
+rem  The model carries Halo's own biped node names, in the order that graph
+rem  stores (so Tool's node list checksum is the graph's own, 1828349080), and
+rem  the two markers a biped must have - head on bip01 head, body on bip01
+rem  spine1 - so it can be the model of a biped tag. That tag also needs an
+rem  animation graph, and this tool writes no animations: the character is
+rem  skinned to Halo's own 19-bone biped, so point the tag at
+rem  characters\cyborg\cyborg.model_animations. A graph built against other node
+rem  names, or this skeleton in another order, is the "the model ... and the
+rem  animation graph ... don't match" failure; no graph at all is the "units
+rem  must have models and animation graphs" failure.
 rem
 rem  The model needs a shader tag named after each .jms material, and tool.exe
 rem  will ask for one if it cannot find it. Make that shader once (README.md,

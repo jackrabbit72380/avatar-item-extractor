@@ -37,10 +37,12 @@ from mathutils import Quaternion, Vector
 # written, by the same reading tool.exe has to do, so a broken export is caught
 # here instead of at compile time.
 try:
-    from jms_check import check_jms
+    from jms_check import (BIPED_NODE_CHECKSUM, BIPED_NODES,
+                           BIPED_NODE_ORDER, check_jms)
 except ImportError:  # run from somewhere that has not put this folder on the path
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from jms_check import check_jms
+    from jms_check import (BIPED_NODE_CHECKSUM, BIPED_NODES,
+                           BIPED_NODE_ORDER, check_jms)
 
 # The avatar's own body comes from a .glb, read without bpy so the reading and
 # the choosing can be tested on their own. The TIFF writer is extraction's own,
@@ -85,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v107"
-BUILD = "2026-11-25 superhigh-lod"
+VERSION = "v108"
+BUILD = "2026-11-25 animation-graph-node-order"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4273,37 +4275,56 @@ def export_jms(object_data, armature, path):
     """
     mesh_data = object_data.data
     bones = list(armature.data.bones)
+    by_name = {bone.name: bone for bone in bones}
     names = [bone.name for bone in bones]
-    index_of = {name: index for index, name in enumerate(names)}
+    # Halo's own biped is written in the one order its animation graph stores.
+    # The order here is the node index Tool bakes into the gbxmodel, and an
+    # animation addresses a bone by that index: the same 19 names in Blender's
+    # order make a different node list, which the engine answers with "the model
+    # '...' and the animation graph '...' don't match" - and, were the checksum
+    # forced to agree, would animate the wrong bones. The table's own child and
+    # sibling links go in with it, so the node block is exactly the retail
+    # cyborg's.
+    biped = len(names) == len(BIPED_NODES) and set(names) == set(BIPED_NODE_ORDER)
+    order = list(BIPED_NODE_ORDER) if biped else names
+    index_of = {name: index for index, name in enumerate(order)}
+    if biped:
+        parent_of = {row[0]: (order[row[3]] if row[3] >= 0 else None)
+                     for row in BIPED_NODES}
+        first_child = {row[0]: row[1] for row in BIPED_NODES}
+        next_sibling = {row[0]: row[2] for row in BIPED_NODES}
+    else:
+        parent_of = {bone.name: (bone.parent.name if bone.parent else None)
+                     for bone in bones}
+        children = {name: [] for name in order}
+        for bone in bones:
+            if bone.parent:
+                children[bone.parent.name].append(bone.name)
+        first_child = {name: -1 for name in order}
+        next_sibling = {name: -1 for name in order}
+        for bone in bones:
+            own = bone.name
+            kids = list(children[own])
+            if kids:
+                first_child[own] = index_of[kids[0]]
+            for left, right in zip(kids, kids[1:]):
+                next_sibling[left] = index_of[right]
 
-    children = {bone.name: [] for bone in bones}
-    for bone in bones:
-        if bone.parent:
-            children[bone.parent.name].append(bone.name)
-    first_child = {name: -1 for name in names}
-    next_sibling = {name: -1 for name in names}
-    for bone in bones:
-        own = bone.name
-        kids = list(children[bone.name])
-        if kids:
-            first_child[own] = index_of[kids[0]]
-        for left, right in zip(kids, kids[1:]):
-            next_sibling[left] = index_of[right]
-
-    out = ["8200\t3251\t%d" % len(names)]
-    for bone in bones:
+    out = ["8200\t3251\t%d" % len(order)]
+    for own in order:
+        bone = by_name[own]
         # Each node is written in its PARENT's space, not the model's. Halo's
         # own biped says so: the marine's calf sits 15.87 along its thigh's X
         # axis, not at its model-space position, and tool builds every bone from
         # its parent's frame plus this line. Written in model space instead, the
         # skeleton piles up - every bone placed as if it hung off the origin.
-        if bone.parent:
-            frame = bone.parent.matrix_local.inverted() @ bone.matrix_local
+        if parent_of[own]:
+            frame = (by_name[parent_of[own]].matrix_local.inverted()
+                     @ bone.matrix_local)
         else:
             frame = bone.matrix_local
         turn = frame.to_quaternion()
         head = frame.translation
-        own = bone.name
         out.append("%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f" % (
             own, first_child[own], next_sibling[own],
             turn.x, turn.y, turn.z, turn.w, head.x, head.y, head.z))
@@ -4388,6 +4409,9 @@ def export_jms(object_data, armature, path):
 
     with open(path, "w", encoding="ascii", errors="replace", newline="") as handle:
         handle.write("\n".join(out) + "\n")
+    if biped:
+        log("node list : Halo's biped order, so the node list checksum Tool "
+            "writes is the graph's own, %d" % BIPED_NODE_CHECKSUM)
     log("wrote %s (%d verts, %d tris, %d markers)"
         % (os.path.basename(path), len(corners) * 3, len(faces), len(markers)))
     errors, notes, stats = check_jms(path)

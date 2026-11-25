@@ -20,6 +20,39 @@ import sys
 
 HEADER = ("8200", "3251")
 
+# Halo's own biped skeleton, in the order the retail animation graph stores it:
+# (name, first child, next sibling, parent), node 0 first. This is the node list
+# of ``characters\cyborg\cyborg`` - 19 nodes, node list checksum 1828349080, the
+# value ``tool model`` writes into the gbxmodel built from it. The order is not
+# cosmetic: an animation addresses a node by its index, and the engine refuses a
+# model whose checksum or node count differs from the graph's with "the model
+# ... and the animation graph ... don't match". The same 19 names in another
+# order are a different node list, so the exporter writes this one and the
+# checker below rejects any other.
+BIPED_NODES = (
+    ("bip01 pelvis", 2, -1, -1),
+    ("bip01 l thigh", 4, 3, 0),
+    ("bip01 r thigh", 5, 1, 0),
+    ("bip01 spine", 6, -1, 0),
+    ("bip01 l calf", 8, -1, 1),
+    ("bip01 r calf", 11, -1, 2),
+    ("bip01 spine1", 10, -1, 3),
+    ("bip01 l clavicle", 13, 9, 6),
+    ("bip01 l foot", -1, -1, 4),
+    ("bip01 neck", 12, -1, 6),
+    ("bip01 r clavicle", 14, 7, 6),
+    ("bip01 r foot", -1, -1, 5),
+    ("bip01 head", -1, -1, 9),
+    ("bip01 l upperarm", 15, -1, 7),
+    ("bip01 r upperarm", 16, -1, 10),
+    ("bip01 l forearm", 17, -1, 13),
+    ("bip01 r forearm", 18, -1, 14),
+    ("bip01 l hand", -1, -1, 15),
+    ("bip01 r hand", -1, -1, 16),
+)
+BIPED_NODE_ORDER = tuple(row[0] for row in BIPED_NODES)
+BIPED_NODE_CHECKSUM = 1828349080
+
 
 def _numbers(fields, where, errors):
     try:
@@ -105,6 +138,29 @@ def check_jms(path):
                               % (index, parts[0], length))
         if _numbers(parts[7:10], "node %d position" % index, errors) is None:
             return errors, notes, stats
+
+    # Halo's own biped: its node list is fixed, and only this order is the one
+    # the retail animation graph matches. A same-named skeleton written in any
+    # other order carries a different node list checksum and animates the wrong
+    # bones, so it is an error rather than a note.
+    if node_count == len(BIPED_NODES):
+        if tuple(names) == BIPED_NODE_ORDER:
+            stats["biped"] = True
+            for index, (name, child, sibling, _parent) in enumerate(BIPED_NODES):
+                if first_child[index] != child or next_sibling[index] != sibling:
+                    errors.append(
+                        "node %d (%s): first child / next sibling are %d / %d, "
+                        "expected %d / %d from Halo's own biped"
+                        % (index, name, first_child[index], next_sibling[index],
+                           child, sibling))
+        elif set(names) == set(BIPED_NODE_ORDER):
+            stats["biped"] = False
+            errors.append(
+                "the nodes are Halo's biped bones but not in its order: node 0 "
+                "is %r, expected %r - an animation graph binds nodes by index, "
+                "so this skeleton cannot be driven by "
+                "characters\\cyborg\\cyborg"
+                % (names[0], BIPED_NODE_ORDER[0]))
 
     # The hierarchy the child/sibling links describe.
     parent = {}

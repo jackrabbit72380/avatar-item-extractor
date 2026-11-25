@@ -17,7 +17,7 @@ MODULES = os.environ.get("RIG_MODULES") or os.path.join(
     os.path.dirname(HERE), "src")
 sys.path.insert(0, MODULES)
 
-from jms_check import check_jms  # noqa: E402
+from jms_check import BIPED_NODES, check_jms  # noqa: E402
 
 NODES = 3
 
@@ -46,14 +46,32 @@ def good_file():
     return lines
 
 
-def check_mutation(name, change, expect):
-    lines = good_file()
-    change(lines)
+def biped_file():
+    """A 19-node .jms whose node block is Halo's own biped, in its own order."""
+    lines = ["8200\t3251\t%d" % len(BIPED_NODES)]
+    for name, child, sibling, _parent in BIPED_NODES:
+        lines.append("%s\t%d\t%d\t0.000000\t0.000000\t0.000000\t1.000000\t"
+                     "0.000000\t0.000000\t0.000000" % (name, child, sibling))
+    lines.append("1")                    # materials
+    lines.append("shirt\t<none>")
+    lines.append("0")                    # markers
+    lines.append("1")                    # regions
+    lines.append("unnamed")
+    lines.append("3")                    # vertices: three per face
+    for _index in range(3):
+        lines.append("0\t0.000000\t0.000000\t0.000000\t0.000000\t1.000000\t"
+                     "0.000000\t-1\t0.000000\t0.100000\t0.200000\t0.000000")
+    lines.append("1")                    # faces
+    lines.append("0\t0\t0\t1\t2")
+    return lines
+
+
+def check_lines(name, lines, expect):
     handle, path = tempfile.mkstemp(suffix=".jms")
     with os.fdopen(handle, "w", encoding="ascii", newline="") as out:
         out.write("\n".join(lines) + "\n")
     try:
-        errors, _notes, _stats = check_jms(path)
+        errors, _notes, stats = check_jms(path)
     finally:
         os.remove(path)
     hit = [problem for problem in errors if expect in problem]
@@ -63,6 +81,12 @@ def check_mutation(name, change, expect):
     print("  MISSED  %-38s expected %r, got %s"
           % (name, expect, errors[:2] or "no errors at all"))
     return False
+
+
+def check_mutation(name, change, expect):
+    lines = good_file()
+    change(lines)
+    return check_lines(name, lines, expect)
 
 
 def set_field(lines, index, field, value):
@@ -83,6 +107,35 @@ def main():
         return 1
     print("  accepted a good file: %d nodes, %d faces, %d verts"
           % (stats["nodes"], stats["faces"], stats["vertices"]))
+
+    # Halo's biped has one acceptable node list: its own order. Tool's node list
+    # checksum comes from it, and the retail animation graph addresses nodes by
+    # index, so the same 19 names in another order are refused here rather than
+    # failing in the engine with "the model ... and the animation graph ...
+    # don't match".
+    biped = biped_file()
+    handle, path = tempfile.mkstemp(suffix=".jms")
+    with os.fdopen(handle, "w", encoding="ascii", newline="") as out:
+        out.write("\n".join(biped) + "\n")
+    try:
+        errors, _notes, biped_stats = check_jms(path)
+    finally:
+        os.remove(path)
+    if errors:
+        print("FAIL: a good biped .jms was rejected: %s" % errors[:2])
+        return 1
+    if not biped_stats.get("biped"):
+        print("FAIL: the checker did not recognise Halo's biped node list")
+        return 1
+    print("  accepted a biped file: %d nodes in Halo's own order"
+          % biped_stats["nodes"])
+
+    swapped = biped_file()
+    first, second = swapped[1].split("\t"), swapped[2].split("\t")
+    first[0], second[0] = second[0], first[0]
+    swapped[1], swapped[2] = "\t".join(first), "\t".join(second)
+    broken = biped_file()
+    set_field(broken, 2, 2, "-1")
 
     # Locate the blocks the way the checker does - by their shape - rather than
     # by counting lines, so a change to the fixture cannot silently point a
@@ -132,6 +185,10 @@ def main():
                        "rotation length"),
         check_mutation("file cut short",
                        lambda work: work.pop(), "file ends early"),
+        check_lines("biped nodes not in Halo's order", swapped,
+                    "not in its order"),
+        check_lines("biped links not Halo's own", broken,
+                    "from Halo's own biped"),
     ]
 
     caught = sum(1 for result in results if result)

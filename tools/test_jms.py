@@ -34,6 +34,9 @@ import types
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODULES = os.environ.get("RIG_MODULES") or os.path.join(
     os.path.dirname(HERE), "src")
+sys.path.insert(0, MODULES)
+
+from jms_check import BIPED_NODES, BIPED_NODE_ORDER  # noqa: E402
 
 
 # --------------------------------------------------------------- stand-in bpy
@@ -201,6 +204,27 @@ def main():
     object_data, armature = build()
     work = tempfile.mkdtemp(prefix="avatar-jms-")
     target = os.path.join(work, "item.jms")
+
+    # Halo's biped, built in Blender's own bone order (the rig file's order: the
+    # legs, then the spine, then the head). The exporter has to write it in the
+    # order the retail animation graph stores instead.
+    blend_order = ["bip01 pelvis", "bip01 l thigh", "bip01 l calf",
+                   "bip01 l foot", "bip01 r thigh", "bip01 r calf",
+                   "bip01 r foot", "bip01 spine", "bip01 spine1",
+                   "bip01 l clavicle", "bip01 l upperarm", "bip01 l forearm",
+                   "bip01 l hand", "bip01 neck", "bip01 head",
+                   "bip01 r clavicle", "bip01 r upperarm", "bip01 r forearm",
+                   "bip01 r hand"]
+    parent_of = {row[0]: (BIPED_NODE_ORDER[row[3]] if row[3] >= 0 else None)
+                 for row in BIPED_NODES}
+    made = {name: Bone(name, None, Vector(0, 0, float(index)))
+            for index, name in enumerate(blend_order)}
+    for name in blend_order:
+        made[name].parent = made[parent_of[name]] if parent_of[name] else None
+    biped = types.SimpleNamespace(
+        data=types.SimpleNamespace(bones=[made[name] for name in blend_order]),
+        matrix_world=Matrix())
+
     try:
         module.export_jms(object_data, armature, target)
         with open(target, encoding="ascii") as handle:
@@ -213,6 +237,9 @@ def main():
         module.export_jms(object_data, arms, target)
         with open(target, encoding="ascii") as handle:
             arms_lines = [line.rstrip("\n") for line in handle]
+        module.export_jms(object_data, biped, os.path.join(work, "biped.jms"))
+        with open(os.path.join(work, "biped.jms"), encoding="ascii") as handle:
+            biped_lines = [line.rstrip("\n") for line in handle]
     finally:
         import shutil
         shutil.rmtree(work, ignore_errors=True)
@@ -324,6 +351,36 @@ def main():
     check(cursor == len(lines), "there are %d trailing lines after the faces"
           % (len(lines) - cursor))
 
+    # The biped's node block is Halo's own: the retail order, the retail child
+    # and sibling links, and the markers on the indices that order gives them.
+    # Tool bakes this order into the node list, and cyborg.model_animations
+    # addresses nodes by index, so any other order is a different checksum and
+    # the wrong bone for every animation.
+    header = biped_lines[0].split("\t")
+    check(len(header) == 3 and header[2] == "19",
+          "the biped header is %r, expected 19 nodes" % (header,))
+    written = [line.split("\t")[0] for line in biped_lines[1:20]]
+    check(tuple(written) == BIPED_NODE_ORDER,
+          "the biped nodes are written as %r, not in Halo's order"
+          % (written[:4],))
+    links = [(line.split("\t")[1], line.split("\t")[2])
+             for line in biped_lines[1:20]]
+    wanted = [(str(row[1]), str(row[2])) for row in BIPED_NODES]
+    check(links == wanted,
+          "the biped child/sibling links are %r, expected %r"
+          % (links[:4], wanted[:4]))
+    # In Halo's order head is node 12 and spine1 node 6, so that is where the
+    # engine's two markers have to ride.
+    biped_marker = 1 + 19 + 2
+    check(biped_lines[biped_marker] == "2",
+          "the biped marker count is %r, expected 2" % biped_lines[biped_marker])
+    head_fields = biped_lines[biped_marker + 1].split("\t")
+    body_fields = biped_lines[biped_marker + 2].split("\t")
+    check(head_fields[:3] == ["head", "-1", "12"],
+          "the head marker is %r, expected head on node 12" % (head_fields[:3],))
+    check(body_fields[:3] == ["body", "-1", "6"],
+          "the body marker is %r, expected body on node 6" % (body_fields[:3],))
+
     # The texture coordinate must be the one on the mesh, not zeros.
     uvs = [lines[first_vertex + index].split("\t")[9:11] for index in range(vertices)]
     if all(u == "0.000000" and v == "0.000000" for u, v in uvs):
@@ -365,6 +422,7 @@ def main():
 
     print("  nodes    : %d, markers: %s" % (len(armature.data.bones),
                                             "head, body"))
+    print("  biped    : 19 nodes in Halo's own order, markers on 12 and 6")
     print("  vertices : %d (%.0f per triangle, unshared)" % (vertices, vertices / max(1, faces)))
     print("  faces    : %d" % faces)
     print("  uv sample: %s" % (uvs[0],))
