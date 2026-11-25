@@ -17,7 +17,8 @@ MODULES = os.environ.get("RIG_MODULES") or os.path.join(
     os.path.dirname(HERE), "src")
 sys.path.insert(0, MODULES)
 
-from jms_check import BIPED_NODES, BIPED_NODE_CHECKSUM, check_jms  # noqa: E402
+from jms_check import (BIPED_NODES, BIPED_NODE_CHECKSUM,  # noqa: E402
+                       FP_ARMS_BLOCK, FP_ARMS_NODE_SET, check_jms)
 
 NODES = 3
 
@@ -96,6 +97,62 @@ def biped_file():
     return lines
 
 
+def arms_file():
+    """A 37-node .jms whose node block is Halo's own first-person hands.
+
+    ``FP_ARMS_BLOCK`` is the 42-node block from Digsite's plasma rifle ``fp``
+    model: the 37 arm frames plus the weapon's five, whose sibling chain runs
+    between them. A hands model carries the 37, so the weapon frames are dropped
+    and the chains re-linked through them - the same block the shipped rig
+    exports, which is 0.04 degrees and 0.000 units from Halo's own.
+    """
+    keep = [index for index, row in enumerate(FP_ARMS_BLOCK)
+            if row[0] in FP_ARMS_NODE_SET]
+    where = {old: new for new, old in enumerate(keep)}
+
+    def next_kept(index):
+        while index != -1 and index not in where:
+            index = FP_ARMS_BLOCK[index][2]
+        return where.get(index, -1)
+
+    lines = ["8200\t0\t%d" % len(keep)]
+    for old in keep:
+        name, child, sibling, turn, spot = FP_ARMS_BLOCK[old]
+        lines.append("%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%.6f\t"
+                     "%.6f\t%.6f\t%.6f"
+                     % (name, next_kept(child), next_kept(sibling),
+                        turn[0], turn[1], turn[2], turn[3],
+                        spot[0], spot[1], spot[2]))
+    lines.append("1")                    # materials
+    lines.append("shirt\t<none>")
+    lines.append("0")                    # markers: the hands model carries none
+    lines.append("1")                    # regions
+    lines.append("unnamed")
+    lines.append("3")                    # vertices: three per face
+    for _index in range(3):
+        lines.append("0\t0.000000\t0.000000\t0.000000\t0.000000\t1.000000\t"
+                     "0.000000\t-1\t0.000000\t0.100000\t0.200000\t0.000000")
+    lines.append("1")                    # faces
+    lines.append("0\t0\t0\t1\t2")
+    return lines
+
+
+def accept_lines(name, lines):
+    """Nothing wrong with this file, and the checker has to say so."""
+    handle, path = tempfile.mkstemp(suffix=".jms")
+    with os.fdopen(handle, "w", encoding="ascii", newline="") as out:
+        out.write("\n".join(lines) + "\n")
+    try:
+        errors, _notes, _stats = check_jms(path)
+    finally:
+        os.remove(path)
+    if errors:
+        print("  REFUSED %-38s %s" % (name, errors[0][:60]))
+        return False
+    print("  accepts %-38s as Halo's own" % name)
+    return True
+
+
 def check_lines(name, lines, expect):
     handle, path = tempfile.mkstemp(suffix=".jms")
     with os.fdopen(handle, "w", encoding="ascii", newline="") as out:
@@ -159,6 +216,34 @@ def rolled_frames(lines):
         if index == 1:
             # the root's frame is the model's, so the roll is applied to it
             turn = product((0.0, 0.0, half, half), turn)
+        else:
+            x, y, z, w = turn
+            turn = (-y, x, z, w)
+            across, along = float(parts[7]), float(parts[8])
+            parts[7], parts[8] = "%.6f" % -along, "%.6f" % across
+        parts[3], parts[4], parts[5], parts[6] = ("%.6f" % v for v in turn)
+        lines[index] = "\t".join(parts)
+    return lines
+
+
+def rolled_arms(lines):
+    """Every first-person frame rolled 90 degrees, translations rolled to match.
+
+    The arms block before v114: every joint in Halo's own place - so the
+    position half of the check passes - and every frame 90 degrees out, which is
+    what draws the hands twisted in first person.
+    """
+    count = int(lines[0].split("\t")[2])
+    for index in range(1, 1 + count):
+        parts = lines[index].split("\t")
+        turn = tuple(float(parts[field]) for field in (3, 4, 5, 6))
+        if index == 1:
+            x, y, z, w = turn
+            half = 0.7071067811865476
+            turn = (w * 0.0 + 0.0 * w + 0.0 * z - half * y,
+                    0.0 * 0.0 - 0.0 * z + 0.0 * w + half * x,
+                    half * z + 0.0 * y - 0.0 * x + half * w,
+                    half * w - 0.0 * x - 0.0 * y - half * z)
         else:
             x, y, z, w = turn
             turn = (-y, x, z, w)
@@ -238,6 +323,9 @@ def main():
     face = max(index for index, line in enumerate(lines) if line.count("\t") == 4)
     marker = next(index for index, line in enumerate(lines) if line.count("\t") == 10)
 
+    if not accept_lines("Halo's own first-person arms", arms_file()):
+        return 1
+
     results = [
         check_mutation("header node count wrong",
                        lambda work: set_field(work, 0, 2, "99"), "fields, expected 10"),
@@ -291,6 +379,8 @@ def main():
         check_lines("biped node frames rolled 90 degrees",
                     rolled_frames(biped_file()),
                     "degrees from where Halo's own biped has it"),
+        check_lines("first-person frames rolled 90 degrees",
+                    rolled_arms(arms_file()), "first-person node"),
     ]
 
     caught = sum(1 for result in results if result)

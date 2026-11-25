@@ -179,6 +179,192 @@ FP_ARMS_NODES = (
 )
 FP_ARMS_NODE_SET = frozenset(FP_ARMS_NODES)
 
+# Halo's own first-person node block, read from the plasma rifle's ``fp`` model
+# in Halo's Digsite sources - Bungie's own file, not a reconstruction. It is a
+# 42-node graph: the 37 arm frames the hands model carries, plus the weapon's
+# ``frame gun``, ``frame rod_left``, ``frame rod_right``, ``frame wing_left``
+# and ``frame wing_right``. All 42 are kept here because the sibling chain runs
+# through them, and the chain is what puts the joints where Halo puts them.
+#
+# These are the frames Halo's weapon graphs turn each arm joint by, so they are
+# what the arms ``.jms`` has to carry: (name, first child, next sibling, turn,
+# translation against the parent). The shipped rig exports this block to 0.04
+# degrees and 0.000 units, and it is checked rather than assumed: a block that
+# lands the joints right but rolls their frames draws the hands twisted in
+# first person the same way a rolled biped block draws the body as a heap.
+FP_ARMS_BLOCK = (
+    ("frame bone24", 2, -1,
+     (0.000000, 0.000000, 0.000000, 1.000000),
+     (0.000000, 0.000000, 0.000000)),
+    ("frame l upperarm", 3, -1,
+     (0.000000, 0.000000, 0.000000, 1.000000),
+     (0.000000, 9.399040, 0.000000)),
+    ("frame r upperarm", 4, 1,
+     (0.000000, 0.000000, 0.000000, 1.000000),
+     (0.000000, -9.399000, 0.000000)),
+    ("frame l forearm", 5, -1,
+     (0.000000, 0.000000, 0.000000, 1.000000),
+     (10.250690, 0.000000, 0.000000)),
+    ("frame r forearm", 6, -1,
+     (0.000000, 0.000000, 0.000000, 1.000000),
+     (10.258250, 0.000000, 0.000000)),
+    ("frame l wriste", 12, -1,
+     (-0.000000, 0.000000, 0.000000, 1.000000),
+     (10.893660, 0.000000, -0.000001)),
+    ("frame r wriste", 7, -1,
+     (0.000000, 0.000000, 0.000000, 1.000000),
+     (10.886320, 0.000000, 0.000000)),
+    ("frame gun", 29, 15,
+     (0.000000, -0.000000, 0.000000, 1.000000),
+     (-21.144570, 9.399000, -0.000000)),
+    ("frame l index low", 18, -1,
+     (0.001217, 0.069746, -0.017410, 0.997412),
+     (3.465580, 0.435442, 1.515124)),
+    ("frame l middlelow", 19, 8,
+     (0.000000, 0.000000, 0.000000, 1.000000),
+     (3.639900, 0.721580, 0.325856)),
+    ("frame l pinky low", 20, 11,
+     (-0.000323, -0.100187, -0.004351, 0.994959),
+     (3.245010, 0.392602, -1.817072)),
+    ("frame l ring low", 21, 9,
+     (-0.000190, -0.039258, -0.008724, 0.999191),
+     (3.676430, 0.640863, -0.889040)),
+    ("frame l thumb low", 22, 10,
+     (-0.041956, 0.318689, 0.123599, 0.938829),
+     (0.853683, -0.404337, 1.467987)),
+    ("frame r index low", 23, 17,
+     (-0.001217, 0.069746, 0.017410, 0.997412),
+     (3.465470, -0.435420, 1.515205)),
+    ("frame r middle low", 24, 13,
+     (0.000000, 0.000000, 0.000000, 1.000000),
+     (3.639870, -0.721514, 0.326634)),
+    ("frame r pinky low", 25, 16,
+     (0.000437, -0.100187, 0.004341, 0.994959),
+     (3.244680, -0.392568, -1.816949)),
+    ("frame r ring low", 26, 14,
+     (-0.000343, -0.039258, 0.008720, 0.999191),
+     (3.676250, -0.641084, -0.887103)),
+    ("frame r thumb low", 27, -1,
+     (0.041956, 0.318689, -0.123599, 0.938829),
+     (0.853033, 0.400695, 1.468595)),
+    ("frame l index mid", 30, -1,
+     (0.000000, -0.000000, 0.034899, 0.999391),
+     (1.703123, -0.000000, -0.000000)),
+    ("frame l middle mid", 31, -1,
+     (0.000000, -0.000000, 0.021815, 0.999762),
+     (1.927462, 0.000000, 0.000000)),
+    ("frame l pinky mid", 32, -1,
+     (0.000000, 0.000000, 0.021815, 0.999762),
+     (1.390334, 0.000001, -0.000000)),
+    ("frame l ring mid", 33, -1,
+     (0.000000, 0.000000, -0.000000, 1.000000),
+     (1.733051, -0.000000, 0.000000)),
+    ("frame l thumb mid", 34, -1,
+     (-0.002967, -0.056615, -0.052252, 0.997023),
+     (1.550021, 0.000000, 0.000000)),
+    ("frame r index mid", 35, -1,
+     (-0.000000, -0.000000, -0.034899, 0.999391),
+     (1.696215, -0.000001, 0.000000)),
+    ("frame r middle mid", 36, -1,
+     (0.000000, 0.000000, -0.021815, 0.999762),
+     (1.922430, 0.000000, 0.000000)),
+    ("frame r pinky mid", 37, -1,
+     (-0.000000, 0.000000, -0.021815, 0.999762),
+     (1.384236, 0.000000, -0.000000)),
+    ("frame r ring mid", 38, -1,
+     (-0.000000, -0.000000, 0.000000, 1.000000),
+     (1.728130, -0.000000, -0.000000)),
+    ("frame r thumb mid", 39, -1,
+     (0.002720, -0.056628, 0.047901, 0.997242),
+     (1.508485, 0.000000, -0.000000)),
+    ("frame rod_left", 40, -1,
+     (-0.000000, -0.793353, -0.608761, 0.000000),
+     (-0.352528, 0.248000, 4.554710)),
+    ("frame rod_right", 41, 28,
+     (-0.793353, 0.000000, 0.000000, 0.608761),
+     (-0.352528, -0.248000, 4.554710)),
+    ("frame l index tip", -1, -1,
+     (-0.000000, 0.000000, 0.047978, 0.998848),
+     (1.101931, -0.000000, -0.000000)),
+    ("frame l middle tip", -1, -1,
+     (-0.000000, -0.000000, 0.052336, 0.998630),
+     (1.213575, -0.000001, -0.000000)),
+    ("frame l pinky tip", -1, -1,
+     (0.000000, -0.000000, 0.061049, 0.998135),
+     (0.963240, 0.000000, -0.000000)),
+    ("frame l ring tip", -1, -1,
+     (-0.000000, 0.000000, 0.113203, 0.993572),
+     (1.212693, -0.000000, 0.000000)),
+    ("frame l thumb tip", -1, -1,
+     (0.000000, -0.043619, -0.000000, 0.999048),
+     (1.099383, 0.000001, -0.000000)),
+    ("frame r index tip", -1, -1,
+     (-0.000000, -0.000000, -0.047978, 0.998848),
+     (1.122778, -0.000000, 0.000000)),
+    ("frame r middle tip", -1, -1,
+     (0.000000, 0.000000, -0.052336, 0.998630),
+     (1.224342, -0.000000, 0.000000)),
+    ("frame r pinky tip", -1, -1,
+     (-0.000000, -0.000000, -0.061049, 0.998135),
+     (0.949632, 0.000001, 0.000000)),
+    ("frame r ring tip", -1, -1,
+     (-0.000000, -0.000000, -0.113203, 0.993572),
+     (1.204507, -0.000000, -0.000000)),
+    ("frame r thumb tip", -1, -1,
+     (0.000000, -0.043619, -0.000000, 0.999048),
+     (1.081699, 0.000000, 0.000001)),
+    ("frame wing_left", -1, -1,
+     (0.130526, 0.000000, -0.000000, 0.991445),
+     (0.000000, 0.000951, 1.224477)),
+    ("frame wing_right", -1, -1,
+     (0.130526, 0.000000, 0.000000, 0.991445),
+     (-0.000000, 0.000950, 1.224477)),
+)
+
+FP_ARMS_TURNS = {row[0]: row[3] for row in FP_ARMS_BLOCK}
+
+# How far a first-person node may sit from Halo's own. The shipped rig is 0.15
+# degrees and 0.000 units off, so these only catch a real convention change.
+FP_ARMS_TURN_SLACK = 2.0
+FP_ARMS_PLACEMENT = 2.0
+
+
+def fp_arm_block_problems(names, first_child, next_sibling, turns, spots):
+    """How the arms' node block differs from Halo's own, in words.
+
+    Turns and positions both: a block can land every joint on Halo's frame and
+    still roll it, and it can roll nothing and put the hands somewhere else.
+    """
+    problems = []
+    for index, name in enumerate(names):
+        want = FP_ARMS_TURNS.get(name)
+        if want is None:
+            continue
+        got = turns[index]
+        dot = abs(sum(got[axis] * want[axis] for axis in range(4)))
+        gap = math.degrees(2.0 * math.acos(min(1.0, dot)))
+        if gap > FP_ARMS_TURN_SLACK:
+            problems.append(
+                "first-person node %s turns %d degrees from where Halo's own"
+                " hands model has it" % (name, round(gap)))
+    wanted = _composed_nodes([row[1] for row in FP_ARMS_BLOCK],
+                             [row[2] for row in FP_ARMS_BLOCK],
+                             [row[3] for row in FP_ARMS_BLOCK],
+                             [row[4] for row in FP_ARMS_BLOCK])
+    placed = _composed_nodes(first_child, next_sibling, turns, spots)
+    where = {row[0]: index for index, row in enumerate(FP_ARMS_BLOCK)}
+    for index, name in enumerate(names):
+        if name not in where or index not in placed:
+            continue
+        want = wanted[where[name]]
+        got = placed[index]
+        gap = math.sqrt(sum((got[axis] - want[axis]) ** 2 for axis in range(3)))
+        if gap > FP_ARMS_PLACEMENT:
+            problems.append(
+                "first-person node %s sits %.1f units from where Halo's own"
+                " hands model has it" % (name, gap))
+    return problems
+
 
 def fp_arm_node_problem(names):
     """Why ``names`` cannot be the first-person arms' node list, or None.
@@ -494,6 +680,14 @@ def check_jms(path):
                 " bone axes, and a rolled frame binds to the right positions and"
                 " then warps every animated joint - worst on the arms, which fly"
                 " out and stretch" % (worst_name, worst))
+
+    # The first-person arms are a node block too, held to the same rule: Halo's
+    # weapon graphs turn these joints inside their own frames, so the hands
+    # model has to carry Halo's frames and Halo's joint positions, not merely a
+    # skeleton that looks like one.
+    if names and set(names) == FP_ARMS_NODE_SET:
+        errors.extend(fp_arm_block_problems(names, first_child, next_sibling,
+                                            turns, spots))
 
     # ------------------------------------------------------------- materials
     material_count = whole("material count")

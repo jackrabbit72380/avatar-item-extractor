@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v114.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v115.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1013,6 +1013,15 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    for all 19 nodes to 0.14 degrees; `jms_check.py` now compares each node's
    turn with Halo's own and refuses a block more than 2 degrees off, so this
    cannot ship silently either.
+
+   The first-person arms are the same rule and are held to the same standard.
+   Halo's Digsite sources carry the plasma rifle's `fp` model - a 42-node
+   first-person block, the 37 arm frames plus the weapon's five - and the
+   shipped arms rig exports all 37 of them to 0.04 degrees in frame, 0.15
+   degrees in stored turn and 0.000 units in position of it. `jms_check.py`
+   carries that block and refuses a hands model whose frames or joint positions
+   differ from it, so neither half of this rests on an argument about which way
+   Blender's axes point.
 
    The exception that follows in Sapien's log, `got an object type we didn't
    expect (expected one of 0x0000001c but got #1)` at `objects.c`, is a
