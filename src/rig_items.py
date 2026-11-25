@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v113"
-BUILD = "2026-11-25 jms-node-inverse"
+VERSION = "v114"
+BUILD = "2026-11-25 jms-node-roll"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4244,6 +4244,41 @@ def jms_name(stem, suffix=""):
     return "%s%s %s.jms" % (stem, suffix, MODEL_LOD)
 
 
+# Halo's node frames against Blender's bone frames.
+#
+# A node's turn is not free-form. Halo's animation graph writes each node's
+# rotation into that node's own frame, so a block whose frames carry a fixed
+# roll still composes to the right bone POSITIONS - the bind looks perfect in
+# Blender, which deforms through the armature and never reads the block - while
+# every animated joint turns about a wrongly rolled axis. Arms swing furthest
+# from their bind, so they are where it shows first and worst: they fly out and
+# the sleeve is drawn as stretched bands.
+#
+# Measured against Halo, not guessed. Exporting this rig and composing each
+# node's frame the way ``jms_check`` composes them gives a frame that differs
+# from Halo's own ``spartan.jms`` by the SAME 90 degree roll on all 19 nodes
+# (worst deviation 0.000005 across the block), and stored translations that are
+# that same roll of Halo's. The pelvis is the node whose frame is the model's,
+# and Halo stores it as (0.5, 0.5, 0.5, 0.5); this rig gave (0, 0.7071, 0.7071,
+# 0), the same rotation rolled 90 degrees about -z. Rolling here reproduces
+# Halo's stored turn for every one of the 19 nodes, so what the engine reads is
+# the cyborg's own skeleton rather than one that merely lands on its joints.
+#
+# The cause is Blender's bone space (a bone's length runs along its local Y)
+# against the axes Halo's .jms files use, which is the same for every Blender
+# rig, so this applies to the first-person arms model too.
+NODE_FRAME_ROLL = (0.0, 0.0, -0.7071067811865476, 0.7071067811865476)
+
+
+def _quaternion_product(first, second):
+    ax, ay, az, aw = first
+    bx, by, bz, bw = second
+    return (aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz)
+
+
 def export_jms(object_data, armature, path, arms=False):
     """Halo CE's text model format, laid out the way tool.exe reads it.
 
@@ -4367,10 +4402,24 @@ def export_jms(object_data, armature, path, arms=False):
         # Conjugate it: negating the vector part of a unit quaternion is its
         # inverse, and mathutils exposes the components writable.
         turn.x, turn.y, turn.z = -turn.x, -turn.y, -turn.z
-        head = frame.translation
+        spot = frame.translation
+        head = [spot.x, spot.y, spot.z]
+        if parent_of[own]:
+            # Blender's axes into Halo's: a 90 degree roll about -z carries
+            # (x, y, z) to (y, -x, z), and a node's turn is that axis change, so
+            # the quaternion's vector part rolls with it while w stays put. The
+            # translation is in the same parent frame, so it rolls too.
+            turn.x, turn.y, turn.z, turn.w = (turn.y, -turn.x,
+                                              turn.z, turn.w)
+            head = [head[1], -head[0], head[2]]
+        else:
+            # A root has no parent frame to be relative to, so the roll is the
+            # frame itself: q * roll rather than q rolled by it.
+            turn.x, turn.y, turn.z, turn.w = _quaternion_product(
+                NODE_FRAME_ROLL, (turn.x, turn.y, turn.z, turn.w))
         out.append("%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f" % (
             own, first_child[own], next_sibling[own],
-            turn.x, turn.y, turn.z, turn.w, head.x, head.y, head.z))
+            turn.x, turn.y, turn.z, turn.w, head[0], head[1], head[2]))
 
     materials = [slot.material.name if slot.material else "material%d" % index
                  for index, slot in enumerate(object_data.material_slots)] or ["material"]

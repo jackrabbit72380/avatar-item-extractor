@@ -135,6 +135,40 @@ def opposite_sense(lines):
     return lines
 
 
+def rolled_frames(lines):
+    """Every node's frame rolled 90 degrees, translations rolled to match.
+
+    This is the block that shipped before v114: it composes to Halo's own bone
+    positions, so the bind is perfect and the .blend still looks right, but the
+    frames the animation graph turns each joint by are 90 degrees out - which is
+    what flung the arms out and drew the sleeves as stretched bands.
+    """
+    half = 0.7071067811865476
+
+    def product(first, second):
+        ax, ay, az, aw = first
+        bx, by, bz, bw = second
+        return (aw * bx + ax * bw + ay * bz - az * by,
+                aw * by - ax * bz + ay * bw + az * bx,
+                aw * bz + ax * by - ay * bx + az * bw,
+                aw * bw - ax * bx - ay * by - az * bz)
+
+    for index in range(1, 1 + len(BIPED_NODES)):
+        parts = lines[index].split("\t")
+        turn = tuple(float(parts[field]) for field in (3, 4, 5, 6))
+        if index == 1:
+            # the root's frame is the model's, so the roll is applied to it
+            turn = product((0.0, 0.0, half, half), turn)
+        else:
+            x, y, z, w = turn
+            turn = (-y, x, z, w)
+            across, along = float(parts[7]), float(parts[8])
+            parts[7], parts[8] = "%.6f" % -along, "%.6f" % across
+        parts[3], parts[4], parts[5], parts[6] = ("%.6f" % v for v in turn)
+        lines[index] = "\t".join(parts)
+    return lines
+
+
 def moved_node(lines):
     """One node slid ten units along x: well formed, but another skeleton."""
     parts = lines[13].split("\t")
@@ -254,6 +288,9 @@ def main():
                     opposite_sense(biped_file()), "describes another skeleton"),
         check_lines("biped node slid off its bone", moved_node(biped_file()),
                     "describes another skeleton"),
+        check_lines("biped node frames rolled 90 degrees",
+                    rolled_frames(biped_file()),
+                    "degrees from where Halo's own biped has it"),
     ]
 
     caught = sum(1 for result in results if result)

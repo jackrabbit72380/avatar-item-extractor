@@ -90,6 +90,39 @@ BIPED_POSITIONS = (
 # round throws the skeleton by.
 BIPED_PLACEMENT = 6.0
 
+# Halo's own stored turn for each of its 19 nodes, read from ``spartan.jms``.
+# A node's frame is what the animation graph turns that joint by, so a block
+# whose frames are rolled the wrong way still composes to the right bone
+# POSITIONS - the bind is perfect - and then warps the mesh the moment the
+# biped animates. The arms swing furthest from their bind, so they are where
+# it shows first and worst.
+BIPED_TURNS = {
+    "bip01 pelvis": (0.499999, 0.500000, 0.499999, 0.500001),
+    "bip01 l thigh": (0.016813, -0.999353, 0.000994, -0.031779),
+    "bip01 r thigh": (0.015175, -0.999452, -0.000967, 0.029396),
+    "bip01 spine": (0.000002, 0.000001, -0.000398, 1.000000),
+    "bip01 l calf": (-0.000000, 0.000000, 0.063633, 0.997973),
+    "bip01 r calf": (-0.000000, 0.000000, 0.067397, 0.997726),
+    "bip01 spine1": (0.000000, -0.000000, -0.000000, 1.000000),
+    "bip01 l clavicle": (-0.707107, 0.000282, -0.707107, 0.000281),
+    "bip01 l foot": (-0.001031, 0.031779, -0.080371, 0.996258),
+    "bip01 neck": (0.000000, 0.000000, -0.029996, 0.999550),
+    "bip01 r clavicle": (0.707107, -0.000281, -0.707107, 0.000283),
+    "bip01 r foot": (0.001016, -0.029394, -0.082501, 0.996157),
+    "bip01 head": (0.000000, -0.000000, 0.030394, 0.999538),
+    "bip01 l upperarm": (-0.000778, -0.634504, 0.006228, 0.772894),
+    "bip01 r upperarm": (0.000778, 0.634504, 0.006228, 0.772894),
+    "bip01 l forearm": (0.000000, -0.000000, 0.069403, 0.997589),
+    "bip01 r forearm": (-0.000000, -0.000000, 0.069403, 0.997589),
+    "bip01 l hand": (0.701751, -0.130519, -0.126017, 0.688934),
+    "bip01 r hand": (-0.701751, 0.130519, -0.126017, 0.688934),
+}
+
+# How far a stored turn may sit from Halo's. The shipped rig reproduces
+# Halo's own block to 0.14 degrees; 90 is what a wrong node-frame
+# convention throws it by.
+BIPED_TURN_SLACK = 2.0
+
 # Halo's own first-person arm set: the 37 node names every weapon's retail
 # first-person animation graph carries for the arms, read from Halo's own
 # ``fp arms.blend``. A weapon graph is bigger - the plasma rifle's is 42 nodes,
@@ -436,6 +469,31 @@ def check_jms(path):
                 "looks right because it deforms through the armature, and the "
                 "game draws the mesh as a heap of stretched triangles"
                 % (worst_name, worst))
+
+    # The node block's frames, not just its positions. Halo's animation graph
+    # writes each joint's rotation into that joint's own frame, so a block whose
+    # frames are rolled still binds exactly and then warps the mesh as soon as
+    # the biped moves - the arms first, because they swing furthest from their
+    # bind, while Blender keeps looking perfect because it deforms through the
+    # armature and never reads this block.
+    if stats.get("biped"):
+        worst, worst_name = 0.0, ""
+        for index, name in enumerate(names):
+            want = BIPED_TURNS.get(name)
+            if want is None:
+                continue
+            got = turns[index]
+            dot = abs(sum(got[axis] * want[axis] for axis in range(4)))
+            gap = math.degrees(2.0 * math.acos(min(1.0, dot)))
+            if gap > worst:
+                worst, worst_name = gap, name
+        if worst > BIPED_TURN_SLACK:
+            errors.append(
+                "node %s turns %.0f degrees from where Halo's own biped has it:"
+                " a .jms node's turn is written in Halo's axes, not Blender's"
+                " bone axes, and a rolled frame binds to the right positions and"
+                " then warps every animated joint - worst on the arms, which fly"
+                " out and stretch" % (worst_name, worst))
 
     # ------------------------------------------------------------- materials
     material_count = whole("material count")

@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v113.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v114.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -993,6 +993,26 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    and refuses a biped whose skeleton lands more than 6 units (18 cm) from
    Halo's own - a model that is perfect in the `.blend` can no longer compile
    into a pile.
+
+   **If it is the arms alone, or the mesh comes apart as soon as it moves.**
+   Then it is the block's *frames*, not its positions. A node line carries a
+   turn as well as a position, and Halo's animation graph turns each joint
+   inside that joint's own frame. A block whose frames are rolled the wrong way
+   still composes to Halo's exact bone positions - the bind is perfect, the
+   `.blend` is perfect, because it deforms through the armature and never reads
+   this block - and then every animated joint turns about the wrong axis. The
+   joints that swing furthest from their bind show it first and worst, which is
+   why it looks like an arm bug: the arms fly out and the sleeve is drawn as
+   stretched bands. That is what this tool shipped until v114: its block
+   differed from Halo's own `spartan.jms` by the *same* 90-degree roll on all 19
+   nodes - the pelvis turn was `0 0.7071 0.7071 0` where Halo stores
+   `0.5 0.5 0.5 0.5` - with the stored translations rolled to match, so the
+   positions came out right and the frames did not. From v114 every node is
+   written in Halo's axes (Blender's bone space is a bone's length along its
+   local Y, which Halo's files do not use), which reproduces Halo's stored turn
+   for all 19 nodes to 0.14 degrees; `jms_check.py` now compares each node's
+   turn with Halo's own and refuses a block more than 2 degrees off, so this
+   cannot ship silently either.
 
    The exception that follows in Sapien's log, `got an object type we didn't
    expect (expected one of 0x0000001c but got #1)` at `objects.c`, is a
