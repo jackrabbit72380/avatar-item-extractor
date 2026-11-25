@@ -920,15 +920,20 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    - Leave **usage** at `default` for all of these. `alpha blend` fades
      transparent pixels to black in the mips and `detail map` fades the mips to
      grey; both are for other kinds of texture, and these are mask images.
-3. **Model.** `tool model "<stem> sp"` reads `data\<stem> sp\models\<file>.JMS`
-   and writes `tags\<stem> sp\<stem> sp.gbxmodel`. Run it only after the shader
+3. **Model.** `tool model "<stem>"` reads `data\<stem>\models\<file>.JMS`
+   and writes `tags\<stem>\<stem>.gbxmodel`. Run it only after the shader
    exists: Tool looks up a shader per JMS material and will stop to ask for one. The material names inside the JMS are
    the only link to shaders, so each one needs a shader tag that exists. Tool
    reads the JMS **file name** as `<permutation> <lod>.JMS` (`base superhigh.JMS`;
-   the LOD word is one of `superhigh`, `high`, `medium`, `low`, `superlow`, and
-   the docs' own `rock.JMS` example leaves it off). Ours are `<stem> sp` and
-   `<stem> mp` - if your Tool build reads the trailing word as a LOD and
-   complains, rename them `<stem> sp superhigh.JMS` and `<stem> mp superhigh.JMS`.
+   the LOD word is one of `superhigh`, `high`, `medium`, `low`, `superlow`).
+   Tool builds a model's markers from the `superhigh` LOD **only**, and a name
+   with no LOD word leaves that to Tool's own default, so every model here
+   writes the word: the body is `<stem> superhigh.JMS`, the arms
+   `<stem> - fp arms superhigh.JMS`. Tool takes it off again, so the permutation
+   keeps the name in front of it (`UNSC Marine Armor`,
+   `UNSC Marine Armor - fp arms`), and the tag is still named after the source
+   folder. That is what makes the `head` and `body` markers compile rather than
+   depend on a default.
 
    The compiled model carries Halo's node names and the `head` and `body`
    markers, so it can be the model of a biped tag. That tag also needs an

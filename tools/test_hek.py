@@ -117,16 +117,17 @@ def main():
           "the arms were put in the body's models\\")
 
     # 4. mirror_jms carries the models and the sources into xbox, and only those.
-    write(os.path.join(tree["pc"]["models"], "%s.jms" % stem), "body")
-    write(os.path.join(tree["pc"]["fp_models"], "%s - fp arms.jms" % stem), "arms")
+    write(os.path.join(tree["pc"]["models"], "%s superhigh.jms" % stem), "body")
+    write(os.path.join(tree["pc"]["fp_models"],
+                       "%s - fp arms superhigh.jms" % stem), "arms")
     write(os.path.join(tree["pc"]["source"], "%s - halo.blend" % stem), "blend")
     write(os.path.join(tree["pc"]["source"], "%s - halo.fbx" % stem), "fbx")
     write(os.path.join(tree["pc"]["fp_source"],
                        "%s - halo fp arms.blend" % stem), "fp blend")
     write(os.path.join(tree["pc"]["models"], "notes.txt"), "not a model")
     module.mirror_jms(out, [stem])
-    for folder, name in ((("models",), "%s.jms" % stem),
-                         (("fp", "models"), "%s - fp arms.jms" % stem),
+    for folder, name in ((("models",), "%s superhigh.jms" % stem),
+                         (("fp", "models"), "%s - fp arms superhigh.jms" % stem),
                          (("source",), "%s - halo.blend" % stem),
                          (("source",), "%s - halo.fbx" % stem),
                          (("fp", "source"), "%s - halo fp arms.blend" % stem)):
@@ -201,8 +202,9 @@ def main():
                     os.remove(os.path.join(folder, name))
         # The exported model lives in source\, not models\: tool.exe compiles
         # every .jms in models\, so the original there would become a second tag.
-        write(os.path.join(base, "source", "%s.jms" % stem), jms)
-        write(os.path.join(base, "fp", "source", "%s - fp arms.jms" % stem), jms)
+        write(os.path.join(base, "source", "%s superhigh.jms" % stem), jms)
+        write(os.path.join(base, "fp", "source",
+                           "%s - fp arms superhigh.jms" % stem), jms)
 
     renamed = module.jms_material_names(jms, "_sp")
     check("boot_shader_sp\t<none>" in renamed
@@ -250,15 +252,17 @@ def main():
                   % (order, name,
                      read(shipped) if os.path.exists(shipped) else None,
                      wanted_base))
-        model = os.path.join(target, "models", "%s.jms" % stem)
+        # The LOD word is written, not left to Tool's default: Tool builds
+        # markers from the superhigh LOD only.
+        model = os.path.join(target, "models", "%s superhigh.jms" % stem)
         check(os.path.exists(model), "%s has no model" % order)
         present = sorted(name for name in os.listdir(os.path.join(target, "models"))
                          if name.lower().endswith(".jms"))
-        check(present == ["%s.jms" % stem],
+        check(present == ["%s superhigh.jms" % stem],
               "%s\\models holds %r, expected only the item's own model"
               % (order, present))
         arms_model = os.path.join(target, "fp", "models",
-                                  "%s - fp arms.jms" % stem)
+                                  "%s - fp arms superhigh.jms" % stem)
         check(os.path.exists(arms_model), "%s has no fp arms model" % order)
 
     if failures:

@@ -28,6 +28,12 @@ rem  armour takes red or blue, black where it keeps the colour it was painted.
 rem  For an item whose tint slot is blank and which carries no colour table (the
 rem  Marine armour is one) that mask is worked out from the base map.
 rem
+rem  Every .jms is named for the LOD Tool reads - the permutation, a space, then
+rem  superhigh, then .jms - because Tool builds a model's markers from the
+rem  superhigh LOD only: the word makes that LOD explicit instead of Tool's
+rem  undocumented default. Tool strips it off, so the permutation is still the
+rem  item's name.
+rem
 rem  The model carries Halo's own biped node names and the two markers a biped
 rem  must have - head on bip01 head, body on bip01 spine1 - so it can be the
 rem  model of a biped tag. That tag also needs an animation graph, and this tool
@@ -116,10 +122,15 @@ exit /b 0
 set "BUILD=%~1"
 echo.
 echo == %BUILD%
-if not exist "%HEK%\data\%BUILD%" (
-  echo   putting %BUILD% in the kit's data folder
-  xcopy /E /I /Y "%OUT%extracted for hek users\%ORDER%\data\%BUILD%" "%HEK%\data\%BUILD%" >>"%LOG%" 2>&1
-)
+rem  Always refresh the kit's copy, and clear the .jms first: the model's file
+rem  name carries the LOD word, and a model left by an earlier run would be
+rem  compiled beside this one. tool.exe compiles every .jms in models\, and the
+rem  tag is written to tags\, so nothing here is the built tag.
+echo   putting %BUILD% in the kit's data folder
+echo putting %BUILD% in the kit's data folder >>"%LOG%"
+if exist "%HEK%\data\%BUILD%\models\*.jms" del /Q "%HEK%\data\%BUILD%\models\*.jms" >>"%LOG%" 2>&1
+if exist "%HEK%\data\%BUILD%\fp\models\*.jms" del /Q "%HEK%\data\%BUILD%\fp\models\*.jms" >>"%LOG%" 2>&1
+xcopy /E /I /Y "%OUT%extracted for hek users\%ORDER%\data\%BUILD%" "%HEK%\data\%BUILD%" >>"%LOG%" 2>&1
 echo -- bitmaps "%BUILD%\bitmaps" >>"%LOG%"
 tool.exe bitmaps "%BUILD%\bitmaps" >>"%LOG%" 2>&1
 if errorlevel 1 echo   bitmap compile reported an error for %BUILD% - see the log

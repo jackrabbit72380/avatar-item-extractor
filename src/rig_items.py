@@ -85,8 +85,16 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v106"
-BUILD = "2026-11-25 biped-markers"
+VERSION = "v107"
+BUILD = "2026-11-25 superhigh-lod"
+
+# Tool reads a model's LOD from the last word of the .jms file name, and only
+# the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
+# word leaves that to Tool's own default, which nothing documents as superhigh,
+# so the word is always written. Tool takes it back off, and the permutation
+# keeps the name in front of it ("UNSC Marine Armor", "UNSC Marine Armor - fp
+# arms") - the tag is still named after the source folder.
+MODEL_LOD = "superhigh"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -4223,6 +4231,17 @@ def skin(object_data, armature, influences=2, rigid=False):
 
 # --------------------------------------------------------------------- output
 
+def jms_name(stem, suffix=""):
+    """The .jms name tool.exe reads: <permutation> <lod>.JMS.
+
+    The LOD word is not decoration: Tool builds a model's markers from the
+    superhigh LOD only, so a model whose file name omits the word depends on
+    Tool's default for it - and the docs promise nothing there. Writing it makes
+    the marker import unconditional; Tool strips it off the permutation name.
+    """
+    return "%s%s %s.jms" % (stem, suffix, MODEL_LOD)
+
+
 def export_jms(object_data, armature, path):
     """Halo CE's text model format, laid out the way tool.exe reads it.
 
@@ -4920,10 +4939,10 @@ def hek_builds(out, stems):
             # so one shader tag per material serves both models and nothing is
             # copied into fp\.
             for source, home, name in (
-                    (os.path.join(tree["source"], "%s.jms" % stem),
-                     tree["models"], "%s.jms" % stem),
-                    (os.path.join(tree["fp_source"], "%s - fp arms.jms" % stem),
-                     tree["fp_models"], "%s - fp arms.jms" % stem)):
+                    (os.path.join(tree["source"], jms_name(stem)),
+                     tree["models"], jms_name(stem)),
+                    (os.path.join(tree["fp_source"], jms_name(stem, " - fp arms")),
+                     tree["fp_models"], jms_name(stem, " - fp arms"))):
                 if os.path.exists(source):
                     copy_file(source, os.path.join(home, name))
             made.append(tree["item"])
@@ -5324,7 +5343,7 @@ def main():
                 # It is the file the model was exported from, which is what a
                 # source\ folder is for.
                 record["jms_errors"] = export_jms(
-                    merged, armature, os.path.join(source_dir, "%s.jms" % stem))
+                    merged, armature, os.path.join(source_dir, jms_name(stem)))
             # The file is named for the game it is for, not for the program that
             # wrote it: "- halo" is the answer to "which of these do I open?"
             # when the folder also holds the NXE and unrigged copies.
@@ -5349,7 +5368,7 @@ def main():
                 if options["jms"] and arms_item.data.vertices:
                     record["jms_arms_errors"] = export_jms(
                         arms_item, arms_rig,
-                        os.path.join(fp_source, "%s - fp arms.jms" % stem))
+                        os.path.join(fp_source, jms_name(stem, " - fp arms")))
                 record["arms_file"] = "%s - halo fp arms.blend" % stem
                 # The arms are carried onto Halo's own first-person rig, so
                 # that rig is the one in the file - the game's animations drive
