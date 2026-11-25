@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v111.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v112.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1044,10 +1044,15 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    weapon's graph does not have: that makes the hands table invalid, and a
    first-person weapon whose two tables are not both valid is never set up (the
    switch only stores the weapon when both are), so that weapon stops drawing in
-   first person and the biped is untouched. Do not rename or add bones, and do
-   not put this `.gbxmodel` on a unit, weapon or scenery tag: there it would be
-   an object model, the count test would apply, and 37 against 42 would fail the
-   way the biped did.
+   first person and the biped is untouched. The extractor enforces this rather
+   than only documenting it: before writing the arms `.jms` it checks every node
+   name in the supplied arms rig against Halo's 37, and if one is renamed, extra
+   or missing it fails the arms export and names the offending nodes, instead of
+   producing a model that silently stops a weapon drawing. Export from Halo's own
+   `fp arms.blend` with its bones unchanged. Do not rename or add bones either
+   way, and do not put this `.gbxmodel` on a unit, weapon or scenery tag: there
+   it would be an object model, the count test would apply, and 37 against 42
+   would fail the way the biped did.
 4. **Shader.** Make one `shader_model` per JMS material, at a tag path that
    matches the material name, and set:
 

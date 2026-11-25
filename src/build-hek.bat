@@ -155,7 +155,10 @@ rem  never sees fp\models\: compile that folder as its own source directory and
 rem  the tag lands at tags\<item>\fp\. H1 poses it from each weapon's own
 rem  first-person graph, node by node, with no model passed to the comparison
 rem  (first_person_weapons.c), so its 37 nodes are never counted against that
-rem  graph's 42. Leave the arms on the globals reference and nowhere else.
+rem  graph's 42. It is matched by name instead, so the arms' exporter refuses
+rem  any bone outside Halo's 37: a renamed rig fails the arms export and names
+rem  the nodes rather than writing a model no weapon graph can match. Leave the
+rem  arms on the globals reference and nowhere else.
 if exist "%HEK%\data\%BUILD%\fp\models\*.jms" (
   echo -- fp arms model "%BUILD%\fp" >>"%LOG%"
   tool.exe model "%BUILD%\fp" >>"%LOG%" 2>&1

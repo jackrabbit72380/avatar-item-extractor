@@ -57,6 +57,96 @@ BIPED_NODES = (
 BIPED_NODE_ORDER = tuple(row[0] for row in BIPED_NODES)
 BIPED_NODE_CHECKSUM = 1828349080
 
+# Halo's own first-person arm set: the 37 node names every weapon's retail
+# first-person animation graph carries for the arms, read from Halo's own
+# ``fp arms.blend``. A weapon graph is bigger - the plasma rifle's is 42 nodes,
+# these 37 plus ``frame gun``, ``frame rod_left``, ``frame rod_right``,
+# ``frame wing_left`` and ``frame wing_right`` - and H1 does not compare the
+# hands model's node count with it: the first-person renderer calls
+# ``animation_get_node_orientations`` with no model at all and remaps the
+# graph's nodes onto the hands model by name. A node name the graph does not
+# have therefore breaks that match, and a weapon whose hands and weapon tables
+# are not both valid is never set up - it silently stops drawing in first
+# person. So the arms model may carry exactly these names, and the exporter
+# refuses anything else rather than write it.
+#
+# The two spellings are Halo's own: ``frame l middlelow`` has no space and
+# ``frame r middle low`` has one.
+FP_ARMS_NODES = (
+    "frame bone24",
+    "frame l upperarm",
+    "frame l forearm",
+    "frame l wriste",
+    "frame l thumb low",
+    "frame l thumb mid",
+    "frame l thumb tip",
+    "frame l index low",
+    "frame l index mid",
+    "frame l index tip",
+    "frame l middlelow",
+    "frame l middle mid",
+    "frame l middle tip",
+    "frame l ring low",
+    "frame l ring mid",
+    "frame l ring tip",
+    "frame l pinky low",
+    "frame l pinky mid",
+    "frame l pinky tip",
+    "frame r upperarm",
+    "frame r forearm",
+    "frame r wriste",
+    "frame r thumb low",
+    "frame r thumb mid",
+    "frame r thumb tip",
+    "frame r index low",
+    "frame r index mid",
+    "frame r index tip",
+    "frame r middle low",
+    "frame r middle mid",
+    "frame r middle tip",
+    "frame r ring low",
+    "frame r ring mid",
+    "frame r ring tip",
+    "frame r pinky low",
+    "frame r pinky mid",
+    "frame r pinky tip",
+)
+FP_ARMS_NODE_SET = frozenset(FP_ARMS_NODES)
+
+
+def fp_arm_node_problem(names):
+    """Why ``names`` cannot be the first-person arms' node list, or None.
+
+    The hands model is the one model H1 poses by name: every weapon's
+    first-person graph is matched against it with ``strcmp``. Its node block is
+    therefore not free-form - a renamed or extra bone is a name no weapon graph
+    has, and one is enough to stop that weapon drawing in first person.
+    """
+    names = list(names)
+    if len(names) == len(FP_ARMS_NODES) and set(names) == FP_ARMS_NODE_SET:
+        return None
+    present = set(names)
+    extra = [name for name in names if name not in FP_ARMS_NODE_SET]
+    missing = [name for name in FP_ARMS_NODES if name not in present]
+    problems = []
+    if extra:
+        problems.append("%d node name(s) no Halo first-person graph has: %s"
+                        % (len(extra),
+                           ", ".join(repr(name) for name in extra[:6])))
+    if missing:
+        problems.append("%d of Halo's 37 arm nodes missing: %s"
+                        % (len(missing),
+                           ", ".join(repr(name) for name in missing[:6])))
+    if not problems:
+        problems.append("%d nodes, but not Halo's 37 distinct arm names"
+                        % len(names))
+    return ("the fp arms rig is not Halo's own 37-bone set: %s. H1 matches the "
+            "hands model to each weapon's first-person graph by node name, and "
+            "a name that graph does not carry stops the weapon drawing in "
+            "first person, so no arms .jms was written. Export from Halo's "
+            "own 'fp arms.blend' with its bones unchanged."
+            % "; ".join(problems))
+
 
 def _numbers(fields, where, errors):
     try:

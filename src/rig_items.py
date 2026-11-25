@@ -38,11 +38,11 @@ from mathutils import Quaternion, Vector
 # here instead of at compile time.
 try:
     from jms_check import (BIPED_NODE_CHECKSUM, BIPED_NODES,
-                           BIPED_NODE_ORDER, check_jms)
+                           BIPED_NODE_ORDER, check_jms, fp_arm_node_problem)
 except ImportError:  # run from somewhere that has not put this folder on the path
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from jms_check import (BIPED_NODE_CHECKSUM, BIPED_NODES,
-                           BIPED_NODE_ORDER, check_jms)
+                           BIPED_NODE_ORDER, check_jms, fp_arm_node_problem)
 
 # The avatar's own body comes from a .glb, read without bpy so the reading and
 # the choosing can be tested on their own. The TIFF writer is extraction's own,
@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v111"
-BUILD = "2026-11-25 fp-node-count"
+VERSION = "v112"
+BUILD = "2026-11-25 fp-node-names"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4244,7 +4244,7 @@ def jms_name(stem, suffix=""):
     return "%s%s %s.jms" % (stem, suffix, MODEL_LOD)
 
 
-def export_jms(object_data, armature, path):
+def export_jms(object_data, armature, path, arms=False):
     """Halo CE's text model format, laid out the way tool.exe reads it.
 
     Positional, with no section markers, matching HaloCE's own exporter
@@ -4272,11 +4272,23 @@ def export_jms(object_data, armature, path):
     line is BlueStreak's too: a constant -1, the node the marker rides, its
     rotation, its translation in that node's space, and a radius a gbxmodel
     marker does not store.
+
+    ``arms=True`` exports the first-person hands model, whose node block is
+    not free-form: H1 matches its node names against every weapon's
+    first-person graph, so a renamed or extra bone makes that match fail and
+    the weapon stops drawing. The export raises instead of writing such a
+    file.
     """
     mesh_data = object_data.data
     bones = list(armature.data.bones)
     by_name = {bone.name: bone for bone in bones}
     names = [bone.name for bone in bones]
+    if arms:
+        # Before anything is written: a bad rig must not leave behind a .jms
+        # that looks fine in the folder and fails silently in Sapien.
+        problem = fp_arm_node_problem(names)
+        if problem:
+            raise ValueError("%s: %s" % (os.path.basename(path), problem))
     # Halo's own biped is written in the one order its animation graph stores.
     # The order here is the node index Tool bakes into the gbxmodel, and an
     # animation addresses a bone by that index: the same 19 names in Blender's
@@ -5411,7 +5423,8 @@ def main():
                 if options["jms"] and arms_item.data.vertices:
                     record["jms_arms_errors"] = export_jms(
                         arms_item, arms_rig,
-                        os.path.join(fp_source, jms_name(stem, " - fp arms")))
+                        os.path.join(fp_source, jms_name(stem, " - fp arms")),
+                        arms=True)
                 record["arms_file"] = "%s - halo fp arms.blend" % stem
                 # The arms are carried onto Halo's own first-person rig, so
                 # that rig is the one in the file - the game's animations drive

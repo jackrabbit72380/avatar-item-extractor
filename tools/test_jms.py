@@ -36,7 +36,8 @@ MODULES = os.environ.get("RIG_MODULES") or os.path.join(
     os.path.dirname(HERE), "src")
 sys.path.insert(0, MODULES)
 
-from jms_check import BIPED_NODES, BIPED_NODE_CHECKSUM, BIPED_NODE_ORDER  # noqa: E402
+from jms_check import (BIPED_NODES, BIPED_NODE_CHECKSUM, BIPED_NODE_ORDER,  # noqa: E402
+                       FP_ARMS_NODES)
 
 
 # --------------------------------------------------------------- stand-in bpy
@@ -237,6 +238,40 @@ def main():
         module.export_jms(object_data, arms, target)
         with open(target, encoding="ascii") as handle:
             arms_lines = [line.rstrip("\n") for line in handle]
+
+        # Halo's own 37-bone arms: the hands model is posed by name against
+        # every weapon's first-person graph, so these are the only node names
+        # the exporter may write for it.
+        fp = [Bone(name, None, Vector(0, 0, float(index)))
+              for index, name in enumerate(FP_ARMS_NODES)]
+        for parent, bone in zip(fp, fp[1:]):
+            bone.parent = parent
+        fp_rig = types.SimpleNamespace(
+            data=types.SimpleNamespace(bones=fp), matrix_world=Matrix())
+        fp_path = os.path.join(work, "arms37.jms")
+        module.export_jms(object_data, fp_rig, fp_path, arms=True)
+        with open(fp_path, encoding="ascii") as handle:
+            fp_lines = [line.rstrip("\n") for line in handle]
+
+        # One renamed bone is a name no weapon graph can match. The export has
+        # to refuse it rather than write a model that silently stops a weapon
+        # drawing in first person.
+        renamed = [Bone("frame l hand" if name == "frame l wriste" else name, None,
+                        Vector(0, 0, float(index)))
+                   for index, name in enumerate(FP_ARMS_NODES)]
+        for parent, bone in zip(renamed, renamed[1:]):
+            bone.parent = parent
+        renamed_rig = types.SimpleNamespace(
+            data=types.SimpleNamespace(bones=renamed), matrix_world=Matrix())
+        bad_path = os.path.join(work, "arms-bad.jms")
+        try:
+            module.export_jms(object_data, renamed_rig, bad_path, arms=True)
+        except ValueError as problem:
+            refused = str(problem)
+        else:
+            refused = ""
+        left_behind = os.path.exists(bad_path)
+
         module.export_jms(object_data, biped, os.path.join(work, "biped.jms"))
         with open(os.path.join(work, "biped.jms"), encoding="ascii") as handle:
             biped_lines = [line.rstrip("\n") for line in handle]
@@ -313,6 +348,21 @@ def main():
     cursor += 3
     check(arms_lines[1 + 2 + 2] == "0",
           "an arms model was given biped markers: %r" % arms_lines[1 + 2 + 2])
+
+    # The arms' node block is exactly Halo's 37 arm names. Anything else - an
+    # extra bone, a missing one, a rename - is a node name no weapon's
+    # first-person graph can match, so the export refuses it instead of
+    # writing a model that stops the weapon drawing.
+    fp_header = fp_lines[0].split("\t")
+    check(fp_header[:3] == ["8200", "0", "37"],
+          "the 37-bone arms header is %r, expected 8200 / 0 / 37" % (fp_header,))
+    fp_written = tuple(line.split("\t")[0] for line in fp_lines[1:38])
+    check(fp_written == FP_ARMS_NODES,
+          "the arms nodes are not Halo's 37 arm names: %r" % (fp_written[:4],))
+    check(refused and "frame l hand" in refused and "frame l wriste" in refused,
+          "a renamed fp arms bone was not refused by name: %r"
+          % (refused or "written anyway",))
+    check(not left_behind, "a refused fp arms rig still left a .jms behind")
     check(lines[cursor] == "1", "region count is %r, expected 1" % lines[cursor])
     cursor += 2  # region count + its name
 
@@ -431,6 +481,7 @@ def main():
     print("  nodes    : %d, markers: %s" % (len(armature.data.bones),
                                             "head, body"))
     print("  biped    : 19 nodes in Halo's own order, markers on 12 and 6")
+    print("  arms     : Halo's 37 arm names only; a renamed bone is refused")
     print("  vertices : %d (%.0f per triangle, unshared)" % (vertices, vertices / max(1, faces)))
     print("  faces    : %d" % faces)
     print("  uv sample: %s" % (uvs[0],))
