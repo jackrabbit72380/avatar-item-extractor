@@ -57,6 +57,39 @@ BIPED_NODES = (
 BIPED_NODE_ORDER = tuple(row[0] for row in BIPED_NODES)
 BIPED_NODE_CHECKSUM = 1828349080
 
+# Where Halo's own biped puts each node in model space, read from Halo's own
+# ``spartan.jms`` - the cyborg the retail animation graph drives. These are the
+# positions the rig the exporter ships carries (pelvis 39.44, spine 43.18,
+# spine1 50.58, neck 59.19, head 60.91, hands +-13.32 at 35.23, feet 6.88), so a
+# node block that composes to anything else does not describe Halo's skeleton.
+BIPED_POSITIONS = (
+    (-0.8210, 0.0000, 39.4385),      #  0 bip01 pelvis
+    (-0.8210, 4.2186, 39.4385),      #  1 bip01 l thigh
+    (-0.8210, -4.2186, 39.4385),     #  2 bip01 r thigh
+    (-0.8269, 0.0000, 43.1751),      #  3 bip01 spine
+    (-1.3984, 5.3125, 22.2705),      #  4 bip01 l calf
+    (-1.3422, -5.2305, 22.2637),     #  5 bip01 r calf
+    (-0.8278, 0.0000, 50.5751),      #  6 bip01 spine1
+    (-0.8210, 5.9803, 56.9244),      #  7 bip01 l clavicle
+    (-3.9018, 6.2993, 6.8779),       #  8 bip01 l foot
+    (-0.8223, 0.0000, 59.1878),      #  9 bip01 neck
+    (-0.8210, -5.9803, 56.9244),     # 10 bip01 r clavicle
+    (-3.9115, -6.1430, 6.8774),      # 11 bip01 r foot
+    (-0.7175, 0.0000, 60.9093),      # 12 bip01 head
+    (-0.8210, 9.0228, 56.9244),      # 13 bip01 l upperarm
+    (-0.8210, -9.0228, 56.9244),     # 14 bip01 r upperarm
+    (-0.7272, 11.1376, 46.2730),     # 15 bip01 l forearm
+    (-0.7271, -11.1376, 46.2730),    # 16 bip01 r forearm
+    (0.9459, 13.3155, 35.2294),      # 17 bip01 l hand
+    (0.9459, -13.3156, 35.2294),     # 18 bip01 r hand
+)
+
+# How far a node may sit from Halo's own before the block is a different
+# skeleton. Six units is 18 cm: far more than any rig that is Halo's biped can
+# drift, and far less than the tens of units writing the turns the wrong way
+# round throws the skeleton by.
+BIPED_PLACEMENT = 6.0
+
 # Halo's own first-person arm set: the 37 node names every weapon's retail
 # first-person animation graph carries for the arms, read from Halo's own
 # ``fp arms.blend``. A weapon graph is bigger - the plasma rifle's is 42 nodes,
@@ -156,6 +189,73 @@ def _numbers(fields, where, errors):
         return None
 
 
+def _turn_matrix(turn):
+    """The 3x3 that a stored node quaternion turns with."""
+    x, y, z, w = turn
+    return ((1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w),
+             2.0 * (x * z + y * w)),
+            (2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z),
+             2.0 * (y * z - x * w)),
+            (2.0 * (x * z - y * w), 2.0 * (y * z + x * w),
+             1.0 - 2.0 * (x * x + y * y)))
+
+
+def _multiplied(first, second):
+    return tuple(tuple(sum(first[row][k] * second[k][column] for k in range(3))
+                       for column in range(3)) for row in range(3))
+
+
+def _transposed(turn):
+    return tuple(tuple(turn[column][row] for column in range(3))
+                 for row in range(3))
+
+
+def _carried(turn, point):
+    return tuple(sum(turn[row][k] * point[k] for k in range(3))
+                 for row in range(3))
+
+
+def _compose_node(index, parents, turns, spots, place, open_nodes):
+    """One node's frame in model space, composed the way Halo's file composes.
+
+    A stored turn is the INVERSE of the node's own turn against its parent:
+    Halo's own ``spartan.jms`` only rebuilds the cyborg's bone positions when
+    each stored turn goes in transposed, and its translation - in the parent's
+    space - is carried by the parent's frame. Written the natural way round
+    instead, every bind frame is inverted; tool.exe compiles that without a
+    word, and the engine then draws the mesh as a heap.
+    """
+    if index in place:
+        return place[index]
+    open_nodes.add(index)
+    stored = _transposed(_turn_matrix(turns[index]))
+    parent = parents.get(index)
+    if parent is None or parent in open_nodes:
+        place[index] = (stored, spots[index])
+    else:
+        above, where = _compose_node(parent, parents, turns, spots, place,
+                                     open_nodes)
+        moved = _carried(above, spots[index])
+        place[index] = (_multiplied(above, stored),
+                        tuple(where[axis] + moved[axis] for axis in range(3)))
+    open_nodes.discard(index)
+    return place[index]
+
+
+def _composed_nodes(first_child, next_sibling, turns, spots):
+    """Every node's model-space position, from the block as it is written."""
+    parents = {}
+    for index in range(len(turns)):
+        child = first_child[index]
+        while 0 <= child < len(turns) and child not in parents:
+            parents[child] = index
+            child = next_sibling[child]
+    place = {}
+    for index in range(len(turns)):
+        _compose_node(index, parents, turns, spots, place, set())
+    return {index: entry[1] for index, entry in place.items()}
+
+
 def check_jms(path):
     """Return (errors, notes, stats) for one .jms file."""
     errors, notes = [], []
@@ -209,7 +309,7 @@ def check_jms(path):
         return errors, notes, stats
 
     # ----------------------------------------------------------------- nodes
-    first_child, next_sibling, names = [], [], []
+    first_child, next_sibling, names, turns, spots = [], [], [], [], []
     for index in range(node_count):
         line = take()
         if line is None:
@@ -236,8 +336,11 @@ def check_jms(path):
             if abs(length - 1.0) > 1e-3:
                 errors.append("node %d (%s): rotation length %.4f, expected 1"
                               % (index, parts[0], length))
-        if _numbers(parts[7:10], "node %d position" % index, errors) is None:
+        position = _numbers(parts[7:10], "node %d position" % index, errors)
+        if position is None:
             return errors, notes, stats
+        turns.append(turn or (0.0, 0.0, 0.0, 1.0))
+        spots.append(position)
 
     # Halo's own biped: its node list is fixed, and only this order is the one
     # the retail animation graph matches. A same-named skeleton written in any
@@ -303,6 +406,36 @@ def check_jms(path):
             notes.append("node %d (%s) is written before its parent %d"
                          % (index, names[index], parent[index]))
     stats["roots"] = len(roots)
+
+    # The node block is the skeleton tool.exe builds, and every vertex is baked
+    # into the space of the node it rides: a block that describes another
+    # skeleton compiles into a model that comes apart the moment the game poses
+    # it. Halo's own biped is the only skeleton its animation graph drives, and
+    # its node positions are known from spartan.jms, so the block is composed
+    # and compared rather than trusted. This is the failure that looks perfect
+    # in Blender - which deforms through the armature and never reads the
+    # block - and is a pile of stretched triangles in game.
+    if stats.get("biped"):
+        placed = _composed_nodes(first_child, next_sibling, turns, spots)
+        worst, worst_name = 0.0, ""
+        for index, expected in enumerate(BIPED_POSITIONS):
+            actual = placed.get(index)
+            if actual is None:
+                continue
+            gap = math.sqrt(sum((actual[axis] - expected[axis]) ** 2
+                                for axis in range(3)))
+            if gap > worst:
+                worst, worst_name = gap, names[index]
+        if worst > BIPED_PLACEMENT:
+            errors.append(
+                "node block describes another skeleton: %s lands %.1f units "
+                "from where Halo's own biped puts it - a .jms stores each "
+                "node's turn inverted (BlueStreak writes it as \"quat -rot.x "
+                "-rot.y -rot.z rot.w\"), and the natural turn written instead "
+                "inverts every bind frame: tool.exe compiles it, Blender still "
+                "looks right because it deforms through the armature, and the "
+                "game draws the mesh as a heap of stretched triangles"
+                % (worst_name, worst))
 
     # ------------------------------------------------------------- materials
     material_count = whole("material count")

@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v112"
-BUILD = "2026-11-25 fp-node-names"
+VERSION = "v113"
+BUILD = "2026-11-25 jms-node-inverse"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4352,7 +4352,21 @@ def export_jms(object_data, armature, path, arms=False):
                      @ bone.matrix_local)
         else:
             frame = bone.matrix_local
+        # A .jms stores each node's turn INVERTED - the inverse of the node's
+        # rotation against its parent. Written the natural way round (the turn
+        # itself), every bind frame tool.exe bakes comes out inverted, and the
+        # engine draws the mesh as a heap of stretched triangles while the
+        # .blend, which deforms through the armature and never reads this block,
+        # still looks perfect. Halo's own spartan.jms is the proof: its node
+        # block only rebuilds the cyborg's bone positions (-0.82/0/39.44, head
+        # 60.91, hands 35.23) when each stored turn is applied transposed, i.e.
+        # stored = the inverse of the node's own turn. That is the same
+        # inversion BlueStreak writes as "quat -rot.x -rot.y -rot.z rot.w", and
+        # the inverse of a unit quaternion is its conjugate.
         turn = frame.to_quaternion()
+        # Conjugate it: negating the vector part of a unit quaternion is its
+        # inverse, and mathutils exposes the components writable.
+        turn.x, turn.y, turn.z = -turn.x, -turn.y, -turn.z
         head = frame.translation
         out.append("%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f" % (
             own, first_child[own], next_sibling[own],

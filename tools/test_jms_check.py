@@ -21,6 +21,33 @@ from jms_check import BIPED_NODES, BIPED_NODE_CHECKSUM, check_jms  # noqa: E402
 
 NODES = 3
 
+# Halo's own biped node block, exactly as ``characters\cyborg`` carries it in
+# Halo's ``spartan.jms``: (rotation, translation against the parent) per node,
+# in BIPED_NODES order. Composing these reproduces the cyborg's bone positions
+# only because each turn is the INVERSE of the node's own turn - which is what
+# the exporter has to write and what the checker now verifies.
+STANDING = (
+    ((0.499999, 0.500000, 0.499999, 0.500001), (-0.82100, 0.00000, 39.43850)),
+    ((0.016813, -0.999353, 0.000994, -0.031779), (-0.00001, 0.00001, 4.21865)),
+    ((0.015175, -0.999452, -0.000967, 0.029396), (0.00001, -0.00001, -4.21865)),
+    ((0.000002, 0.000001, -0.000398, 1.000000), (3.73659, -0.00589, 0.00000)),
+    ((-0.000000, 0.000000, 0.063633, 0.997973), (17.21253, 0.00000, -0.00000)),
+    ((-0.000000, 0.000000, 0.067397, 0.997726), (17.21253, -0.00000, -0.00000)),
+    ((0.000000, -0.000000, -0.000000, 1.000000), (7.39999, -0.00686, -0.00000)),
+    ((-0.707107, 0.000282, -0.707107, 0.000281), (6.34932, 0.00179, 5.98027)),
+    ((-0.001031, 0.031779, -0.080371, 0.996258), (15.62605, -0.00000, -0.00000)),
+    ((0.000000, 0.000000, -0.029996, 0.999550), (8.61271, -0.00137, -0.00000)),
+    ((0.707107, -0.000281, -0.707107, 0.000283), (6.34932, 0.00182, -5.98027)),
+    ((0.001016, -0.029394, -0.082501, 0.996157), (15.62605, 0.00000, -0.00000)),
+    ((0.000000, -0.000000, 0.030394, 0.999538), (1.72475, -0.00000, 0.00000)),
+    ((-0.000778, -0.634504, 0.006228, 0.772894), (3.04257, -0.00000, 0.00000)),
+    ((0.000778, 0.634504, 0.006228, 0.772894), (3.04257, 0.00000, 0.00000)),
+    ((0.000000, -0.000000, 0.069403, 0.997589), (10.85973, 0.00000, -0.00000)),
+    ((-0.000000, -0.000000, 0.069403, 0.997589), (10.85973, 0.00000, -0.00000)),
+    ((0.701751, -0.130519, -0.126017, 0.688934), (11.37995, -0.00000, -0.00000)),
+    ((-0.701751, 0.130519, -0.126017, 0.688934), (11.37995, -0.00000, -0.00000)),
+)
+
 
 def good_file():
     """A minimal well-formed .jms: three nodes, one material, one triangle."""
@@ -49,9 +76,12 @@ def good_file():
 def biped_file():
     """A 19-node .jms whose node block is Halo's own biped, in its own order."""
     lines = ["8200\t%d\t%d" % (BIPED_NODE_CHECKSUM, len(BIPED_NODES))]
-    for name, child, sibling, _parent in BIPED_NODES:
-        lines.append("%s\t%d\t%d\t0.000000\t0.000000\t0.000000\t1.000000\t"
-                     "0.000000\t0.000000\t0.000000" % (name, child, sibling))
+    for index, (name, child, sibling, _parent) in enumerate(BIPED_NODES):
+        turn, spot = STANDING[index]
+        lines.append("%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%.6f\t"
+                     "%.6f\t%.6f\t%.6f"
+                     % (name, child, sibling, turn[0], turn[1], turn[2],
+                        turn[3], spot[0], spot[1], spot[2]))
     lines.append("1")                    # materials
     lines.append("shirt\t<none>")
     lines.append("0")                    # markers
@@ -87,6 +117,30 @@ def check_mutation(name, change, expect):
     lines = good_file()
     change(lines)
     return check_lines(name, lines, expect)
+
+
+def opposite_sense(lines):
+    """The same skeleton with each node's turn written the natural way round.
+
+    A .jms stores the inverse of a node's turn against its parent. Writing the
+    turn itself is the export bug this checker was taught to catch: every bind
+    frame comes out inverted, tool.exe compiles it without a word, and the game
+    draws a heap while Blender still looks right.
+    """
+    for index in range(1, 1 + len(BIPED_NODES)):
+        parts = lines[index].split("\t")
+        for field in (3, 4, 5):
+            parts[field] = "%.6f" % -float(parts[field])
+        lines[index] = "\t".join(parts)
+    return lines
+
+
+def moved_node(lines):
+    """One node slid ten units along x: well formed, but another skeleton."""
+    parts = lines[13].split("\t")
+    parts[7] = "%.6f" % (float(parts[7]) + 10.0)
+    lines[13] = "\t".join(parts)
+    return lines
 
 
 def set_field(lines, index, field, value):
@@ -196,6 +250,10 @@ def main():
                     "from Halo's own biped"),
         check_lines("biped checksum is BlueStreak's constant", wrong_checksum,
                     "node list checksum is 3251"),
+        check_lines("biped turns stored the natural way round",
+                    opposite_sense(biped_file()), "describes another skeleton"),
+        check_lines("biped node slid off its bone", moved_node(biped_file()),
+                    "describes another skeleton"),
     ]
 
     caught = sum(1 for result in results if result)

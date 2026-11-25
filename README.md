@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v112.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v113.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -952,8 +952,10 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    folder. That is what makes the `head` and `body` markers compile rather than
    depend on a default.
 
-   The compiled model carries Halo's node names, in Halo's own order, and the
-   `head` and `body` markers, so it can be the model of a biped tag. That tag
+   The compiled model carries Halo's node names, in Halo's own order, with each
+   node's turn stored **inverted** against its parent - the way Halo's own
+   `.jms` files store it - and the `head` and `body` markers, so it can be the
+   model of a biped tag. That tag
    also needs an animation graph, and this tool writes no animations: point it
    at Halo's own graph for the stock biped,
    `characters\cyborg\cyborg.model_animations`. The model is skinned to that same
@@ -975,6 +977,22 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    no model rebuild is needed. A build made before v110 carries BlueStreak's 3251
    even though its node block is already Halo's, so this one edit repairs it; the
    extract writes the right value by itself from v110 on.
+
+   **If the mesh is clean in Blender but a heap in game.** That is the node
+   block, not the mesh or the weights: `tool.exe` builds the skeleton from the
+   `.jms` node lines and bakes every vertex into the space of the node it
+   rides, while Blender deforms through the armature and never reads them. A
+   `.jms` stores each node's turn **inverted** - the inverse of the node's
+   rotation against its parent, which BlueStreak writes as
+   `quat -rot.x -rot.y -rot.z rot.w`. Halo's own `spartan.jms` proves it: its
+   block only rebuilds the cyborg's bone positions (pelvis 39.44, head 60.91,
+   hands ±13.32 at 35.23) when each stored turn goes in transposed. Written the
+   natural way round, every bind frame is inverted, `tool model` accepts the
+   file without a word, and the game draws stretched triangles. From v113 the
+   exporter writes the inverse, and `jms_check.py` composes the 19-node block
+   and refuses a biped whose skeleton lands more than 6 units (18 cm) from
+   Halo's own - a model that is perfect in the `.blend` can no longer compile
+   into a pile.
 
    The exception that follows in Sapien's log, `got an object type we didn't
    expect (expected one of 0x0000001c but got #1)` at `objects.c`, is a
