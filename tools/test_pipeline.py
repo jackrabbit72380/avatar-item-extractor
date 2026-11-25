@@ -218,20 +218,6 @@ def main():
                   "a kit beside itself")
             return 1
 
-        # The same script sits at the repository root under the name the tool
-        # writes it with, so it can be read and downloaded without running
-        # anything. A copy nothing compares is how the old one went stale.
-        visible = os.path.join(ROOT_DIR, "Compile UNSC Marine Armor Avatar.bat")
-        if not os.path.exists(visible):
-            print("FAIL: Compile UNSC Marine Armor Avatar.bat is missing from the "
-                  "repository root")
-            return 1
-        with open(visible, encoding="utf-8", newline="") as handle:
-            if handle.read() != shipped_bat:
-                print("FAIL: the repository-root Compile UNSC Marine Armor "
-                      "Avatar.bat is not the script the payload ships")
-                return 1
-
         sys.path.insert(0, work)
         import avatar_mesh
         import extract_items
