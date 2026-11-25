@@ -141,4 +141,14 @@ if errorlevel 1 echo   bitmap compile reported an error for %BUILD% - see the lo
 echo -- model "%BUILD%" >>"%LOG%"
 tool.exe model "%BUILD%" >>"%LOG%" 2>&1
 if errorlevel 1 echo   model compile reported an error for %BUILD% - if it asked for a shader, make that shader tag and run this again
+rem  The first-person arms are a second model, in their own folder, and H1 reads
+rem  them from the map's game globals ("first person hands"), not from the
+rem  biped or a weapon. tool.exe reads models\ only, so the body compile above
+rem  never sees fp\models\: compile that folder as its own source directory and
+rem  the tag lands at tags\<item>\fp\.
+if exist "%HEK%\data\%BUILD%\fp\models\*.jms" (
+  echo -- fp arms model "%BUILD%\fp" >>"%LOG%"
+  tool.exe model "%BUILD%\fp" >>"%LOG%" 2>&1
+  if errorlevel 1 echo   fp arms model reported an error for %BUILD% - see the log
+)
 exit /b 0

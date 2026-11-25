@@ -217,6 +217,10 @@ def main():
             print("FAIL: the payload does not carry the build-hek.bat that finds "
                   "a kit beside itself")
             return 1
+        if 'tool.exe model "%BUILD%\\fp"' not in shipped_bat:
+            print("FAIL: the payload's build-hek.bat does not compile the "
+                  "fp arms model - H1's first person hands has nothing to use")
+            return 1
 
         sys.path.insert(0, work)
         import avatar_mesh

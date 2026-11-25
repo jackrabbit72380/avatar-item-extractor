@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v108.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v109.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -129,7 +129,9 @@ one text model compiles for either target), `animations\` for animation data,
 and `source\` with the `.blend` and `.fbx` the model was exported from. The
 first-person arms are a model of their own, so they get their own `fp\` folder
 inside the item: `fp\models\` with their `.jms` and `fp\source\` with their
-`.blend` and `.fbx`. There is no `fp\bitmaps\`: the arms' `.jms` names the
+`.blend` and `.fbx`. That model is H1's `first person hands` model - the one the
+map's globals point at - not something a biped or a weapon carries; step 3 below
+has the exact setup. There is no `fp\bitmaps\`: the arms' `.jms` names the
 same materials as the body's, so Tool resolves both models to the one shader
 tag per material and the one bitmap tag per map in the item's own `bitmaps\`. There is deliberately no `tags\` in there: `tool.exe` writes its output
 to `tags\` at the HEK root, never inside `data\`.
@@ -347,8 +349,10 @@ from the body and the player sees the arms, not the body's:
   it stands outside. A thumb outside its glove therefore shows up by name
   instead of passing on the hand-wide number, which another finger can satisfy.
   The rig in
-  the file *is* Halo's own 37-bone set, so the game's first-person animations
-  drive it as they stand. Nothing is modelled again and nothing is retextured:
+  the file *is* Halo's own 37-bone set - the exact node names the game's
+  first-person animations address - and H1 poses those nodes by name, from each
+  weapon's own animation graph, so the arms need no graph of their own. Nothing
+  is modelled again and nothing is retextured:
   faces, UVs, smoothing and
   materials come across as they are. A closed shell the item itself had inside
   out - a sleeve or a glove whose faces wind inward, which shows its own blank
@@ -955,6 +959,38 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    node names or another node order is "the model '...' and the animation graph
    '...' don't match", and no graph at all is the "units must have models and
    animation graphs" failure.
+
+   **First person.** The arms do not go on the biped: H1's unit tag has no
+   first-person arms field at all, so no biped tag can make them mismatch
+   anything. They are one model for the whole map, `globals\globals` ->
+   **first person interface** -> **first person hands** (a `gbxmodel`/`model`
+   reference; Halo's own comment on the field is "the model used for hands when
+   a weapon with first person animations is held"). `Compile ...bat` now builds
+   both models: `tool model "<stem>"` for the body, then
+   `tool model "<stem>\fp"`, which reads
+   `data\<stem>\fp\models\<stem> - fp arms superhigh.JMS` and writes
+   `tags\<stem>\fp\<stem> - fp arms.gbxmodel`. Point `first person hands` at
+   that tag and leave the biped and every weapon as they are.
+
+   Do **not** put the arms in a weapon's `first person model`: that reference is
+   the weapon in hand, and the arms-only model there would draw no gun. Halo
+   poses the two models with the one weapon `first person animations` graph, and
+   that graph is bigger than the arms. Halo's own plasma rifle first-person
+   graph is 42 nodes: the 37 arm nodes this set carries - `frame bone24`,
+   `frame l upperarm`, `frame l forearm`, `frame l wriste`, both hands' five
+   fingers with `low`/`mid`/`tip` - plus the weapon's own `frame gun`,
+   `frame rod_left`, `frame rod_right`, `frame wing_left` and
+   `frame wing_right`. 37 against 42 is correct for the hands, not a mismatch:
+   the engine builds its table by **name**, node by node
+   (`model_build_remapping_table_for_animation_graph` in
+   `first_person_weapons.c`), and never compares counts. The 37 names here were
+   read from Halo's own `fp arms.blend` and are exactly that graph's arm names,
+   including its two spellings, `frame l middlelow` with no space and
+   `frame r middle low` with one. What does break it is a name the weapon's
+   graph does not have: that makes the hands table invalid, and a first-person
+   weapon whose tables are not both valid is never set up, so the weapon stops
+   drawing in first person. Do not rename or add bones; the node order is not
+   compared either, the table carries the model's own nodes onto the graph's.
 4. **Shader.** Make one `shader_model` per JMS material, at a tag path that
    matches the material name, and set:
 
