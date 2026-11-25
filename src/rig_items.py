@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v102"
-BUILD = "2026-11-25 item-material-named-for-the-item"
+VERSION = "v103"
+BUILD = "2026-11-25 material-named-after-its-bitmap"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -433,19 +433,23 @@ def import_obj(path):
     return meshes
 
 
-def name_item_materials(meshes, stem):
-    r"""The item's own materials carry the item's name, not the file's.
+def name_item_materials(meshes, bitmap):
+    r"""The item's own materials carry the name of the bitmap they wrap.
 
     The .mtl the extractor writes names one material per triangle batch -
     ``batch_0``, ``batch_1`` - because that is what those triangles are in the
     file. A .jms carries no other link to a shader: tool.exe reads a material
     name and looks for a ``shader_model`` called after it, so a material left as
-    ``batch_0`` asks the user for a shader named after the importer's batch
-    number, and the empty one tool offers to make for it lands in the root of
-    ``tags\`` under that name. Named for the item it asks for the item's shader,
-    the one name in the folder that says what it is. An item in several batches
-    keeps its numbers - ``<item>_0``, ``<item>_1`` - because each material still
-    needs a shader of its own.
+    ``batch_0`` asks for a shader named after the importer's batch number, and
+    the empty one tool offers to make for it lands in the root of ``tags\``
+    under that name. Named after its own bitmap, the shader a user makes is
+    called what the map it wraps is called: `<item> base map` for the item's
+    surface, `<item> face` and `<item> body_0` for the ported sheets. The spaces
+    stay in the name - a .jms material is a tab-separated field, and Halo's own
+    materials carry spaces (`ring dusk` in the HEK's own skybox guide) - so the
+    name in the .jms is the name of the .bitmap. An item in several batches
+    keeps them apart with the batch number, `<bitmap> 0` and `<bitmap> 1`,
+    because each material still needs a shader of its own.
     """
     batches = []
     for object_data in meshes:
@@ -463,9 +467,9 @@ def name_item_materials(meshes, stem):
     named = []
     for index, material in batches:
         was = material.name
-        material.name = "%s_%d" % (stem, index) if several else stem
+        material.name = "%s %d" % (bitmap, index) if several else bitmap
         named.append("%s (was %s)" % (material.name, was))
-    log("%s: item material %s" % (stem, ", ".join(named)))
+    log("item material %s" % ", ".join(named))
     return [material for _, material in batches]
 
 
@@ -560,7 +564,7 @@ def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
     source = mesh.get("image")
     if source is None or source >= len(model["images"]):
         log("port: %s carries no image, so its material is a flat colour" % name)
-        return bpy.data.materials.new(name), None
+        return bpy.data.materials.new("%s %s" % (stem, name)), None
     image = model["images"][source]
     rgba, width, height = glb_model.decode_png(image["data"])
     picture = os.path.join(out, "%s %s.png" % (stem, name))
@@ -689,7 +693,9 @@ def port_material(mesh, stem, out, model, eyes_forward=False, tone=None,
     loaded = bpy.data.images.load(picture, check_existing=False)
     loaded.reload()
     loaded.pack()
-    material = bpy.data.materials.new(name)
+    # The bitmap this material wraps is `<item> <name>.png` / `.tif`, so the
+    # material, its shader and that map all answer to one name.
+    material = bpy.data.materials.new("%s %s" % (stem, name))
     material.use_nodes = True
     nodes = material.node_tree.nodes
     links = material.node_tree.links
@@ -4252,7 +4258,10 @@ def export_jms(object_data, armature, path):
                  for index, slot in enumerate(object_data.material_slots)] or ["material"]
     out.append("%d" % len(materials))
     for name in materials:
-        out.append("%s\t<none>" % name.replace(" ", "_"))
+        # Spaces stay: the material name is how tool.exe finds the shader, and
+        # the name it looks for is the name of the bitmap (`<item> base map`).
+        # A tab would end the field early, so that is the one thing collapsed.
+        out.append("%s\t<none>" % " ".join(str(name).split()))
 
     out.append("0")          # no markers
     out.append("1")          # one region
@@ -4991,7 +5000,11 @@ def main():
         meshes = import_obj(path)
         # Before anything names them: the .blend, .fbx, .glb and .jms all name
         # a material, and a .jms material name is the shader tool.exe looks for.
-        name_item_materials(meshes, item_stem(record))
+        # The bitmap it is named after is the one the material wraps - the item's
+        # base map, or its flat colour when it carries no texture.
+        stem = item_stem(record)
+        name_item_materials(meshes, "%s base map" % stem if record.get("texture")
+                            else "%s colour" % stem)
         # The item's own box, in the space the avatar's export is authored in.
         # 360sona names the item's copy in an export after the slot it fills -
         # the armour came back as plain "hair" - so the port recognises the item
