@@ -1180,6 +1180,28 @@ back to exactly the files it was given, rigs included. The banner's
 mismatch, which is what stops a rebuilt payload shipping under the old name. Bump
 both when the sources change.
 
+### Pushing from a cloud chat
+
+A cloud sandbox has `gh` registered as the git credential helper
+(`credential.https://github.com.helper = !/usr/bin/gh auth git-credential`) and
+the GitHub login in `~/.config/gh/hosts.yml`, but it does not ship the `gh`
+binary - so a plain `git push` stops at
+`/usr/bin/gh: not found` and then `could not read Username for
+'https://github.com'`, on every new chat. `tools/push-with-gh.sh` installs the
+latest `gh` under `$HOME/tools` (no root, nothing system-wide) and pushes with
+that copy as the helper, which then reads the stored login as intended:
+
+```sh
+tools/push-with-gh.sh            # HEAD -> origin main
+tools/push-with-gh.sh my-branch  # HEAD -> origin my-branch
+```
+
+It prints the account it pushed as, and then what `git ls-remote` reports the
+branch to be, so the push is checked rather than assumed. The login is read from
+the sandbox's own gh config, never stored in the script. It sits in `tools/`,
+never in `src/`, so it cannot end up in the shipped `.bat`: `payload.py` packs
+the `.py` and `.bat` files under `src/` only.
+
 A full run - extraction, then rigging - needs Blender 5.2 or newer, which is the
 one thing the repository does not carry:
 
