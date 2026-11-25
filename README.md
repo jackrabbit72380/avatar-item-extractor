@@ -95,7 +95,6 @@ Test Item\
             animations\  empty until there are animation files to put here
             source\     Test Item - halo.blend, .fbx  what the model came from
             fp\         the first-person arms, a model of their own
-                bitmaps\  the same maps, for the arms
                 models\   Test Item - fp arms.jms
                 source\   Test Item - halo fp arms.blend, .fbx
         xbox\data\  the same build in the original Xbox channel order: the team
@@ -129,9 +128,10 @@ the source directory `tool.exe` is pointed at - holding `bitmaps\` with the
 one text model compiles for either target), `animations\` for animation data,
 and `source\` with the `.blend` and `.fbx` the model was exported from. The
 first-person arms are a model of their own, so they get their own `fp\` folder
-inside the item: `fp\bitmaps\` with the maps they compile against,
-`fp\models\` with their `.jms`, and `fp\source\` with their `.blend` and
-`.fbx`. There is deliberately no `tags\` in there: `tool.exe` writes its output
+inside the item: `fp\models\` with their `.jms` and `fp\source\` with their
+`.blend` and `.fbx`. There is no `fp\bitmaps\`: the arms' `.jms` names the
+same materials as the body's, so Tool resolves both models to the one shader
+tag per material and the one bitmap tag per map in the item's own `bitmaps\`. There is deliberately no `tags\` in there: `tool.exe` writes its output
 to `tags\` at the HEK root, never inside `data\`.
 Each `.jms` writes every bone in its parent's space, because that is where Halo
 keeps a node: the marines' own model has its calf 15.87 along its thigh's axis,
@@ -740,8 +740,9 @@ What a ported item gains:
   measured on that sheet, because the export pads its face sheet in skin and its
   body sheet in a paler fill, and two files that read as two skin tones in a
   bitmaps folder is a folder that looks wrong even when the model is right.
-- `<stem> face.tif` and `<stem> body.tif` in `bitmaps` **and** `fp\bitmaps` of
-  every build, so each HEK folder carries everything it needs by itself.
+- `<stem> face.tif` and `<stem> body.tif` in `bitmaps` of every build, one copy
+  for both models: the arms' `.jms` names the same materials, so the same
+  shader and bitmap tags serve the body and the `fp\` set.
 - Two more materials in every `.jms`, named `face` and `body`, taking the same
   `_sp`, `_sp_decals`, `_mp` and `_mp_decals` suffixes as the item's own. Those
   are the exporter's own names for the two sheets with its slot index dropped:
@@ -942,7 +943,10 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    with `<item> multipurpose` as its multipurpose map. An item built with
    `--port` carries two more, `<item> face` and `<item> body`, each with its
    own bitmap of that name in every build's `bitmaps` and each needing a
-   `shader_model` called the same thing. The spaces are part of the name, in the
+   `shader_model` called the same thing. The `fp\` arms carry those same
+   material names, so these shaders are theirs as well - there is no second set
+   to make and no second folder of maps to compile. The spaces are part of the
+   name, in the
    `.jms` and in the tag; the tag has to match it exactly. Leave those two
    sheets' multipurpose maps empty unless you want the face to take the team
    colour: it is skin, and a team colour on it flickers with the armour's.

@@ -6,9 +6,9 @@ data\<item>\ and looks inside it by name - so it is checked here rather than
 trusted. The real functions are driven through a stand-in bpy, so this runs on
 plain Python with no Blender and no rig files:
 
-  * hek_folders() makes models\, animations\, source\ and fp\{models,bitmaps,
-    source}\ for pc and xbox alike;
-  * each order's fp\bitmaps\ holds that order's own maps, not a copy of pc's;
+  * hek_folders() makes models\, animations\, source\ and fp\{models,source}\ for
+    pc and xbox alike, and no fp\bitmaps\ - the arms bind the body's maps;
+  * each order's bitmaps\ holds that order's own maps, not a copy of pc's;
   * mirror_jms() carries the .jms and the source files into xbox\ and leaves
     anything else in models\ behind;
   * the name filters ignore case, so an item whose title is "UNSC Marine Armor"
@@ -88,8 +88,7 @@ def main():
     tree = module.hek_folders(out, stem)
 
     # 1. Every folder a HEK user looks for exists, in both orders.
-    wanted = ("models", "animations", "source", "fp", "fp_models", "fp_bitmaps",
-              "fp_source")
+    wanted = ("models", "animations", "source", "fp", "fp_models", "fp_source")
     for order in ("pc", "xbox"):
         for name in wanted:
             path = tree[order][name]
@@ -102,16 +101,15 @@ def main():
               os.path.normpath(os.path.join(hek, order, "data", plain, "fp", "models")),
               "%s arms are not in data\\<item>\\fp\\models\\" % order)
 
-    # 2. The arms carry the maps of their own order, not a copy of pc's.
+    # 2. The arms folder holds no maps of its own: their .jms materials are the
+    # body's names, so Tool binds the body's bitmaps\ for both models.
     for order in ("pc", "xbox"):
-        map_path = os.path.join(tree[order]["fp_bitmaps"],
-                                "%s base map.tif" % stem)
-        check(os.path.exists(map_path),
-              "%s arms folder has no maps" % order)
-        if os.path.exists(map_path):
-            check(read(map_path) == order,
-                  "%s arms folder holds %r, not its own maps"
-                  % (order, read(map_path)))
+        arms_maps = os.path.join(hek, order, "data", plain, "fp", "bitmaps")
+        check(not os.path.exists(arms_maps),
+              "%s made an fp\\bitmaps\\ (%s)" % (order, arms_maps))
+        own = os.path.join(tree[order]["bitmaps"], "%s base map.tif" % stem)
+        check(os.path.exists(own) and read(own) == order,
+              "%s\\bitmaps does not hold its own map" % order)
 
     # 3. The arms folder is the model's folder, not the body's.
     check(os.path.normpath(tree["pc"]["fp_models"]) !=
@@ -227,7 +225,7 @@ def main():
     for order in ("pc", "xbox"):
         target = os.path.join(hek, order, "data", plain)
         for sub in ("bitmaps", "models", "animations", "source",
-                    os.path.join("fp", "bitmaps"), os.path.join("fp", "models")):
+                    os.path.join("fp", "models")):
             check(os.path.isdir(os.path.join(target, sub)),
                   "%s is missing %s\\" % (order, sub))
         mask = os.path.join(target, "bitmaps", "%s multipurpose.tif" % stem)
@@ -235,10 +233,8 @@ def main():
         check(os.path.exists(mask) and read(mask) == want,
               "%s\\bitmaps multipurpose is %r, expected %r"
               % (order, read(mask) if os.path.exists(mask) else None, want))
-        arms = os.path.join(target, "fp", "bitmaps",
-                            "%s multipurpose.tif" % stem)
-        check(os.path.exists(arms) and read(arms) == want,
-              "%s's arms do not carry the same map" % order)
+        check(not os.path.exists(os.path.join(target, "fp", "bitmaps")),
+              "%s's arms got a bitmaps\\ of their own" % order)
         change = os.path.join(target, "bitmaps", "%s change colour.tif" % stem)
         check(os.path.exists(change),
               "%s has no change-colour map, so nothing could be team coloured"
@@ -254,9 +250,6 @@ def main():
                   % (order, name,
                      read(shipped) if os.path.exists(shipped) else None,
                      wanted_base))
-            arms_map = os.path.join(target, "fp", "bitmaps", name)
-            check(os.path.exists(arms_map) and read(arms_map) == wanted_base,
-                  "%s's arms do not carry %s" % (order, name))
         model = os.path.join(target, "models", "%s.jms" % stem)
         check(os.path.exists(model), "%s has no model" % order)
         present = sorted(name for name in os.listdir(os.path.join(target, "models"))
@@ -274,7 +267,7 @@ def main():
             print("  - %s" % message)
         return 1
     print("PASSED: HEK tree - data\\<item>\\{models,animations,source,fp\\{models,"
-          "bitmaps,source}}, both orders, one build with team colour")
+          "source}}, both orders, one build with team colour")
     return 0
 
 

@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v104"
-BUILD = "2026-11-25 exporter-index-dropped"
+VERSION = "v105"
+BUILD = "2026-11-25 one-bitmaps-folder"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -4746,13 +4746,16 @@ def hek_folders(out, stem):
     tool.exe takes data\<item>\ as its source directory and looks inside it by
     name: models\ for the .jms it compiles, animations\ for animation data, and
     bitmaps\ for the textures. The first-person arms are a model of their own,
-    so they get the same three under fp\ - fp\models\, fp\bitmaps\ and
-    fp\source\ - rather than being left in with the body's. Each of those and
-    the item's own folder carries a source\ holding the file the model was
-    exported from, which is where a HEK user looks for the thing to re-export.
+    so they get fp\models\ and fp\source\ rather than being left in with the
+    body's - but no fp\bitmaps\: their .jms names the same materials as the
+    body's, so Tool resolves both models to the one shader tag per material and
+    the one bitmap tag per map in the item's own bitmaps\, and a second copy
+    would be a folder of files no tag points at. Each model folder carries a
+    source\ holding the file the model was exported from, which is where a HEK
+    user looks for the thing to re-export.
 
     Both orders are made here, by the same code, so pc\ and xbox\ cannot come
-    out with different folders - and each order's arms take that order's own
+    out with different folders - and each order's bitmaps hold that order's own
     maps, because the pc and xbox masks are not the same bytes.
     """
     made = {}
@@ -4766,11 +4769,9 @@ def hek_folders(out, stem):
                 "source": os.path.join(item_dir, "source"),
                 "fp": os.path.join(item_dir, "fp"),
                 "fp_models": os.path.join(item_dir, "fp", "models"),
-                "fp_bitmaps": os.path.join(item_dir, "fp", "bitmaps"),
                 "fp_source": os.path.join(item_dir, "fp", "source")}
         for path in tree.values():
             os.makedirs(path, exist_ok=True)
-        share_files(tree["bitmaps"], tree["fp_bitmaps"])
         made[order] = tree
     return made
 
@@ -4879,13 +4880,14 @@ def hek_builds(out, stems):
     made = []
     for stem in sorted(set(stems)):
         for order, tree in hek_folders(out, stem).items():
-            bitmaps = tree["bitmaps"]
             # Both base maps stay: the item's own and the copy with its decal
             # blended in, which is the one a shader binds when the suit should
             # show the decal. Copying the blend over the plain map is what used
             # to leave the HEK folder holding a different texture from the
-            # Blender folder, with nothing left to compare against.
-            share_files(bitmaps, tree["fp_bitmaps"])
+            # Blender folder, with nothing left to compare against. The arms
+            # read these same maps: their .jms materials are the body's names,
+            # so one shader tag per material serves both models and nothing is
+            # copied into fp\.
             for source, home, name in (
                     (os.path.join(tree["source"], "%s.jms" % stem),
                      tree["models"], "%s.jms" % stem),
@@ -5254,9 +5256,9 @@ def main():
         # so the two cannot drift apart.
         folders = hek_folders(out, stem)
         # The ported body's textures go beside each build's other maps, in both
-        # channel orders: hek_builds copies every .tif in an order's folder into
-        # all four of its builds and into fp\bitmaps, so a body that is the same
-        # in every build is written once here and is complete everywhere.
+        # channel orders. One copy per order is enough for both models: the
+        # arms' .jms carries the same material names, so Tool finds the same
+        # shader and bitmap tags for them, and fp\ holds no maps of its own.
         for texture, pixels, width, height in port_textures.get(stem, []):
             name = "%s %s.tif" % (stem, texture)
             # tool.exe takes a power of two a side and the export is not built

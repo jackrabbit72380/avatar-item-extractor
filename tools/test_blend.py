@@ -243,17 +243,16 @@ def main():
         fail("mirror_jms copied %d files (%r), expected 4 (%r)"
              % (copied, got, wanted))
 
-    # The fp folder carries its own bitmaps and models, and both it and the
-    # item's own folder carry a source\\ with the file the model came from.
+    # share_files copies only the kinds asked for, and leaves the rest behind.
     share_work = tempfile.mkdtemp(prefix="share-")
     maps = os.path.join(share_work, "maps")
     os.makedirs(maps, exist_ok=True)
     for name in ("Item base map.tif", "Item colour.png", "notes.txt"):
         open(os.path.join(maps, name), "w").close()
-    target = os.path.join(share_work, "fp", "bitmaps")
+    target = os.path.join(share_work, "copy")
     copied = module.share_files(maps, target, (".tif", ".png"))
     got = sorted(os.listdir(target))
-    print("  share_files         -> %d copied, fp\\bitmaps holds %r" % (copied, got))
+    print("  share_files         -> %d copied, copy\\ holds %r" % (copied, got))
     if copied != 2 or got != ["Item base map.tif", "Item colour.png"]:
         fail("share_files copied %d files (%r), expected the two maps (%r)"
              % (copied, got, ["Item base map.tif", "Item colour.png"]))
