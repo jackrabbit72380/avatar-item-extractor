@@ -168,7 +168,7 @@ def main():
     #    pair any more - only the multiplayer version uses team colour, so a
     #    second folder that masked nothing was a suit that never changes colour.
     jms = "\n".join([
-        "8200\t3251\t2",
+        "8200\t0\t2",
         "root\t-1\t-1\t0\t0\t0\t1\t0\t0\t0",
         "bone1\t-1\t-1\t0\t0\t0\t1\t0\t1\t0",
         "2",

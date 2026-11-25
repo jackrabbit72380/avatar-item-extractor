@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v109"
-BUILD = "2026-11-25 first-person-hands-model"
+VERSION = "v110"
+BUILD = "2026-11-25 node-list-checksum"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4250,7 +4250,7 @@ def export_jms(object_data, armature, path):
     Positional, with no section markers, matching HaloCE's own exporter
     (BlueStreak 1.0.4, "Adapted for HaloCE"):
 
-        8200 <3251> <node_count>
+        8200 <node_list_checksum> <node_count>
         <name> <first_child> <next_sibling> <rx> <ry> <rz> <rw> <tx> <ty> <tz>
         <material_count>  then  <name> <none>  per material
         <marker_count>   then  <name> -1 <node> <rx> <ry> <rz> <rw>
@@ -4310,7 +4310,17 @@ def export_jms(object_data, armature, path):
             for left, right in zip(kids, kids[1:]):
                 next_sibling[left] = index_of[right]
 
-    out = ["8200\t3251\t%d" % len(order)]
+    # The header's second field is not a version or a constant: it is the model's
+    # node list checksum, and tool.exe copies it into the gbxmodel. The engine
+    # refuses a biped whose model and animation graph carry different nonzero
+    # values with "the model '...' and the animation graph '...' don't match" and
+    # then will not animate it. BlueStreak writes the constant 3251 there, which
+    # is why a correct skeleton built from its .jms still fails; Halo's own
+    # cyborg .jms and graph both carry 1828349080, and the biped's node block
+    # below is that same list in that same order. A model no graph drives (the
+    # arms) carries 0, which the engine reads as "do not compare checksums".
+    checksum = BIPED_NODE_CHECKSUM if biped else 0
+    out = ["8200\t%d\t%d" % (checksum, len(order))]
     for own in order:
         bone = by_name[own]
         # Each node is written in its PARENT's space, not the model's. Halo's
@@ -4410,8 +4420,10 @@ def export_jms(object_data, armature, path):
     with open(path, "w", encoding="ascii", errors="replace", newline="") as handle:
         handle.write("\n".join(out) + "\n")
     if biped:
-        log("node list : Halo's biped order, so the node list checksum Tool "
-            "writes is the graph's own, %d" % BIPED_NODE_CHECKSUM)
+        log("node list : Halo's biped order, and its node list checksum %d in "
+            "the .jms header - tool.exe copies that field into the gbxmodel, so "
+            "it matches characters\\cyborg\\cyborg.model_animations"
+            % BIPED_NODE_CHECKSUM)
     log("wrote %s (%d verts, %d tris, %d markers)"
         % (os.path.basename(path), len(corners) * 3, len(faces), len(markers)))
     errors, notes, stats = check_jms(path)

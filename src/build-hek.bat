@@ -35,8 +35,12 @@ rem  undocumented default. Tool strips it off, so the permutation is still the
 rem  item's name.
 rem
 rem  The model carries Halo's own biped node names, in the order that graph
-rem  stores (so Tool's node list checksum is the graph's own, 1828349080), and
-rem  the two markers a biped must have - head on bip01 head, body on bip01
+rem  stores, and its .jms header carries that graph's node list checksum
+rem  (1828349080) - Tool copies the header's second field into the gbxmodel, so
+rem  the two tags agree. BlueStreak writes its constant 3251 there, which is why
+rem  a correct skeleton can still say the model and graph don't match; a model
+rem  no graph drives (the arms) writes 0, which the engine does not compare. It
+rem  also carries the two markers a biped must have - head on bip01 head, body on bip01
 rem  spine1 - so it can be the model of a biped tag. That tag also needs an
 rem  animation graph, and this tool writes no animations: the character is
 rem  skinned to Halo's own 19-bone biped, so point the tag at

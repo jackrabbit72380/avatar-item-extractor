@@ -17,14 +17,14 @@ MODULES = os.environ.get("RIG_MODULES") or os.path.join(
     os.path.dirname(HERE), "src")
 sys.path.insert(0, MODULES)
 
-from jms_check import BIPED_NODES, check_jms  # noqa: E402
+from jms_check import BIPED_NODES, BIPED_NODE_CHECKSUM, check_jms  # noqa: E402
 
 NODES = 3
 
 
 def good_file():
     """A minimal well-formed .jms: three nodes, one material, one triangle."""
-    lines = ["8200\t3251\t%d" % NODES]
+    lines = ["8200\t0\t%d" % NODES]
     for index in range(NODES):
         # name, first child, next sibling, rotation (identity), position
         child = index + 1 if index + 1 < NODES else -1
@@ -48,7 +48,7 @@ def good_file():
 
 def biped_file():
     """A 19-node .jms whose node block is Halo's own biped, in its own order."""
-    lines = ["8200\t3251\t%d" % len(BIPED_NODES)]
+    lines = ["8200\t%d\t%d" % (BIPED_NODE_CHECKSUM, len(BIPED_NODES))]
     for name, child, sibling, _parent in BIPED_NODES:
         lines.append("%s\t%d\t%d\t0.000000\t0.000000\t0.000000\t1.000000\t"
                      "0.000000\t0.000000\t0.000000" % (name, child, sibling))
@@ -136,6 +136,11 @@ def main():
     swapped[1], swapped[2] = "\t".join(first), "\t".join(second)
     broken = biped_file()
     set_field(broken, 2, 2, "-1")
+    # Halo's own node list with another checksum is the failure this checker
+    # exists to stop: tool.exe copies the header field into the gbxmodel, and a
+    # model carrying BlueStreak's constant does not match the retail graph.
+    wrong_checksum = biped_file()
+    set_field(wrong_checksum, 0, 1, "3251")
 
     # Locate the blocks the way the checker does - by their shape - rather than
     # by counting lines, so a change to the fixture cannot silently point a
@@ -189,6 +194,8 @@ def main():
                     "not in its order"),
         check_lines("biped links not Halo's own", broken,
                     "from Halo's own biped"),
+        check_lines("biped checksum is BlueStreak's constant", wrong_checksum,
+                    "node list checksum is 3251"),
     ]
 
     caught = sum(1 for result in results if result)

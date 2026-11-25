@@ -18,7 +18,11 @@ the file is checked here.
 import math
 import sys
 
-HEADER = ("8200", "3251")
+# The header line is ``8200 <node list checksum> <node count>``. The middle
+# field is the checksum tool.exe copies into the gbxmodel, not a version and not
+# a constant: BlueStreak writes 3251 there, and a model carrying it does not
+# match Halo's own animation graph even when its node list is exactly Halo's.
+HEADER = "8200"
 
 # Halo's own biped skeleton, in the order the retail animation graph stores it:
 # (name, first child, next sibling, parent), node 0 first. This is the node list
@@ -98,11 +102,17 @@ def check_jms(path):
     if header is None:
         return errors, notes, stats
     fields = header.split("\t")
-    if len(fields) != 3 or (fields[0], fields[1]) != HEADER:
-        errors.append("header is %r, expected %s %s <nodes>"
-                      % (header[:40], HEADER[0], HEADER[1]))
+    if len(fields) != 3 or fields[0] != HEADER:
+        errors.append("header is %r, expected 8200 <node list checksum> <nodes>"
+                      % (header[:40],))
         return errors, notes, stats
-    node_count = int(fields[2])
+    try:
+        checksum, node_count = int(fields[1]), int(fields[2])
+    except ValueError:
+        errors.append("header is %r, expected 8200 <node list checksum> <nodes>"
+                      % (header[:40],))
+        return errors, notes, stats
+    stats["checksum"] = checksum
     stats["nodes"] = node_count
     if node_count < 1:
         errors.append("node count is %d" % node_count)
@@ -146,6 +156,18 @@ def check_jms(path):
     if node_count == len(BIPED_NODES):
         if tuple(names) == BIPED_NODE_ORDER:
             stats["biped"] = True
+            # The node list is only half of the match. tool.exe copies the
+            # header's checksum into the gbxmodel and the engine compares it
+            # with the animation graph's, so Halo's own biped carries Halo's own
+            # value; 3251 is BlueStreak's constant and 0 switches the comparison
+            # off, leaving a model that cannot prove it belongs to its graph.
+            if checksum != BIPED_NODE_CHECKSUM:
+                errors.append(
+                    "header node list checksum is %d, expected %d - tool.exe "
+                    "copies it into the gbxmodel, and the engine refuses a biped "
+                    "whose model and animation graph differ: \"the model '...' "
+                    "and the animation graph '...' don't match\""
+                    % (checksum, BIPED_NODE_CHECKSUM))
             for index, (name, child, sibling, _parent) in enumerate(BIPED_NODES):
                 if first_child[index] != child or next_sibling[index] != sibling:
                     errors.append(
@@ -363,10 +385,11 @@ def report(path, errors, notes, stats):
         if len(errors) > 12:
             print("   ... and %d more" % (len(errors) - 12))
         return False
-    print("PASS %s  nodes %d, faces %d, verts %d, materials %d, two-weight verts %d"
-          % (path, stats.get("nodes", 0), stats.get("faces", 0),
-             stats.get("vertices", 0), stats.get("materials", 0),
-             stats.get("two_weight_vertices", 0)))
+    print("PASS %s  nodes %d, checksum %d, faces %d, verts %d, materials %d, "
+          "two-weight verts %d"
+          % (path, stats.get("nodes", 0), stats.get("checksum", 0),
+             stats.get("faces", 0), stats.get("vertices", 0),
+             stats.get("materials", 0), stats.get("two_weight_vertices", 0)))
     for note in notes[:6]:
         print("   note: %s" % note)
     return True

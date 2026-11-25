@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v109.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v110.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -467,10 +467,15 @@ Node names are Halo's own, spaces and all (`bip01 pelvis`, not
 name *and* addresses them by index, so both have to be Halo's. The node block is
 written in the order `characters\cyborg\cyborg.model_animations` stores - pelvis,
 left thigh, right thigh, spine, and so on - with that graph's own child and
-sibling links. `tool model` therefore stores the same node list checksum the
-retail graph carries, **1828349080**. The same 19 names in Blender's order are a
-different checksum, which the engine answers with "the model '...' and the
-animation graph '...' don't match". A biped model also carries the two markers
+sibling links. The `.jms` header's second field is the node list checksum -
+`8200 <checksum> <node count>` - and `tool model` copies it into the gbxmodel;
+the engine compares it with the animation graph's and refuses a biped when both
+are nonzero and differ. These files write the retail graph's own value,
+**1828349080**, there. BlueStreak writes its constant **3251** in that field,
+which is why a model whose node list is exactly Halo's still answers "the model
+'...' and the animation graph '...' don't match"; the same 19 names in Blender's
+order are a different node list again, and animate the wrong bone even if the
+checksum is forced to agree. A biped model also carries the two markers
 the engine requires of one - `head` on `bip01 head` and `body` on `bip01 spine1`,
 each at the bone's own pivot and with the bone's own orientation, so no offset is
 invented. Without them the engine refuses the biped with "the biped '...' has no
@@ -952,13 +957,33 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    also needs an animation graph, and this tool writes no animations: point it
    at Halo's own graph for the stock biped,
    `characters\cyborg\cyborg.model_animations`. The model is skinned to that same
-   19-bone skeleton and its node block is written in that graph's order, so
-   `tool model` stores the graph's own node list checksum (1828349080) and the
-   two tags match. Copying that graph into the item's folder, keeping its node
-   list, works too; a new, empty graph does not. A graph built against other
-   node names or another node order is "the model '...' and the animation graph
-   '...' don't match", and no graph at all is the "units must have models and
-   animation graphs" failure.
+   19-bone skeleton, its node block is written in that graph's order, and its
+   `.jms` header carries that graph's node list checksum (1828349080), which
+   `tool model` copies into the gbxmodel - so the two tags match. Copying that
+   graph into the item's folder keeps its checksum and works too; a graph built
+   from other animations carries whatever checksum their exporter wrote, and a
+   new, empty graph carries none. A graph built against other node names, this
+   skeleton in another order, or another checksum is "the model '...' and the
+   animation graph '...' don't match" - and no graph at all is the "units must
+   have models and animation graphs" failure.
+
+   **If it still says they don't match.** Guerilla shows the number on both
+   tags: open `tags\<stem>\<stem>.gbxmodel` and read *node list checksum*, then
+   open the biped tag's animation graph and read the same field. Halo's own
+   cyborg graph carries 1828349080 and 19 nodes. Set the model's field to the
+   graph's (or the graph's to the model's), save, and recompile the map cache -
+   no model rebuild is needed. A build made before v110 carries BlueStreak's 3251
+   even though its node block is already Halo's, so this one edit repairs it; the
+   extract writes the right value by itself from v110 on.
+
+   The exception that follows in Sapien's log, `got an object type we didn't
+   expect (expected one of 0x0000001c but got #1)` at `objects.c`, is a
+   different failure. `0x1c` is the engine's item mask (weapon, equipment,
+   garbage) and `#1` is a vehicle, so item code was handed a vehicle's object
+   index. Neither the armor's model nor its node list can turn an object into a
+   vehicle; fix the checksum first and place the biped again. If the halt comes
+   back while the biped animates, that index belongs to a vehicle in the
+   scenario, and the scenario object is what to look at.
 
    **First person.** The arms do not go on the biped: H1's unit tag has no
    first-person arms field at all, so no biped tag can make them mismatch

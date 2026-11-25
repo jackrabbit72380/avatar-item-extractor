@@ -4,7 +4,7 @@
 The reference is HaloCE's own exporter (BlueStreak 1.0.4, "Adapted for HaloCE"),
 which writes, positionally and with no section markers:
 
-    8200 <3251> <node_count>
+    8200 <node_list_checksum> <node_count>
     <name> <first_child> <next_sibling> <rx> <ry> <rz> <rw> <tx> <ty> <tz>
     <material_count>  then  <name> <none>  per material
     <marker_count>   then  <name> -1 <node> <rx> <ry> <rz> <rw>
@@ -36,7 +36,7 @@ MODULES = os.environ.get("RIG_MODULES") or os.path.join(
     os.path.dirname(HERE), "src")
 sys.path.insert(0, MODULES)
 
-from jms_check import BIPED_NODES, BIPED_NODE_ORDER  # noqa: E402
+from jms_check import BIPED_NODES, BIPED_NODE_CHECKSUM, BIPED_NODE_ORDER  # noqa: E402
 
 
 # --------------------------------------------------------------- stand-in bpy
@@ -255,7 +255,11 @@ def main():
         return 1
 
     header = lines[0].split("\t")
-    check(header[:2] == ["8200", "3251"], "header is %r, expected 8200 / 3251" % (header,))
+    # The middle field is the node list checksum tool.exe copies into the
+    # gbxmodel. This model is not Halo's biped, so it carries 0 - the value the
+    # engine reads as "do not compare"; a biped carries 1828349080.
+    check(header[:2] == ["8200", "0"],
+          "header is %r, expected 8200 / 0 for a model no graph drives" % (header,))
     check(len(header) == 3 and header[2] == "4",
           "header does not carry the node count: %r" % (header,))
 
@@ -359,6 +363,10 @@ def main():
     header = biped_lines[0].split("\t")
     check(len(header) == 3 and header[2] == "19",
           "the biped header is %r, expected 19 nodes" % (header,))
+    check(header[1] == str(BIPED_NODE_CHECKSUM),
+          "the biped header's checksum is %r, expected %d - tool.exe copies it "
+          "into the gbxmodel and the engine compares it with the graph's"
+          % (header[1], BIPED_NODE_CHECKSUM))
     written = [line.split("\t")[0] for line in biped_lines[1:20]]
     check(tuple(written) == BIPED_NODE_ORDER,
           "the biped nodes are written as %r, not in Halo's order"
