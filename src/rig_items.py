@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v101"
-BUILD = "2026-11-24 sheets-filed-and-padded-alike"
+VERSION = "v102"
+BUILD = "2026-11-25 item-material-named-for-the-item"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -431,6 +431,42 @@ def import_obj(path):
         % (os.path.basename(path),
            ", ".join("%d verts" % len(item.data.vertices) for item in meshes) or "no mesh"))
     return meshes
+
+
+def name_item_materials(meshes, stem):
+    r"""The item's own materials carry the item's name, not the file's.
+
+    The .mtl the extractor writes names one material per triangle batch -
+    ``batch_0``, ``batch_1`` - because that is what those triangles are in the
+    file. A .jms carries no other link to a shader: tool.exe reads a material
+    name and looks for a ``shader_model`` called after it, so a material left as
+    ``batch_0`` asks the user for a shader named after the importer's batch
+    number, and the empty one tool offers to make for it lands in the root of
+    ``tags\`` under that name. Named for the item it asks for the item's shader,
+    the one name in the folder that says what it is. An item in several batches
+    keeps its numbers - ``<item>_0``, ``<item>_1`` - because each material still
+    needs a shader of its own.
+    """
+    batches = []
+    for object_data in meshes:
+        for slot in object_data.material_slots:
+            material = slot.material
+            if material is None or any(material is seen for _, seen in batches):
+                continue
+            tail = material.name[len("batch_"):]
+            if material.name.startswith("batch_") and tail.isdigit():
+                batches.append((int(tail), material))
+    if not batches:
+        return []
+    batches.sort(key=lambda pair: pair[0])
+    several = len(batches) > 1
+    named = []
+    for index, material in batches:
+        was = material.name
+        material.name = "%s_%d" % (stem, index) if several else stem
+        named.append("%s (was %s)" % (material.name, was))
+    log("%s: item material %s" % (stem, ", ".join(named)))
+    return [material for _, material in batches]
 
 
 def item_stem(record):
@@ -4953,6 +4989,9 @@ def main():
     port_textures = {}
     for record, path in items:
         meshes = import_obj(path)
+        # Before anything names them: the .blend, .fbx, .glb and .jms all name
+        # a material, and a .jms material name is the shader tool.exe looks for.
+        name_item_materials(meshes, item_stem(record))
         # The item's own box, in the space the avatar's export is authored in.
         # 360sona names the item's copy in an export after the slot it fills -
         # the armour came back as plain "hair" - so the port recognises the item

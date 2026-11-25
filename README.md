@@ -930,13 +930,22 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    in - the `multipurpose xbox` bitmap and the 0x40 flag are the only pair that
    belongs together.
 
-   An item built with `--port` carries two more materials, `face` and `body_0`,
-   and each needs its own `shader_model` at the tag path its name gives -
-   `<stem> sp\face`, `<stem> sp\body_0` - with its own base map (`<stem> face`
-   and `<stem> body_0`, already beside the item's own in every build's
+   The materials are named for what they are. The item's own carries the item's
+   title with `_` for every space - `UNSC_Marine_Armor` for the Marine armour -
+   so its shader is `UNSC_Marine_Armor.shader_model`, with `<item> base map` as
+   its base map and `<item> multipurpose` as its multipurpose map. An item built
+   with `--port` carries two more, `face` and `body_0`, each needing its own
+   `shader_model` under exactly that name, with its own base map (`<item> face`
+   and `<item> body_0`, already beside the item's own in every build's
    `bitmaps`). Leave their multipurpose maps empty unless you want the face to
    take the team colour: it is skin, and a team colour on it flickers with the
    armour's.
+
+   A material with no shader of that name is where Tool stops: it asks which
+   shader type to make and writes an empty one under the material's name - in
+   the root of `tags\` for HEK Tool, in a `shaders\` folder next to the model
+   tag for H1A Tool. Make the real shader first and compile the model again; an
+   empty one has no base map, so the surface draws white.
 5. **Map.** `tool build-cache-file "<scenario>" classic`, which packs the tags
    and the bitmap pixels into the map file.
 
