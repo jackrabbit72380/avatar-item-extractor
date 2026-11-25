@@ -32,7 +32,9 @@ def good_file():
                      "0.000000\t0.000000\t%.6f" % (index, child, float(index)))
     lines.append("1")                    # materials
     lines.append("shirt\t<none>")
-    lines.append("0")                    # markers
+    lines.append("1")                    # markers
+    lines.append("head\t-1\t1\t0.000000\t0.000000\t0.000000\t1.000000\t"
+                 "0.000000\t0.000000\t0.000000\t0.000000")
     lines.append("1")                    # regions
     lines.append("unnamed")
     lines.append("3")                    # vertices: three per face
@@ -88,6 +90,7 @@ def main():
     vertex = next(index for index, line in enumerate(lines)
                   if len(line.split("\t")) == 12)
     face = max(index for index, line in enumerate(lines) if line.count("\t") == 4)
+    marker = next(index for index, line in enumerate(lines) if line.count("\t") == 10)
 
     results = [
         check_mutation("header node count wrong",
@@ -121,6 +124,12 @@ def main():
                        lambda work: set_field(work, face, 4, "99"), "vertex 99"),
         check_mutation("face repeats a corner",
                        lambda work: set_field(work, face, 4, "0"), "repeat a vertex"),
+        check_mutation("marker node out of range",
+                       lambda work: set_field(work, marker, 2, "99"),
+                       "outside 0.."),
+        check_mutation("marker rotation not unit length",
+                       lambda work: set_field(work, marker, 3, "0.500000"),
+                       "rotation length"),
         check_mutation("file cut short",
                        lambda work: work.pop(), "file ends early"),
     ]

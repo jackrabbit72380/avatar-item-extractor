@@ -152,9 +152,41 @@ def check_jms(path):
     marker_count = whole("marker count")
     if marker_count is None:
         return errors, notes, stats
+    stats["markers"] = marker_count
+    marker_names = set()
     for index in range(marker_count):
-        if take() is None:
+        line = take()
+        if line is None:
             return errors, notes, stats
+        parts = line.split("\t")
+        if len(parts) != 11:
+            errors.append("marker %d: %d fields, expected 11" % (index, len(parts)))
+            continue
+        name = parts[0]
+        if not name:
+            errors.append("marker %d: no name" % index)
+        elif name in marker_names:
+            errors.append("marker %d (%s): the name is used twice" % (index, name))
+        marker_names.add(name)
+        try:
+            node = int(parts[2])
+        except ValueError:
+            errors.append("marker %d (%s): node is not a number" % (index, name))
+            continue
+        if not 0 <= node < node_count:
+            errors.append("marker %d (%s): node %d is outside 0..%d"
+                          % (index, name, node, node_count - 1))
+        turn = _numbers(parts[3:7], "marker %d (%s) rotation" % (index, name), errors)
+        if turn:
+            length = math.sqrt(sum(value * value for value in turn))
+            if abs(length - 1.0) > 1e-3:
+                errors.append("marker %d (%s): rotation length %.4f, expected 1"
+                              % (index, name, length))
+        _numbers(parts[7:10], "marker %d (%s) position" % (index, name), errors)
+        try:
+            float(parts[10])
+        except ValueError:
+            errors.append("marker %d (%s): radius is not a number" % (index, name))
 
     # --------------------------------------------------------------- regions
     region_count = whole("region count")

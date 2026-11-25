@@ -7,7 +7,8 @@ which writes, positionally and with no section markers:
     8200 <3251> <node_count>
     <name> <first_child> <next_sibling> <rx> <ry> <rz> <rw> <tx> <ty> <tz>
     <material_count>  then  <name> <none>  per material
-    <marker_count>
+    <marker_count>   then  <name> -1 <node> <rx> <ry> <rz> <rw>
+                               <tx> <ty> <tz> <radius>  per marker
     <region_count>   then  <name>  per region
     <vertex_count>
     <node0> <x> <y> <z> <nx> <ny> <nz> <node1> <weight> <u> <v> <w>
@@ -179,8 +180,10 @@ def build():
 
     pelvis = Bone("bip01 pelvis", None, Vector(0, 0, 5.0))
     spine = Bone("bip01 spine", pelvis, Vector(0, 0, 6.5))
+    spine1 = Bone("bip01 spine1", spine, Vector(0, 0, 7.5))
+    head = Bone("bip01 head", spine1, Vector(0, 0, 8.5))
     armature = types.SimpleNamespace(
-        data=types.SimpleNamespace(bones=[pelvis, spine]),
+        data=types.SimpleNamespace(bones=[pelvis, spine, spine1, head]),
         matrix_world=Matrix(),
     )
     return object_data, armature
@@ -202,6 +205,14 @@ def main():
         module.export_jms(object_data, armature, target)
         with open(target, encoding="ascii") as handle:
             lines = [line.rstrip("\n") for line in handle]
+        # The arms ride the 37-bone frame, not the biped, so they must not be
+        # given the biped's markers.
+        arms = types.SimpleNamespace(
+            data=types.SimpleNamespace(bones=armature.data.bones[:2]),
+            matrix_world=Matrix())
+        module.export_jms(object_data, arms, target)
+        with open(target, encoding="ascii") as handle:
+            arms_lines = [line.rstrip("\n") for line in handle]
     finally:
         import shutil
         shutil.rmtree(work, ignore_errors=True)
@@ -218,12 +229,14 @@ def main():
 
     header = lines[0].split("\t")
     check(header[:2] == ["8200", "3251"], "header is %r, expected 8200 / 3251" % (header,))
-    check(len(header) == 3 and header[2] == "2",
+    check(len(header) == 3 and header[2] == "4",
           "header does not carry the node count: %r" % (header,))
 
     node = lines[1].split("\t")
     check(len(node) == 10, "node line has %d fields, expected 10" % len(node))
-    check(node[0] == "bip01_pelvis", "node name is %r" % node[0])
+    # Halo's own biped names its bones with spaces, and its animation graph
+    # binds them by name; an underscored name is a skeleton nothing can drive.
+    check(node[0] == "bip01 pelvis", "node name is %r" % node[0])
     check(node[1] == "1", "pelvis first child should be node 1, got %r" % node[1])
     check(node[2] == "-1", "pelvis next sibling should be -1, got %r" % node[2])
     # The root is the one node whose translation is where it sits in the model.
@@ -248,8 +261,27 @@ def main():
     check(lines[cursor + 1].split("\t")[-1] == "<none>",
           "material line should end in <none>: %r" % lines[cursor + 1])
     cursor += 2
-    check(lines[cursor] == "0", "marker count is %r, expected 0" % lines[cursor])
-    cursor += 1
+    check(lines[cursor] == "2", "marker count is %r, expected 2" % lines[cursor])
+    # head rides bip01 head (node 3) and body rides bip01 spine1 (node 2), at
+    # the bones' own pivots - Halo refuses a biped without both.
+    for offset, (name, node_index) in enumerate((("head", "3"), ("body", "2"))):
+        fields = lines[cursor + 1 + offset].split("\t")
+        if len(fields) != 11:
+            failures.append("marker %d has %d fields, expected 11: %r"
+                            % (offset, len(fields), fields))
+            continue
+        if fields[0] != name or fields[1] != "-1" or fields[2] != node_index:
+            failures.append("marker %d is %r, expected %s on node %s"
+                            % (offset, fields[:3], name, node_index))
+        if [float(value) for value in fields[3:7]] != [0.0, 0.0, 0.0, 1.0]:
+            failures.append("marker %s rotation is %r, expected 0 0 0 1"
+                            % (name, fields[3:7]))
+        if any(float(value) != 0.0 for value in fields[7:10]):
+            failures.append("marker %s is offset from its bone: %r"
+                            % (name, fields[7:10]))
+    cursor += 3
+    check(arms_lines[1 + 2 + 2] == "0",
+          "an arms model was given biped markers: %r" % arms_lines[1 + 2 + 2])
     check(lines[cursor] == "1", "region count is %r, expected 1" % lines[cursor])
     cursor += 2  # region count + its name
 
@@ -331,7 +363,8 @@ def main():
           "to_halo_space scaled the height to %r, expected 1.85 m x 0.5" % (sizes[2],))
     print("  scaler   : uniform, ratios %r" % (ratios,))
 
-    print("  nodes    : %d" % len(armature.data.bones))
+    print("  nodes    : %d, markers: %s" % (len(armature.data.bones),
+                                            "head, body"))
     print("  vertices : %d (%.0f per triangle, unshared)" % (vertices, vertices / max(1, faces)))
     print("  faces    : %d" % faces)
     print("  uv sample: %s" % (uvs[0],))

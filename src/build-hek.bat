@@ -28,6 +28,13 @@ rem  armour takes red or blue, black where it keeps the colour it was painted.
 rem  For an item whose tint slot is blank and which carries no colour table (the
 rem  Marine armour is one) that mask is worked out from the base map.
 rem
+rem  The model carries Halo's own biped node names and the two markers a biped
+rem  must have - head on bip01 head, body on bip01 spine1 - so it can be the
+rem  model of a biped tag. That tag also needs an animation graph, and this tool
+rem  writes no animations: the character is skinned to Halo's own 19-bone biped,
+rem  so point the tag at characters\cyborg\cyborg.model_animations. An empty
+rem  graph is the "units must have models and animation graphs" failure.
+rem
 rem  The model needs a shader tag named after each .jms material, and tool.exe
 rem  will ask for one if it cannot find it. Make that shader once (README.md,
 rem  "Building it in Halo's editing kit") and run this again: the shader is the

@@ -458,6 +458,14 @@ triangle corner, and the texture coordinate on the vertex line as `u v w`.
 That is the slot Halo's shader tags read - one per vertex, which is all a
 `gbxmodel` vertex stores.
 
+Node names are Halo's own, spaces and all (`bip01 pelvis`, not
+`bip01_pelvis`): an animation graph binds its bones by name, so an underscored
+skeleton is one Halo's animations cannot drive. A biped model also carries the
+two markers the engine requires of one - `head` on `bip01 head` and `body` on
+`bip01 spine1`, each at the bone's own pivot and with the bone's own
+orientation, so no offset is invented. Without them the engine refuses the
+biped with "the biped '...' has no 'head' marker".
+
 Every `.jms` is then read back by `jms_check.py`, which walks it by its counts
 the way `tool.exe` has to: the header, the node block and the hierarchy its
 child/sibling links describe, each corner's two node slots and their weights, the
@@ -921,6 +929,14 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    the docs' own `rock.JMS` example leaves it off). Ours are `<stem> sp` and
    `<stem> mp` - if your Tool build reads the trailing word as a LOD and
    complains, rename them `<stem> sp superhigh.JMS` and `<stem> mp superhigh.JMS`.
+
+   The compiled model carries Halo's node names and the `head` and `body`
+   markers, so it can be the model of a biped tag. That tag also needs an
+   animation graph, and this tool writes no animations: point it at Halo's own
+   graph for the stock biped, `characters\cyborg\cyborg.model_animations`. The
+   model is skinned to that same 19-bone skeleton, so those animations are
+   already the right ones. An empty graph, or one built against different node
+   names, is the "units must have models and animation graphs" failure.
 4. **Shader.** Make one `shader_model` per JMS material, at a tag path that
    matches the material name, and set:
 

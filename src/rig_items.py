@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v105"
-BUILD = "2026-11-25 one-bitmaps-folder"
+VERSION = "v106"
+BUILD = "2026-11-25 biped-markers"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -109,6 +109,17 @@ DEFORM_BONES = (
     "bip01 r clavicle", "bip01 r upperarm", "bip01 r forearm", "bip01 r hand",
     "bip01 l thigh", "bip01 l calf", "bip01 l foot",
     "bip01 r thigh", "bip01 r calf", "bip01 r foot",
+)
+
+# A Halo biped's model must carry two markers or the engine will not take the
+# character: it prints "the biped '<path>' has no 'head' marker" and then the
+# same for the body. Neither is a per-item decoration - they are where Halo
+# looks for the character's head and torso - so both sit on the biped's own
+# bones, at the bone's own pivot and with its own orientation. Nothing is
+# invented: the marker is the joint.
+BIPED_MARKERS = (
+    ("head", "bip01 head"),
+    ("body", "bip01 spine1"),
 )
 
 
@@ -4221,7 +4232,8 @@ def export_jms(object_data, armature, path):
         8200 <3251> <node_count>
         <name> <first_child> <next_sibling> <rx> <ry> <rz> <rw> <tx> <ty> <tz>
         <material_count>  then  <name> <none>  per material
-        <marker_count>
+        <marker_count>   then  <name> -1 <node> <rx> <ry> <rz> <rw>
+                               <tx> <ty> <tz> <radius>  per marker
         <region_count>   then  <name>  per region
         <vertex_count>
         <node0> <x> <y> <z> <nx> <ny> <nz> <node1> <weight> <u> <v> <w>
@@ -4232,10 +4244,17 @@ def export_jms(object_data, armature, path):
     share them: each corner carries its own normal and its own texture
     coordinate. That is also why the UV has a slot at all: it is the u, v pair
     plus a w of zero, which is everything a Halo CE gbxmodel vertex stores.
+
+    Node names keep their spaces (``bip01 pelvis``): Halo's own biped names its
+    bones that way, and an animation graph binds by name, so an underscored
+    ``bip01_pelvis`` is a skeleton Halo's animations cannot drive. The marker
+    line is BlueStreak's too: a constant -1, the node the marker rides, its
+    rotation, its translation in that node's space, and a radius a gbxmodel
+    marker does not store.
     """
     mesh_data = object_data.data
     bones = list(armature.data.bones)
-    names = [bone.name.replace(" ", "_") for bone in bones]
+    names = [bone.name for bone in bones]
     index_of = {name: index for index, name in enumerate(names)}
 
     children = {bone.name: [] for bone in bones}
@@ -4245,8 +4264,8 @@ def export_jms(object_data, armature, path):
     first_child = {name: -1 for name in names}
     next_sibling = {name: -1 for name in names}
     for bone in bones:
-        own = bone.name.replace(" ", "_")
-        kids = [kid.replace(" ", "_") for kid in children[bone.name]]
+        own = bone.name
+        kids = list(children[bone.name])
         if kids:
             first_child[own] = index_of[kids[0]]
         for left, right in zip(kids, kids[1:]):
@@ -4265,7 +4284,7 @@ def export_jms(object_data, armature, path):
             frame = bone.matrix_local
         turn = frame.to_quaternion()
         head = frame.translation
-        own = bone.name.replace(" ", "_")
+        own = bone.name
         out.append("%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f" % (
             own, first_child[own], next_sibling[own],
             turn.x, turn.y, turn.z, turn.w, head.x, head.y, head.z))
@@ -4279,7 +4298,19 @@ def export_jms(object_data, armature, path):
         # A tab would end the field early, so that is the one thing collapsed.
         out.append("%s\t<none>" % " ".join(str(name).split()))
 
-    out.append("0")          # no markers
+    # Halo's biped markers, on the bones the engine looks for them on. A model
+    # without them is refused outright. Any skeleton that has those bones gets
+    # them; the first-person arms ride the 37-bone frame, have neither, and get
+    # none.
+    markers = [(name, index_of[bone]) for name, bone in BIPED_MARKERS
+               if bone in index_of]
+    out.append("%d" % len(markers))
+    for name, node in markers:
+        # The marker takes its bone's own orientation, so the rotation is
+        # identity and the translation (in that node's space) is zero. The
+        # radius only matters to a collision model, and a gbxmodel drops it.
+        out.append("%s\t-1\t%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f"
+                   % (name, node, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0))
     out.append("1")          # one region
     out.append("unnamed")
 
@@ -4312,11 +4343,11 @@ def export_jms(object_data, armature, path):
                                if group.group in group_names), reverse=True)[:2]
             if not weighted:
                 weighted = [(1.0, names[0])]
-            node0 = index_of.get(weighted[0][1].replace(" ", "_"), 0)
+            node0 = index_of.get(weighted[0][1], 0)
             node1 = -1
             weight1 = 0.0
             if len(weighted) > 1:
-                node1 = index_of.get(weighted[1][1].replace(" ", "_"), -1)
+                node1 = index_of.get(weighted[1][1], -1)
                 total = weighted[0][0] + weighted[1][0] or 1.0
                 weight1 = weighted[1][0] / total
             if uv_layer:
@@ -4338,8 +4369,8 @@ def export_jms(object_data, armature, path):
 
     with open(path, "w", encoding="ascii", errors="replace", newline="") as handle:
         handle.write("\n".join(out) + "\n")
-    log("wrote %s (%d verts, %d tris)" % (os.path.basename(path),
-                                          len(corners) * 3, len(faces)))
+    log("wrote %s (%d verts, %d tris, %d markers)"
+        % (os.path.basename(path), len(corners) * 3, len(faces), len(markers)))
     errors, notes, stats = check_jms(path)
     if errors:
         log("jms check: %d problem(s) in %s"
