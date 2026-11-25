@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v110"
-BUILD = "2026-11-25 node-list-checksum"
+VERSION = "v111"
+BUILD = "2026-11-25 fp-node-count"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4319,6 +4319,13 @@ def export_jms(object_data, armature, path):
     # cyborg .jms and graph both carry 1828349080, and the biped's node block
     # below is that same list in that same order. A model no graph drives (the
     # arms) carries 0, which the engine reads as "do not compare checksums".
+    #
+    # The arms get 0 because no graph drives them at all: H1's first-person
+    # renderer asks animation_get_node_orientations for the weapon graph's frames
+    # with a NULL model, so neither the checksum nor the node count is looked at,
+    # and it maps those frames onto the arms model by name. The 0 skips only the
+    # checksum half - the count half is not conditional - so the arms must stay a
+    # globals model ("first person hands") and never become an animated object.
     checksum = BIPED_NODE_CHECKSUM if biped else 0
     out = ["8200\t%d\t%d" % (checksum, len(order))]
     for own in order:

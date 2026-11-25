@@ -38,8 +38,11 @@ rem  The model carries Halo's own biped node names, in the order that graph
 rem  stores, and its .jms header carries that graph's node list checksum
 rem  (1828349080) - Tool copies the header's second field into the gbxmodel, so
 rem  the two tags agree. BlueStreak writes its constant 3251 there, which is why
-rem  a correct skeleton can still say the model and graph don't match; a model
-rem  no graph drives (the arms) writes 0, which the engine does not compare. It
+rem  a correct skeleton can still say the model and graph don't match. A model
+rem  no graph drives (the arms) writes 0: H1 compares a node count only for a
+rem  model it is animating, and the first-person renderer reads the weapon's
+rem  graph with no model at all and maps the graph's nodes onto the arms by name,
+rem  so the arms' 37 nodes are never measured against a 42-node weapon graph. It
 rem  also carries the two markers a biped must have - head on bip01 head, body on bip01
 rem  spine1 - so it can be the model of a biped tag. That tag also needs an
 rem  animation graph, and this tool writes no animations: the character is
@@ -149,7 +152,10 @@ rem  The first-person arms are a second model, in their own folder, and H1 reads
 rem  them from the map's game globals ("first person hands"), not from the
 rem  biped or a weapon. tool.exe reads models\ only, so the body compile above
 rem  never sees fp\models\: compile that folder as its own source directory and
-rem  the tag lands at tags\<item>\fp\.
+rem  the tag lands at tags\<item>\fp\. H1 poses it from each weapon's own
+rem  first-person graph, node by node, with no model passed to the comparison
+rem  (first_person_weapons.c), so its 37 nodes are never counted against that
+rem  graph's 42. Leave the arms on the globals reference and nowhere else.
 if exist "%HEK%\data\%BUILD%\fp\models\*.jms" (
   echo -- fp arms model "%BUILD%\fp" >>"%LOG%"
   tool.exe model "%BUILD%\fp" >>"%LOG%" 2>&1

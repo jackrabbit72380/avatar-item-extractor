@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v110.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v111.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -983,7 +983,10 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    index. Neither the armor's model nor its node list can turn an object into a
    vehicle; fix the checksum first and place the biped again. If the halt comes
    back while the biped animates, that index belongs to a vehicle in the
-   scenario, and the scenario object is what to look at.
+   scenario, and the scenario object is what to look at. The arms cannot produce
+   this message: H1 never compares their 37 nodes with a weapon graph's 42, it
+   reads the graph's frames with `NULL` as the model and remaps them by name
+   (see **First person** below, and keep the arms on the globals reference).
 
    **First person.** The arms do not go on the biped: H1's unit tag has no
    first-person arms field at all, so no biped tag can make them mismatch
@@ -1005,17 +1008,46 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    `frame l upperarm`, `frame l forearm`, `frame l wriste`, both hands' five
    fingers with `low`/`mid`/`tip` - plus the weapon's own `frame gun`,
    `frame rod_left`, `frame rod_right`, `frame wing_left` and
-   `frame wing_right`. 37 against 42 is correct for the hands, not a mismatch:
-   the engine builds its table by **name**, node by node
-   (`model_build_remapping_table_for_animation_graph` in
-   `first_person_weapons.c`), and never compares counts. The 37 names here were
-   read from Halo's own `fp arms.blend` and are exactly that graph's arm names,
-   including its two spellings, `frame l middlelow` with no space and
-   `frame r middle low` with one. What does break it is a name the weapon's
-   graph does not have: that makes the hands table invalid, and a first-person
-   weapon whose tables are not both valid is never set up, so the weapon stops
-   drawing in first person. Do not rename or add bones; the node order is not
-   compared either, the table carries the model's own nodes onto the graph's.
+   `frame wing_right`.
+
+   **37 against 42 cannot be the node-count failure, because H1 never passes the
+   hands model to that test.** The test is the `model->nodes.count !=
+   animation->node_count` half of `animation_get_node_orientations`
+   (`models\model_animations.c`), inside an `else if (model && ...)` guard: it
+   runs only when a model is handed in. The callers that hand one in are the
+   object and unit paths, and they pass that object's own tag model -
+   `object_compute_node_matrices` in `objects\objects.c` is the comparison the
+   biped failed. The first-person renderer hands in `NULL`:
+   `animation_get_node_orientations(NULL, animation, frame, node_orientations)`
+   in `first_person_weapon_build_node_matrices`
+   (`interface\first_person_weapons.c`), so neither the checksum half nor the
+   count half is read, and the graph's frames are fetched with no reference to
+   the arms at all. The arms are not an object and carry no animation of their
+   own - the globals `first person hands` tag is only ever drawn, through
+   `render_model` with the matrices the graph produced - so no other path can
+   put them through the test either.
+
+   What H1 does instead is remap by **name**, node by node:
+   `model_build_remapping_table_for_animation_graph` finds each of the hands
+   model's nodes in the weapon graph with `strcmp`, and
+   `model_remap_node_matrices_to_match_animation_graph` copies that graph node's
+   matrix onto it. No count and no order is compared. The arms' `.jms` header
+   writes node list checksum 0 because no graph drives that model at all, and 0
+   is what makes the checksum half a no-op; it is not what protects the arms -
+   the missing model argument is. The count half has no such switch, so a model
+   that *is* animated as an object against a graph of another size fails whatever
+   its checksum says.
+
+   The 37 names here were read from Halo's own `fp arms.blend` and are exactly
+   that graph's arm names, including its two spellings, `frame l middlelow` with
+   no space and `frame r middle low` with one. What breaks the arms is a name the
+   weapon's graph does not have: that makes the hands table invalid, and a
+   first-person weapon whose two tables are not both valid is never set up (the
+   switch only stores the weapon when both are), so that weapon stops drawing in
+   first person and the biped is untouched. Do not rename or add bones, and do
+   not put this `.gbxmodel` on a unit, weapon or scenery tag: there it would be
+   an object model, the count test would apply, and 37 against 42 would fail the
+   way the biped did.
 4. **Shader.** Make one `shader_model` per JMS material, at a tag path that
    matches the material name, and set:
 
