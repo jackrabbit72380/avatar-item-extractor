@@ -239,6 +239,26 @@ def flatten(name):
     return " ".join((name or "").replace("_", " ").replace("-", " ").split()).lower()
 
 
+def plain_material(name):
+    """A material's name without the exporter's slot index.
+
+    A 360sona export names every material after the mesh it paints plus the
+    index that material holds in the file: the body's is ``body_0``, the hair's
+    is ``hair_3``, the shirt's is ``shirt_8``. The face is the one it never
+    numbers - both halves are simply ``face``. So the trailing ``_<digits>``
+    says where a material sits in the container, not anything about the avatar,
+    and it is dropped here: ``body_0`` is the body, ``hair_3`` is the hair.
+
+    A name with no such index is handed back untouched, and so is a name that is
+    only an index (``_0`` with nothing in front of it), because then the digits
+    are all that names it and removing them leaves nothing.
+    """
+    base, underscore, tail = (name or "").rpartition("_")
+    if underscore and base and tail.isdigit():
+        return base
+    return name or ""
+
+
 def mesh_box(mesh):
     """(low, high) per axis over the vertices a mesh actually uses."""
     points = mesh.get("positions") or []

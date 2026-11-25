@@ -85,8 +85,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v103"
-BUILD = "2026-11-25 material-named-after-its-bitmap"
+VERSION = "v104"
+BUILD = "2026-11-25 exporter-index-dropped"
 
 # How far the thumb guard's chain is carried back into the palm, in Halo units -
 # about the length of the thumb's own base bone. The guard sits proud of the
@@ -444,7 +444,7 @@ def name_item_materials(meshes, bitmap):
     the empty one tool offers to make for it lands in the root of ``tags\``
     under that name. Named after its own bitmap, the shader a user makes is
     called what the map it wraps is called: `<item> base map` for the item's
-    surface, `<item> face` and `<item> body_0` for the ported sheets. The spaces
+    surface, `<item> face` and `<item> body` for the ported sheets. The spaces
     stay in the name - a .jms material is a tab-separated field, and Halo's own
     materials carry spaces (`ring dusk` in the HEK's own skybox guide) - so the
     name in the .jms is the name of the .bitmap. An item in several batches
@@ -806,6 +806,16 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
         log("port: the item is a costume (%.2f m over a %.2f m avatar), so it is "
             "worn instead of clothes" % (item_height, avatar_height))
     kept, skipped = glb_model.choose(model, stem, item_box=item_box, costume=costume)
+    # The exporter's slot index off every name the port writes. A 360sona
+    # material is the mesh it paints plus the index it holds in the file - the
+    # body's first one is ``body_0`` - and that name is what the sheet, its
+    # ``.tif``, the Blender material and the ``.jms`` material line carry, so
+    # the index went into the shader a user has to make: ``UNSC Marine Armor
+    # body_0`` for a sheet nothing in it is index 0 of. Dropped once, here, and
+    # everything downstream follows; the face stays ``face``, which is the name
+    # the exporter gives it and never numbers.
+    for mesh in kept:
+        mesh["material"] = glb_model.plain_material(mesh["material"])
     if costume:
         gone = sorted({glb_model.flatten(mesh["name"]) for mesh in skipped
                        if glb_model.flatten(mesh["name"]) in glb_model.REPLACED_BY_COSTUME})
@@ -1026,7 +1036,13 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
         if material is None:
             shot = mesh
             if key[0] in used_names:
-                unique = "%s_%d" % (key[0], key[1] if key[1] is not None
+                # A space, not the exporter's underscore: a second sheet for one
+                # slot (the two halves of a face painted on two files) still
+                # needs a material of its own, and this is the only number left
+                # in a ported name - kept in the form an item in several batches
+                # uses, `<bitmap> 2`, so no ported shader ends in `_<digit>` and
+                # none can be read as the exporter's index.
+                unique = "%s %d" % (key[0], key[1] if key[1] is not None
                                     else len(used_names))
                 while unique in used_names:
                     unique += "x"

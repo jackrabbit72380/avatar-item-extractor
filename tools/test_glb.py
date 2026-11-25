@@ -257,6 +257,24 @@ def main():
           len(glb_model.choose(model, "test-item")[1]) == 1,
           str(len(glb_model.choose(model, "test-item")[1])))
 
+    # A 360sona export names a material after the mesh it paints plus the index
+    # that material holds in the file - the body's first one is body_0, the
+    # hair's is hair_3 - and never numbers the face. The port writes that name
+    # on to the sheet, its .tif and the .jms material line, so carrying the
+    # index made the shader a user had to make "UNSC Marine Armor body_0" for a
+    # sheet nothing about which is material 0. It is dropped before anything is
+    # named.
+    print("the exporter's slot index")
+    for exported, ported in (("body_0", "body"), ("hair_3", "hair"),
+                             ("shirt_8", "shirt"),
+                             ("hair: UNSC Marine Armor_5",
+                              "hair: UNSC Marine Armor"),
+                             ("face", "face"), ("body", "body"),
+                             ("_0", "_0"), ("", "")):
+        check("%r is ported as %r" % (exported, ported),
+              glb_model.plain_material(exported) == ported,
+              repr(glb_model.plain_material(exported)))
+
     # A 360sona export can name the item's own copy after the slot it fills
     # rather than after the item: the UNSC Marine Armor comes back as a mesh
     # called plain "hair". The name test cannot see that, so the pipeline

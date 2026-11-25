@@ -63,7 +63,7 @@ Test Item\
                         both
         Test Item multipurpose.png  also .tga  Halo CE channel order
         Test Item change colour.png  also .tga  the team-colour mask
-        Test Item face.png, body_0.png  the avatar's own sheets, when one was
+        Test Item face.png, body.png  the avatar's own sheets, when one was
                         ported: the head and the body under it are drawn with
                         them, so they sit with the item's own maps instead of
                         beside the report. Every texel neither mesh reads is
@@ -733,17 +733,23 @@ movement, nothing that needs an animation to look right from outside.
 
 What a ported item gains:
 
-- `<stem> face.png` and `<stem> body_0.png` in `extracted for max users` and
+- `<stem> face.png` and `<stem> body.png` in `extracted for max users` and
   `extracted for blender users` - the two images the export carries, packed into
   the `.blend` like every other texture. The texels each mesh actually reads are
   the export's own, untouched; the padding around them is laid down in the skin
   measured on that sheet, because the export pads its face sheet in skin and its
   body sheet in a paler fill, and two files that read as two skin tones in a
   bitmaps folder is a folder that looks wrong even when the model is right.
-- `<stem> face.tif` and `<stem> body_0.tif` in `bitmaps` **and** `fp\bitmaps` of
+- `<stem> face.tif` and `<stem> body.tif` in `bitmaps` **and** `fp\bitmaps` of
   every build, so each HEK folder carries everything it needs by itself.
-- Two more materials in every `.jms`, named `face` and `body_0`, taking the same
-  `_sp`, `_sp_decals`, `_mp` and `_mp_decals` suffixes as the item's own.
+- Two more materials in every `.jms`, named `face` and `body`, taking the same
+  `_sp`, `_sp_decals`, `_mp` and `_mp_decals` suffixes as the item's own. Those
+  are the exporter's own names for the two sheets with its slot index dropped:
+  the file calls the body's material `body_0`, because a 360sona export names a
+  material after the mesh it paints plus the index it holds in the file
+  (`hair_3`, `shirt_8`), and the face it never numbers at all. The index says
+  nothing about the avatar, so no ported name carries it - the sheet, its `.tif`
+  and the `.jms` material line are all `body`.
 
 The armour is not touched. With and without `--port` its geometry comes out
 identical to the last bit - all 4,876 triangles, 0.000000 units of movement -
@@ -934,7 +940,7 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    name. The item's own is `<item> base map` - `UNSC Marine Armor base map` for
    the Marine armour - so its shader is `UNSC Marine Armor base map.shader_model`,
    with `<item> multipurpose` as its multipurpose map. An item built with
-   `--port` carries two more, `<item> face` and `<item> body_0`, each with its
+   `--port` carries two more, `<item> face` and `<item> body`, each with its
    own bitmap of that name in every build's `bitmaps` and each needing a
    `shader_model` called the same thing. The spaces are part of the name, in the
    `.jms` and in the tag; the tag has to match it exactly. Leave those two
