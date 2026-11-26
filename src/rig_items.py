@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v157"
-BUILD = "v147's rigging, put back exactly"
+VERSION = "v158"
+BUILD = "report.txt names the shader the face needs"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -1359,6 +1359,13 @@ def bind_face_sheet(object_data, sheet, path, stem):
         "UVs were laid out for, which is the avatar's, not the item's base map; "
         "%d face/neck face(s) became the one material %r"
         % (os.path.basename(path), width, height, moved, material.name))
+    # A material of its own means a shader of its own, and the engine does not
+    # invent one: with no tag of that name it draws the head in its stock white
+    # shader, which reads exactly like a blank face texture.
+    log("port: the head needs a shader_model whose tag name is exactly %r, with "
+        "that sheet as its base map (%s in bitmaps\\, HEK copy) - without it the "
+        "engine draws the head white"
+        % (material.name, os.path.splitext(os.path.basename(path))[0]))
     return moved
 
 
@@ -6393,6 +6400,21 @@ def report_text(options, records, stems, armature, nxe=None):
         if record.get("halo_file"):
             lines.append("  halo file : %s" % record["halo_file"])
         lines.append("  hek build : data\\%s\\ - one build, team colour" % stem)
+        # The head is a material of its own, so it needs a shader of its own.
+        # Left unsaid, the engine has nothing to draw it with and falls back to
+        # its stock white shader: that white face is the missing tag, not the
+        # model's texture, and it looks identical to a blank map.
+        if os.path.exists(os.path.join(options["out"], "%s face.png" % stem)):
+            lines.append("  face      : the head is material \"%s face\", bound to "
+                         "%s face.tif" % (stem, stem))
+            lines.append("              Guerilla: a shader_model whose tag name is"
+                         " exactly \"%s face\", base map = %s face.tif,"
+                         " assigned to that material."
+                         % (stem, stem))
+            lines.append("              Without that tag the engine has nothing to draw"
+                         " the head with and uses its stock white")
+            lines.append("              shader - a white face here means a missing shader,"
+                         " not a missing texture.")
         if record.get("arms_file"):
             lines.append("  fp arms   : %s" % record["arms_file"])
             lines.append("              %s" % (record.get("arms_binding")
