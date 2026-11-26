@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v153"
-BUILD = "The double-click runs again"
+VERSION = "v154"
+BUILD = "Chest plates on the torso, never a limb"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5475,11 +5475,16 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
         #
         # Above the pelvis no arm or leg bone can carry a plate, so a shell that
         # lies wholly inside the chest and collar band loses them as candidates
-        # and rides the torso alone - whole, one bone to one plate. Which torso
-        # bone is the column the plate sits in, because height cannot answer it
-        # (Halo's clavicles are at 57 units and this armour's shoulders at 45):
-        # the collar, on the centre line, rides the spine, and a plate out at the
-        # shoulder's width rides that side's clavicle.
+        # and rides the torso alone - whole, one bone to one plate, the one the
+        # plate's own height stands in: the collar at 50 units is the spine, a
+        # plate at 42 to 45 is the spine too, and anything up at the neck is
+        # spine1.
+        #
+        # Not the clavicle. It is the shoulder joint, and the game swings it
+        # with the arm: a shoulder plate bound to it is drawn a hand's length
+        # out from the chest, as a stretched band bridged back to the suit -
+        # measured in game, that is what the plates out at the shoulder's width
+        # did when they were put there.
         #
         # Per shell, never per vertex: a cut at a height across a continuous
         # sleeve tears it, and the repair for that tear runs away over the whole
@@ -5503,9 +5508,6 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
             shells = {}
             for vertex in mesh.vertices:
                 shells.setdefault(shell_of(vertex.index), []).append(vertex.index)
-            across = None
-            if "bip01 l clavicle" in segments and "bip01 r clavicle" in segments:
-                across = abs(segments["bip01 l clavicle"][0].y)
             column = [name for name in ("bip01 pelvis", "bip01 spine",
                                         "bip01 spine1", "bip01 neck")
                       if name in segments]
@@ -5523,20 +5525,22 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
                            for index in indices for name in weights[index]):
                     continue
                 centre = sum(spots, Vector()) / len(spots)
-                chosen = None
-                if across and abs(centre.y) >= across:
-                    chosen = ("bip01 l clavicle" if centre.y > 0
-                              else "bip01 r clavicle")
-                if chosen is None:
-                    spans = [(name, min(segments[name][0].z, segments[name][1].z),
-                              max(segments[name][0].z, segments[name][1].z))
-                             for name in column]
-                    here = [entry for entry in spans
-                            if entry[1] <= centre.z <= entry[2]] or spans
-                    if not here:
-                        continue
-                    chosen = min(here, key=lambda entry: point_segment_distance(
-                        centre, *segments[entry[0]]))[0]
+                spans = [(name, min(segments[name][0].z, segments[name][1].z),
+                          max(segments[name][0].z, segments[name][1].z))
+                         for name in column]
+                if not spans:
+                    continue
+                here = [entry for entry in spans if entry[1] <= centre.z <= entry[2]]
+                above = [entry for entry in spans if entry[1] > centre.z]
+                if here:
+                    chosen = here[0][0]
+                elif above:
+                    # Above the pelvis but under the spine's own head: the plate
+                    # still belongs to the chest, so it takes the bone whose
+                    # segment starts just above it - the spine, not the pelvis.
+                    chosen = min(above, key=lambda entry: entry[1])[0]
+                else:
+                    chosen = spans[-1][0]
                 for index in indices:
                     weights[index] = {chosen: 1.0}
                 log("%s: the %d-vertex plate at z %.1f, %.1f units out from the "
