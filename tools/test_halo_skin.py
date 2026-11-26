@@ -356,6 +356,47 @@ def controls(path, tolerance=1e-3):
     return found
 
 
+def worst_edges(path, shoulder, elbow, count=8):
+    """Where the worst stretching is, so a fix can be aimed rather than guessed."""
+    names, first, sib, turns, spots, points, weights, triangles = parse(path)
+    worlds, parent = bind_worlds(first, sib, turns, spots)
+    global first_of, sibling_of
+    first_of, sibling_of = first, sib
+    posed = posed_worlds(worlds, parent, turns, spots, names, shoulder, elbow)
+    shift = []
+    for index in range(len(names)):
+        posed_r, posed_t = posed[index]
+        back = inverse(worlds[index])
+        shift.append((product(posed_r, back[0]),
+                      tuple(posed_t[a] + carried(posed_r, back[1])[a] for a in range(3))))
+    moved = []
+    for point, ride in zip(points, weights):
+        total = (0.0, 0.0, 0.0)
+        for node, share in ride.items():
+            rotation, spot = shift[node]
+            turned = carried(rotation, point)
+            total = tuple(total[a] + share * (turned[a] + spot[a]) for a in range(3))
+        moved.append(total)
+    edges = set()
+    for a, b, c in triangles:
+        for x, y in ((a, b), (b, c), (c, a)):
+            edges.add((x, y) if x < y else (y, x))
+    ranked = []
+    for a, b in edges:
+        was = math.dist(points[a], points[b])
+        if was < 0.2:
+            continue
+        ranked.append((math.dist(moved[a], moved[b]) / was, a, b, was))
+    ranked.sort(reverse=True)
+    print("  worst edges at shoulder %d elbow %d" % (shoulder, elbow))
+    for ratio, a, b, was in ranked[:count]:
+        one = max(weights[a], key=weights[a].get)
+        two = max(weights[b], key=weights[b].get)
+        print("    x%.2f  %-18s %-18s  length %.3f -> %.3f  y %.2f"
+              % (ratio, names[one], names[two], was, was * ratio,
+                 (points[a][2] + points[b][2]) / 2.0))
+
+
 if __name__ == "__main__":
     path = sys.argv[1]
     print("halo skinning: %s" % path.split("/")[-1])
@@ -366,6 +407,9 @@ if __name__ == "__main__":
     if failed:
         print("  the deformer is not trustworthy: %d control(s) failed" % failed)
         raise SystemExit(1)
+    if len(sys.argv) > 2 and sys.argv[2] == "where":
+        for shoulder, elbow in POSES[1:3]:
+            worst_edges(path, shoulder, elbow)
     for shoulder, elbow in POSES:
         stretch, torn, squash, squashed, count, gaps, widest = measure(path, shoulder, elbow)
         print("  shoulder %3d elbow %3d -> stretch worst x%.2f, %d torn; "

@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v120"
-BUILD = "2026-11-26 no-cliff-transfer"
+VERSION = "v121"
+BUILD = "2026-11-26 pairs-that-can-bend"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4220,7 +4220,7 @@ def smooth_weights(weights, mesh, passes=SMOOTH_PASSES, keep=2):
     return trimmed
 
 
-def smooth_by_position(weights, mesh, passes=SMOOTH_PASSES, keep=2):
+def smooth_by_position(weights, mesh, passes=SMOOTH_PASSES, keep=2, kin=None):
     """Average bone weights over positions, not over vertex indices.
 
     The export splits every face off its neighbours - 5,756 triangles carry
@@ -4268,10 +4268,53 @@ def smooth_by_position(weights, mesh, passes=SMOOTH_PASSES, keep=2):
     # position, and every one of them must come back with that position's blend.
     out = []
     for slot in where:
-        top = sorted(field[slot].items(), key=lambda pair: -pair[1])[:keep]
+        ranked = sorted(field[slot].items(), key=lambda pair: -pair[1])
+        if kin and ranked:
+            # Halo gives a vertex two bones, so wherever three meet one is
+            # dropped - and two points a millimetre apart can drop different
+            # ones, then travel with unrelated limbs. A real rig only ever
+            # blends a bone with the one it hangs from or the ones hanging from
+            # it, so the second influence is taken from that family first.
+            family = kin.get(ranked[0][0]) or ()
+            ranked = ([pair for pair in ranked if pair[0] in family]
+                      + [pair for pair in ranked if pair[0] not in family])
+        top = ranked[:keep]
         total = sum(value for _, value in top) or 1.0
         out.append({name: value / total for name, value in top})
     return out
+
+
+def bone_family(armature, names):
+    """Each deform bone with itself, the bone it hangs from, and its children."""
+    family = {name: {name} for name in names}
+    for bone in armature.data.bones:
+        if bone.name not in family:
+            continue
+        if bone.parent and bone.parent.name in family:
+            family[bone.name].add(bone.parent.name)
+            family[bone.parent.name].add(bone.name)
+    return family
+
+
+def settle(weights, mesh, passes, chunk=None):
+    """Smooth in short chunks, trimming to two bones after each one.
+
+    Halo's vertices carry two influences, so wherever three bones meet - the
+    shoulder is clavicle, neck and upperarm all within a millimetre of each
+    other - the trim has to drop one, and two neighbouring points can drop
+    different ones: one rides clavicle and neck, the next clavicle and
+    upperarm, and at eighty degrees those two points go their separate ways.
+    Trimming after every short chunk instead of once at the end lets each
+    choice spread to its neighbour before the next trim, so the surface agrees
+    on which pair it is riding and the join between them narrows to one band.
+    """
+    chunk = chunk or PLATE_SETTLE
+    left = passes
+    while left > 0:
+        step = min(chunk, left)
+        weights = smooth_by_position(weights, mesh, passes=step)
+        left -= step
+    return weights
 
 
 # The group the ported body's own vertices are tagged with before the join.
@@ -4285,6 +4328,10 @@ PORT_GROUP = "ported_body"
 # and that jump is a stretched plate. A few, weighted by distance, is the same
 # rule with no cliff in it.
 BODY_BLEND = 4
+
+# How many smoothing passes run between each trim to two bones. Short chunks
+# let the surface settle on one pair instead of flapping between three.
+PLATE_SETTLE = 6
 
 # How many times the transferred weights are averaged along each shell's own
 # edges. A plate converges to one blend - a solid plate cannot tear itself -
@@ -4398,7 +4445,8 @@ def skin(object_data, armature, influences=2, rigid=False):
                 key=lambda pair: pair[0])[:influences]
             nearest.append({name: 1.0 / max(distance, 1e-4) ** 2
                             for distance, name in scored})
-        weights = smooth_by_position(nearest, mesh)
+        family = bone_family(armature, names)
+        weights = smooth_by_position(nearest, mesh, kin=family)
         ported = take_port_tag(object_data, mesh)
         weights, copied = transfer_from_body(weights, mesh, ported, world)
         if copied:
@@ -4409,7 +4457,7 @@ def skin(object_data, armature, influences=2, rigid=False):
             # the suit, spanning the waist and both hips, keeps its gradient.
             # Nothing is thresholded: the shell's size decides by itself.
             weights = smooth_by_position(weights, mesh,
-                                         passes=PLATE_SMOOTH_PASSES)
+                                         passes=PLATE_SMOOTH_PASSES, kin=family)
             log("%s: bound %d vertex/vertices to the weights of the avatar body "
                 "under them, then smoothed each shell along its own edges (%d passes)"
                 % (object_data.name, copied, PLATE_SMOOTH_PASSES))
