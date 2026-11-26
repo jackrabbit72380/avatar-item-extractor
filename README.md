@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v132.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v133.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1196,7 +1196,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v132.bat` and
+`Extract UNSC Marine Armor Avatar-v133.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1211,7 +1211,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v132.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v133.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1261,9 +1261,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v132.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v133.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v132.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v133.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
@@ -1630,3 +1630,17 @@ while each runs, because `tool.exe` imports whatever `.JMS` it finds in
 
 Nothing else changes: the three tags share one node list checksum, so the biped
 animates and is collidable from the same skeleton.
+
+### Every plate is written twice: why you can no longer see through it
+
+Halo culls a triangle whose back is towards you. This armour is not a body: it is
+2,165 separate plates lying over nothing, so wherever a plate turns away - its
+own silhouette edge, the overlap at a shoulder - there was nothing behind it to
+draw and the sky or the ground came through the gaps, which reads as "the faces
+are not welded together". Halo CE has no double-sided shader, so the model gets
+two windings instead: every triangle is written a second time in the same place
+with the opposite winding, and a plate is then solid from either side. The
+`.jms` goes from 5,758 to 11,516 triangles and the suit is unchanged in shape -
+99.8% of triangles still the item's own at one factor, worst edge x1.00, and the
+pose battery still x3.10 (4 edges torn rather than 2, because every edge now has
+a twin).

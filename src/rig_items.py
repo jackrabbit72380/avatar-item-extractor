@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v132"
-BUILD = "the arms come down and the body stands on its feet"
+VERSION = "v133"
+BUILD = "every plate is solid from both sides"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5557,7 +5557,20 @@ def export_jms(object_data, armature, path, arms=False):
     for polygon in mesh_data.polygons:
         loops = list(polygon.loop_indices)
         for corner in range(1, len(loops) - 1):
-            corners.append((loops[0], loops[corner], loops[corner + 1],
+            corner_one, corner_two, corner_three = (loops[0], loops[corner],
+                                                    loops[corner + 1])
+            corners.append((corner_one, corner_two, corner_three,
+                            polygon.material_index))
+            # Every plate twice, wound the other way - a plate with two sides.
+            # Halo culls a back face, and this armour is 2,165 separate plates
+            # over nothing: at a plate's silhouette edge, and in every seam
+            # between two plates, the game has nothing to draw and the
+            # background comes through, which is what "I can see through the
+            # edges of his armour" is. The reversed copy is the same triangle
+            # in the same place with the opposite winding, so the plate reads
+            # as solid from behind instead of vanishing. Halo has no
+            # double-sided shader in CE; two windings is how a model gets one.
+            corners.append((corner_one, corner_three, corner_two,
                             polygon.material_index))
 
     out.append("%d" % (len(corners) * 3))
