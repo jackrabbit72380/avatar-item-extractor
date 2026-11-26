@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v148"
-BUILD = "no more hunched pose"
+VERSION = "v149"
+BUILD = "the pose, fixed rather than skipped"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -258,7 +258,7 @@ def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parsed = {"items": "extracted", "rig": None, "fp": None, "out": "rigged",
               "fbx": True, "jms": True, "name": None, "port": None,
-              "keep_shape": False, "eyes_forward": True, "stand": False,
+              "keep_shape": False, "eyes_forward": True, "stand": True,
               "limbs": False}
     index = 0
     while index < len(argv):
@@ -2362,7 +2362,12 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         # only if the item's joints say so - this one's arms are modelled down
         # while its joints are not, so where the plate's own axis can be
         # measured, that axis is what is turned onto the bone.
-        turn = entry["turn"]
+        # Only the limbs are turned. The torso, head and legs are authored
+        # standing straight already, so turning them by their bone's rest
+        # rotation folded the chest forward one spine plate at a time and
+        # crossed the arms - the hunch. A plate with no turn stays exactly
+        # where the file put it, and only the arms are swung onto Halo's line.
+        turn = None
         centre = source
         # The arms are turned as ONE unit, about the shoulder, and only the
         # plates lying along the arm are turned at all. A plate near a shoulder
@@ -2406,6 +2411,8 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         #
         # Without it the body is only turned into the pose, keeps its own limb
         # lengths, and the hand bone reaches past the glove.
+        if turn is None:
+            continue
         axial = 1.0
         target = source
         if limbs:

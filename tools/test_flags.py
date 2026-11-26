@@ -86,10 +86,9 @@ def main():
     check(run and "%SHAPE%" not in run[0],
           "the command line still forwards %SHAPE%")
     stand = [line for line in code if line.strip() == 'set "STAND=--stand"']
-    check(not stand,
-          "the carrier passes --stand, which bends the body double in Halo's pose")
-    check("--stand" not in "\n".join(run),
-          "the command line still asks for the stand pass")
+    check(stand, "the carrier no longer asks for the limb pose pass")
+    check("%STAND%" in "\n".join(run),
+          "the command line no longer forwards %STAND%")
     check(any("SHINE=--shine derived" in line for line in code),
           "the armour no longer reflects by default")
     check(not re.search(r"--(tint|detail|glow|fit-limbs|t-pose|keep-shape)\b",
