@@ -31,7 +31,14 @@ in its parent's frame, which is what an animation's node rotation is.
 # Every torn count printed before this fix was an artefact and is void.
 
 import math
+import os
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "..", "src"))
+from halo_pose import (turn_matrix, transposed, product, carried,
+                       axis_rotation, levels, bind_worlds, posed_worlds,
+                       inverse)
 
 POSES = ((45.0, 45.0), (80.0, 60.0), (10.0, 10.0), (20.0, 20.0))
 
@@ -80,107 +87,6 @@ def parse(path):
             field = lines[at + k].split()
         triangles.append((int(field[2]), int(field[3]), int(field[4])))
     return names, first, sib, turns, spots, points, weights, triangles
-
-
-def turn_matrix(turn):
-    x, y, z, w = turn
-    return ((1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)),
-            (2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)),
-            (2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)))
-
-
-def transposed(m):
-    return tuple(tuple(m[c][r] for c in range(3)) for r in range(3))
-
-
-def product(a, b):
-    return tuple(tuple(sum(a[r][k] * b[k][c] for k in range(3)) for c in range(3))
-                 for r in range(3))
-
-
-def carried(m, p):
-    return tuple(sum(m[r][k] * p[k] for k in range(3)) for r in range(3))
-
-
-def axis_rotation(axis, degrees):
-    x, y, z = axis
-    length = math.sqrt(x * x + y * y + z * z) or 1.0
-    x, y, z = x / length, y / length, z / length
-    angle = math.radians(degrees)
-    c, s = math.cos(angle), math.sin(angle)
-    t = 1.0 - c
-    return ((t * x * x + c, t * x * y - s * z, t * x * z + s * y),
-            (t * x * y + s * z, t * y * y + c, t * y * z - s * x),
-            (t * x * z - s * y, t * y * z + s * x, t * z * z + c))
-
-
-def levels(parent, count):
-    """Every node's depth, so a parent is always composed before its child."""
-    depth = {}
-
-    def level(index):
-        if index in depth:
-            return depth[index]
-        up = parent.get(index)
-        depth[index] = 0 if up is None else level(up) + 1
-        return depth[index]
-
-    for index in range(count):
-        level(index)
-    return sorted(range(count), key=lambda index: depth[index])
-
-
-def bind_worlds(first, sib, turns, spots):
-    """Each node's bind frame, composed the way Halo's own files compose."""
-    parent = {}
-    for index in range(len(turns)):
-        child = first[index]
-        while 0 <= child < len(turns) and child not in parent:
-            parent[child] = index
-            child = sib[child]
-    worlds = {}
-    for index in levels(parent, len(turns)):
-        local = transposed(turn_matrix(turns[index]))
-        up = parent.get(index)
-        if up is None:
-            worlds[index] = (local, spots[index])
-        else:
-            above, where = worlds[up]
-            moved = carried(above, spots[index])
-            worlds[index] = (product(above, local),
-                             tuple(where[a] + moved[a] for a in range(3)))
-    return worlds, parent
-
-
-def posed_worlds(worlds, parent, turns, spots, names, shoulder, elbow):
-    """The same frames, with the arms turned, as an animation turns them."""
-    bent = {}
-    for index, name in enumerate(names):
-        if name.endswith("upperarm"):
-            bent[index] = shoulder
-        elif name.endswith("forearm"):
-            bent[index] = elbow
-    posed = {}
-    for index in levels(parent, len(names)):
-        base_r, base_t = transposed(turn_matrix(turns[index])), spots[index]
-        if index in bent:
-            base_r = product(axis_rotation((1, 0, 0), bent[index]), base_r)
-        up = parent.get(index)
-        if up is None:
-            posed[index] = (base_r, base_t)
-        else:
-            above, where = posed[up]
-            moved = carried(above, base_t)
-            posed[index] = (product(above, base_r),
-                            tuple(where[a] + moved[a] for a in range(3)))
-    return posed
-
-
-def inverse(frame):
-    rotation, spot = frame
-    back = transposed(rotation)
-    moved = carried(back, spot)
-    return back, (-moved[0], -moved[1], -moved[2])
 
 
 def measure(path, shoulder, elbow, limit=0.2):

@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v122.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v123.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1185,7 +1185,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v122.bat` and
+`Extract UNSC Marine Armor Avatar-v123.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1200,7 +1200,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v122.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v123.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1250,9 +1250,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v122.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v123.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v122.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v123.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
@@ -1367,3 +1367,33 @@ Blender, no GPU and no third-party module. It writes four views at rest and at
 optional `x y z radius` to crop in on a joint. This is what showed the shoulder
 plates staying on the chest while the arms swung out from under them - the
 clavicle was the nearest bone to a pauldron, and a pauldron hangs off the arm.
+
+## What the weights are shaped against
+
+The build and these checks share one implementation of the game's own frames,
+`src/halo_pose.py`, composed from the very node block the `.jms` writes. That is
+not tidiness. Posed through Blender's bones the build was smoothing against a
+motion the game never applies - its own worst edge read x2.94 where the file it
+produced measured x3.56 - and no single Euler channel matched, because Halo turns
+a node about its parent's X while a bone's Euler turn is about its own axis.
+
+A torn strip - the collar's rim against the shoulder pad, where the two sides
+ride bones that have nothing in common - cannot be fixed by averaging. Halo gives
+a vertex two bones, so wherever four meet the trim has to drop two, and it drops
+them differently on each side, which snapped the averaged blend back to the same
+two blocks every round. `relax_tears()` instead gives each point of the strip
+(and one ring around it) the bone pair, in one of a few shares, that leaves the
+edges around it closest to their rest length at the test poses - charging a
+little for departing from the body the weights were transferred from, and
+charging a fold as much as a tear. The strip is re-found every round, because one
+point's better pair can pull its neighbour past the limit, and the best-scoring
+round is what comes out: an earlier version returned whatever the last round
+happened to leave.
+
+Measured on the shipped model: worst edge at 45 and 80 degrees x1.86 and x3.06
+(was x6.74 and x11.14), no edge past x3 at 45 degrees and two at 80 (was 8 and
+36), worst fold x2.37 with none collapsed, split seams 0 at every pose, and the
+arm's vertices still carry 0.71 of the arm's own travel over four bones. The last
+two edges are the strip's own geometry: it is 0.449 units wide and the pad
+travels about five units at eighty degrees, so what is left is spread as thinly
+as the surface allows rather than standing in one tear.

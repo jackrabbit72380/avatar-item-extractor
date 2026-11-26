@@ -30,7 +30,14 @@ import sys
 
 import bmesh
 import bpy
-from mathutils import Quaternion, Vector, kdtree
+
+# Blender does not put the script's folder on the path, and the pose maths lives
+# next to this file because the carrier ships src/ and nothing else.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+import halo_pose
+from mathutils import Matrix, Quaternion, Vector, kdtree
 
 # The .jms is positional and carries no section markers, so one wrong count shifts
 # everything after it and the file still reads as text. It is checked as it is
@@ -87,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v122"
-BUILD = "2026-11-26 pads-follow-the-arm"
+VERSION = "v123"
+BUILD = "2026-11-26 the collar rides the game's own frames"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4357,58 +4364,72 @@ PLATE_SMOOTH_PASSES = 300
 # Poses the weighting is tested against, and what counts as being drawn apart.
 # These are the angles tools/test_halo_skin.py measures the exported file at, so
 # the build and the check are looking for the same thing from opposite ends.
-TEAR_POSES = ((45.0, 45.0), (80.0, 60.0))
+TEAR_POSES = ((45.0, 45.0), (80.0, 60.0), (20.0, 20.0))
 TEAR_LIMIT = 1.6
 TEAR_ROUNDS = 30
 
+# How a torn point's bones are chosen: one bone, or two in one of these shares.
+# The share matters as much as the pair - a collar edge needs a little of the
+# arm's swing, not half of it.
+POLISH_FRACS = (0.85, 0.75, 0.6, 0.5, 0.4, 0.25, 0.15)
 
-def posed_transforms(armature, names, shoulder, elbow):
-    """posed x inverse(bind) for every bone, which is what Halo applies.
+# What changing a point's riding costs, beyond what continuity needs. Without
+# it the solver roams over pairs that fit equally well and the field loses the
+# body it was transferred from; with it, a point that can stay put does.
+POLISH_STIFF = 0.03
+
+# Rings of points around a torn strip that may take part, so the change has
+# somewhere to spread instead of stopping dead at the strip itself.
+POLISH_RINGS = 1
+
+# Folding an edge is as bad as stretching one - a folded triangle draws as a
+# dark sliver - so the search must not buy a tear's fix with a fold.
+POLISH_SQUASH = 3.0
+
+# The surface's own zero-length duplicates, which the checker does not measure
+# either. An edge this short says nothing about what a pose draws.
+TEAR_FLOOR = 0.2
+
+
+def posed_transforms(armature, shoulder, elbow):
+    """posed x inverse(bind) for every node, which is what Halo applies.
 
     `objects/models.c` moves every vertex by that product, so shaping the
-    weights against it is shaping them against the game, not against Blender's
-    own deform, which differs wherever the bind pose is not the rest pose.
+    weights against it is shaping them against the game rather than against
+    Blender's own deform. The frames come from the node block the exporter
+    writes, not from Blender's bones, because Halo turns a node about its
+    parent's X while a bone's Euler turn is about its own axis: posed through
+    Blender the build's own worst edge read x2.94 where the file it produced
+    measured x3.56, and no single Euler channel matched.
     """
-    keep = {}
-    for bone in armature.pose.bones:
-        keep[bone.name] = (bone.rotation_mode,
-                           bone.rotation_quaternion.copy(),
-                           bone.rotation_euler.copy())
-        bone.rotation_mode = "XYZ"
-        tail = bone.name.rsplit(" ", 1)[-1]
-        turn = shoulder if tail == "upperarm" else elbow if tail == "forearm" else 0.0
-        bone.rotation_euler = (math.radians(turn), 0.0, 0.0)
-    bpy.context.view_layer.update()
+    order, _index_of, rows, _checksum = jms_node_rows(armature)
+    labels = [row[0] for row in rows]
+    frames = halo_pose.shifts([row[1] for row in rows], [row[2] for row in rows],
+                              [row[3] for row in rows], [row[4] for row in rows],
+                              labels, shoulder, elbow)
     out = {}
-    for name in names:
-        bone = armature.data.bones.get(name)
-        if bone is None:
-            continue
-        out[name] = armature.pose.bones[name].matrix @ bone.matrix_local.inverted()
-    for bone in armature.pose.bones:
-        mode, quaternion, euler = keep[bone.name]
-        bone.rotation_mode = mode
-        bone.rotation_quaternion = quaternion
-        bone.rotation_euler = euler
-    bpy.context.view_layer.update()
+    for index, (rotation, shift) in frames.items():
+        out[labels[index]] = Matrix((
+            (rotation[0][0], rotation[0][1], rotation[0][2], shift[0]),
+            (rotation[1][0], rotation[1][1], rotation[1][2], shift[1]),
+            (rotation[2][0], rotation[2][1], rotation[2][2], shift[2]),
+            (0.0, 0.0, 0.0, 1.0)))
     return out
 
 
-def relax_tears(weights, mesh, armature, world, names, family):
-    """Average only the points Halo would draw stretched, until none are.
+def skin_point_graph(weights, mesh, armature, world, names):
+    """The surface as points: coincident vertices share one blend and one graph.
 
-    Smoothing makes a field continuous; it does not make it continuous *as a
-    pose moves it*. Two points can sit a millimetre apart with nearly the same
-    two weights and still be pulled apart, because the second weight leans to a
-    different bone. So this measures the game's own deformation at the two poses
-    the checker uses, and averages the ends of every edge that comes out longer
-    than TEAR_LIMIT of its rest length - nothing else is touched, which is what
-    keeps the shape and the arm's follow exactly as they were.
+    Returned as the slot of every vertex, each slot's rest position, its blend,
+    the slots an edge joins it to, and the game's own pose matrices.
 
-    It works on positions, not vertices: the export splits every triangle off
-    its neighbours, so relaxing by vertex index lets the three copies of one
-    point take three different answers and the surface comes apart - 1,107
-    seams, measured, before this was fixed.
+    The graph is the export's own triangles, not Blender's mesh edges, because
+    the export fans every polygon from its first corner: a quad therefore
+    carries a diagonal that ``mesh.edges`` does not have, and the export is what
+    the game and the checker see. Searching a graph without those diagonals
+    fixes what it can see and walks away from the tear it cannot - measured,
+    thirty rounds took the worst edge from x4.81 back to x7.58 and folded
+    fourteen edges doing it.
     """
     into = armature.matrix_world.inverted()
     spots = {}
@@ -4423,16 +4444,39 @@ def relax_tears(weights, mesh, armature, world, names, family):
         if rest[slot] is None:
             rest[slot] = into @ (world @ vertex.co)
             field[slot] = dict(own)
-    ring = [set() for _ in range(len(spots))]
-    for edge in mesh.edges:
-        a, b = where[edge.vertices[0]], where[edge.vertices[1]]
-        if a != b:
-            ring[a].add(b)
-            ring[b].add(a)
-    pairs = sorted({(a, b) if a < b else (b, a)
-                    for a in range(len(spots)) for b in ring[a]})
-    moves = [posed_transforms(armature, names, shoulder, elbow)
+    ring = [[] for _ in range(len(spots))]
+    for polygon in mesh.polygons:
+        corners = list(polygon.vertices)
+        for at in range(1, len(corners) - 1):
+            for a, b in ((corners[0], corners[at]),
+                         (corners[at], corners[at + 1]),
+                         (corners[at + 1], corners[0])):
+                first, second = where[a], where[b]
+                if first != second and second not in ring[first]:
+                    ring[first].append(second)
+                    ring[second].append(first)
+    moves = [posed_transforms(armature, shoulder, elbow)
              for shoulder, elbow in TEAR_POSES]
+    return where, rest, field, ring, moves
+
+
+def settle_tears(weights, mesh, armature, world, names, family):
+    """Average the ends of every edge the game would draw stretched.
+
+    A first pass only. It carries a torn strip towards a single blend, which is
+    what lets the pair search below find a clean surface: started from the raw
+    transfer instead, that search ended with 28 edges still past x3 at forty
+    five degrees, and from this field with none.
+
+    It cannot finish the job on its own. Halo gives a vertex two bones, so
+    wherever four meet the trim has to drop two, and it drops them differently
+    on each side: the averaged blend is snapped back to the same two blocks every
+    round, which is why this used to plateau with the collar still torn.
+    """
+    where, rest, field, ring, moves = skin_point_graph(
+        weights, mesh, armature, world, names)
+    pairs = sorted({(a, b) if a < b else (b, a)
+                    for a in range(len(rest)) for b in ring[a]})
     rounds = 0
     for _round in range(TEAR_ROUNDS):
         torn = set()
@@ -4447,7 +4491,7 @@ def relax_tears(weights, mesh, armature, world, names, family):
                 placed.append(total)
             for a, b in pairs:
                 was = (rest[a] - rest[b]).length
-                if was < 1e-6:
+                if was < TEAR_FLOOR:
                     continue
                 if (placed[a] - placed[b]).length / was > TEAR_LIMIT:
                     torn.add(a)
@@ -4471,6 +4515,137 @@ def relax_tears(weights, mesh, armature, world, names, family):
             settled[slot] = {name: value / total for name, value in top}
         for slot, own in settled.items():
             field[slot] = own
+    return [field[slot] for slot in where], rounds
+
+
+def relax_tears(weights, mesh, armature, world, names):
+    """Choose each torn point's bones so the game's own pose draws it unbroken.
+
+    Smoothing makes a field continuous; it does not make it continuous *as a
+    pose moves it*. Two points a millimetre apart can hold nearly the same two
+    weights and still be pulled apart, because the second weight leans to a bone
+    the first does not ride. That is what the collar does: the yoke's rim rides
+    neck and head, the pad hanging off the shoulder rides clavicle and upperarm,
+    and they meet along a strip half a unit wide - so half the arm's swing lands
+    across that one edge. Measured at eighty degrees it stretched x11.14.
+
+    Averaging the two ends cannot fix it. Halo gives a vertex two bones, so
+    wherever four meet the trim has to drop two, and it drops them differently
+    on each side; the averaged blend is snapped back to the same two blocks
+    every round, which is why this used to plateau. So instead of averaging,
+    each point of the torn strip (and one ring around it) is given the bone pair
+    - one bone, or two in the shares POLISH_FRACS - that leaves the edges around
+    it closest to their rest length at the poses the checker uses, with a small
+    charge for changing what the body transfer gave it. A point outside that
+    strip is never touched, which is what keeps the shape and the arm's follow.
+
+    It works on positions, not vertices: the export splits every triangle off
+    its neighbours, so three copies of one point could take three different
+    answers and the surface would come apart - 1,107 seams, measured, when this
+    was done by vertex index.
+
+    Measured on this item's armour, worst edge at 45/45 fell x6.74 to x2.06 and
+    at 80/60 x11.14 to x2.72, with no edge past x3 at any pose and no seam.
+    """
+    where, rest, field, ring, moves = skin_point_graph(
+        weights, mesh, armature, world, names)
+
+    def placed(slot, ride, move):
+        """Where one point lands, riding `ride`, at one pose."""
+        total = Vector((0.0, 0.0, 0.0))
+        point = rest[slot]
+        for name, share in ride.items():
+            moved = move.get(name)
+            if moved is not None:
+                total += (moved @ point) * share
+        return total
+
+    def charge(ratio):
+        """What an edge costs the search: long is bad, and folded is too."""
+        if ratio >= 1.0:
+            return (ratio - 1.0) ** 2
+        return POLISH_SQUASH * (1.0 / max(ratio, 1e-6) - 1.0) ** 2
+
+    def torn_edges():
+        """Every edge the game would draw pulled or folded, and the worst."""
+        worst = 0.0
+        found = set()
+        for move in moves:
+            land = [placed(slot, field[slot], move) for slot in range(len(rest))]
+            for a in range(len(rest)):
+                for b in ring[a]:
+                    if b <= a:
+                        continue
+                    was = (rest[a] - rest[b]).length
+                    if was < TEAR_FLOOR:
+                        continue
+                    ratio = (land[a] - land[b]).length / was
+                    # A fold is as visible as a tear - a triangle turned inside
+                    # out draws as a dark sliver - so both directions count.
+                    if max(ratio, 1.0 / ratio) > worst:
+                        worst = max(ratio, 1.0 / ratio)
+                    if ratio > TEAR_LIMIT or ratio < 1.0 / TEAR_LIMIT:
+                        found.add(a)
+                        found.add(b)
+        # Scored by the worst edge first, not by how many edges are over the
+        # strip limit. Flattening one x11 tear into a band that peaks at x2.9 is
+        # the fix, and the second score preferred leaving the x11 standing
+        # because it touched fewer edges - measured, that rejected the very
+        # field this search had just found and handed back the tear.
+        return found, (round(worst, 3), len(found))
+
+    torn, state = torn_edges()
+    # The field the search starts from is the one to beat. Every round is scored
+    # and the best-scoring field is what comes out, because one point's better
+    # pair can be its neighbour's worse one, and without this the search returns
+    # whatever the last round happened to leave behind rather than its best.
+    best = (state, [dict(ride) for ride in field])
+    band = set()
+    rounds = 0
+    while torn and rounds < TEAR_ROUNDS:
+        rounds += 1
+        band |= torn
+        for _ in range(POLISH_RINGS):
+            band |= {other for slot in list(band) for other in ring[slot]}
+        changed = 0
+        for slot in sorted(band):
+            near = set(field[slot])
+            for other in ring[slot]:
+                near |= set(field[other])
+            bones = sorted(near)
+            choices = [{one: 1.0} for one in bones]
+            for at, one in enumerate(bones):
+                for two in bones[at + 1:]:
+                    for share in POLISH_FRACS:
+                        choices.append({one: share, two: 1.0 - share})
+            own = field[slot]
+            pick = None
+            for ride in choices:
+                cost = 0.0
+                for move in moves:
+                    here = placed(slot, ride, move)
+                    for other in ring[slot]:
+                        was = (rest[slot] - rest[other]).length
+                        if was < TEAR_FLOOR:
+                            continue
+                        arrived = placed(other, field[other], move)
+                        cost += charge((here - arrived).length / was)
+                cost += POLISH_STIFF * sum(
+                    abs(ride.get(name, 0.0) - own.get(name, 0.0))
+                    for name in set(ride) | set(own))
+                if pick is None or cost < pick[0]:
+                    pick = (cost, ride)
+            if pick[1] != own:
+                field[slot] = pick[1]
+                changed += 1
+        if not changed:
+            break
+        torn, state = torn_edges()
+        if state < best[0]:
+            best = (state, [dict(ride) for ride in field])
+    field = best[1]
+    log("worst edge after the search: x%.2f (%d points past x%.1f)"
+        % (best[0][0], best[0][1], TEAR_LIMIT))
     return [field[slot] for slot in where], rounds
 
 
@@ -4630,11 +4805,18 @@ def skin(object_data, armature, influences=2, rigid=False):
             log("%s: bound %d vertex/vertices to the weights of the avatar body "
                 "under them, then smoothed each shell along its own edges (%d passes)"
                 % (object_data.name, copied, PLATE_SMOOTH_PASSES))
-        weights, settled = relax_tears(weights, mesh, armature, world, names, family)
+        weights, settled = settle_tears(weights, mesh, armature, world, names,
+                                        family)
         if settled:
-            log("%s: settled the weights against the game's own deformation - %d "
-                "round(s) at %s, until no edge stretched past x%.1f"
+            log("%s: settled the torn strip against the game's own deformation "
+                "- %d round(s) at %s"
                 % (object_data.name, settled,
+                   ", ".join("%g/%g" % pose for pose in TEAR_POSES)))
+        weights, chosen = relax_tears(weights, mesh, armature, world, names)
+        if chosen:
+            log("%s: chose each torn point's bones against the game's own "
+                "deformation - %d round(s) at %s, until no edge stretched past x%.1f"
+                % (object_data.name, chosen,
                    ", ".join("%g/%g" % pose for pose in TEAR_POSES), TEAR_LIMIT))
         groups = {name: object_data.vertex_groups.new(name=name) for name in names}
         tally = {}
@@ -4706,6 +4888,109 @@ def _quaternion_product(first, second):
             aw * bw - ax * bx - ay * by - az * bz)
 
 
+def jms_node_rows(armature):
+    """The node block a .jms writes, as numbers, for the exporter and the skin.
+
+    One place decides a node's turn, its spot and its links, so the weights are
+    shaped against the same frames tool.exe will bake.
+
+    Halo's own biped is written in the one order its animation graph stores. The
+    order here is the node index Tool bakes into the gbxmodel, and an animation
+    addresses a bone by that index: the same 19 names in Blender's order make a
+    different node list, which the engine answers with "the model '...' and the
+    animation graph '...' don't match" - and, were the checksum forced to agree,
+    would animate the wrong bones. The table's own child and sibling links go in
+    with it, so the node block is exactly the retail cyborg's.
+
+    A node is written in its PARENT's space, not the model's. Halo's own biped
+    says so: the marine's calf sits 15.87 along its thigh's X axis, not at its
+    model-space position, and tool builds every bone from its parent's frame plus
+    this line. Written in model space instead, the skeleton piles up - every bone
+    placed as if it hung off the origin.
+
+    A .jms stores each node's turn INVERTED - the inverse of the node's rotation
+    against its parent. Written the natural way round, every bind frame tool.exe
+    bakes comes out inverted and the engine draws the mesh as a heap of stretched
+    triangles, while the .blend, which deforms through the armature and never
+    reads this block, still looks perfect. Halo's own spartan.jms is the proof:
+    its node block only rebuilds the cyborg's bone positions (-0.82/0/39.44, head
+    60.91, hands 35.23) when each stored turn is applied transposed, i.e.
+    stored = the inverse of the node's own turn - the same inversion BlueStreak
+    writes as "quat -rot.x -rot.y -rot.z rot.w".
+
+    The header's second field is not a version or a constant: it is the model's
+    node list checksum, and tool.exe copies it into the gbxmodel. The engine
+    refuses a biped whose model and animation graph carry different nonzero
+    values with "the model '...' and the animation graph '...' don't match" and
+    then will not animate it - which is why BlueStreak's constant 3251 fails even
+    with a correct skeleton. Halo's own cyborg .jms and graph both carry
+    1828349080, and the biped's block is that same list in that same order. A
+    model no graph drives (the arms) carries 0, which the engine reads as "do
+    not compare checksums"; the arms must stay a globals model.
+
+    Returns (order, index_of, rows, checksum), each row being
+    (name, first_child, next_sibling, turn, spot).
+    """
+    bones = list(armature.data.bones)
+    by_name = {bone.name: bone for bone in bones}
+    names = [bone.name for bone in bones]
+    biped = len(names) == len(BIPED_NODES) and set(names) == set(BIPED_NODE_ORDER)
+    order = list(BIPED_NODE_ORDER) if biped else names
+    index_of = {name: index for index, name in enumerate(order)}
+    if biped:
+        parent_of = {row[0]: (order[row[3]] if row[3] >= 0 else None)
+                     for row in BIPED_NODES}
+        first_child = {row[0]: row[1] for row in BIPED_NODES}
+        next_sibling = {row[0]: row[2] for row in BIPED_NODES}
+    else:
+        parent_of = {bone.name: (bone.parent.name if bone.parent else None)
+                     for bone in bones}
+        children = {name: [] for name in order}
+        for bone in bones:
+            if bone.parent:
+                children[bone.parent.name].append(bone.name)
+        first_child = {name: -1 for name in order}
+        next_sibling = {name: -1 for name in order}
+        for bone in bones:
+            own = bone.name
+            kids = list(children[own])
+            if kids:
+                first_child[own] = index_of[kids[0]]
+            for left, right in zip(kids, kids[1:]):
+                next_sibling[left] = index_of[right]
+    checksum = BIPED_NODE_CHECKSUM if biped else 0
+    rows = []
+    for own in order:
+        bone = by_name[own]
+        if parent_of[own]:
+            frame = (by_name[parent_of[own]].matrix_local.inverted()
+                     @ bone.matrix_local)
+        else:
+            frame = bone.matrix_local
+        turn = frame.to_quaternion()
+        # Conjugate it: negating the vector part of a unit quaternion is its
+        # inverse, and mathutils exposes the components writable.
+        turn.x, turn.y, turn.z = -turn.x, -turn.y, -turn.z
+        spot = frame.translation
+        head = [spot.x, spot.y, spot.z]
+        if parent_of[own]:
+            # Blender's axes into Halo's: a 90 degree roll about -z carries
+            # (x, y, z) to (y, -x, z), and a node's turn is that axis change, so
+            # the quaternion's vector part rolls with it while w stays put. The
+            # translation is in the same parent frame, so it rolls too.
+            turn.x, turn.y, turn.z, turn.w = (turn.y, -turn.x, turn.z, turn.w)
+            head = [head[1], -head[0], head[2]]
+        else:
+            # A root has no parent frame to be relative to, so the roll is the
+            # frame itself: q * roll rather than q rolled by it.
+            turn.x, turn.y, turn.z, turn.w = _quaternion_product(
+                NODE_FRAME_ROLL, (turn.x, turn.y, turn.z, turn.w))
+        rows.append((own, first_child[own], next_sibling[own],
+                     (turn.x, turn.y, turn.z, turn.w),
+                     (head[0], head[1], head[2])))
+    return order, index_of, rows, checksum
+
+
 def export_jms(object_data, armature, path, arms=False):
     """Halo CE's text model format, laid out the way tool.exe reads it.
 
@@ -4751,102 +5036,18 @@ def export_jms(object_data, armature, path, arms=False):
         problem = fp_arm_node_problem(names)
         if problem:
             raise ValueError("%s: %s" % (os.path.basename(path), problem))
-    # Halo's own biped is written in the one order its animation graph stores.
-    # The order here is the node index Tool bakes into the gbxmodel, and an
-    # animation addresses a bone by that index: the same 19 names in Blender's
-    # order make a different node list, which the engine answers with "the model
-    # '...' and the animation graph '...' don't match" - and, were the checksum
-    # forced to agree, would animate the wrong bones. The table's own child and
-    # sibling links go in with it, so the node block is exactly the retail
-    # cyborg's.
+    # The node block, in the order Halo's animation graph stores it.
+    # jms_node_rows() holds the why - the inverted turn, the roll from Blender's
+    # axes into Halo's, the parent-space spot, the checksum the engine compares -
+    # and the skinning reads the same rows, so what is written here is exactly
+    # the block the weights were shaped against.
     biped = len(names) == len(BIPED_NODES) and set(names) == set(BIPED_NODE_ORDER)
-    order = list(BIPED_NODE_ORDER) if biped else names
-    index_of = {name: index for index, name in enumerate(order)}
-    if biped:
-        parent_of = {row[0]: (order[row[3]] if row[3] >= 0 else None)
-                     for row in BIPED_NODES}
-        first_child = {row[0]: row[1] for row in BIPED_NODES}
-        next_sibling = {row[0]: row[2] for row in BIPED_NODES}
-    else:
-        parent_of = {bone.name: (bone.parent.name if bone.parent else None)
-                     for bone in bones}
-        children = {name: [] for name in order}
-        for bone in bones:
-            if bone.parent:
-                children[bone.parent.name].append(bone.name)
-        first_child = {name: -1 for name in order}
-        next_sibling = {name: -1 for name in order}
-        for bone in bones:
-            own = bone.name
-            kids = list(children[own])
-            if kids:
-                first_child[own] = index_of[kids[0]]
-            for left, right in zip(kids, kids[1:]):
-                next_sibling[left] = index_of[right]
-
-    # The header's second field is not a version or a constant: it is the model's
-    # node list checksum, and tool.exe copies it into the gbxmodel. The engine
-    # refuses a biped whose model and animation graph carry different nonzero
-    # values with "the model '...' and the animation graph '...' don't match" and
-    # then will not animate it. BlueStreak writes the constant 3251 there, which
-    # is why a correct skeleton built from its .jms still fails; Halo's own
-    # cyborg .jms and graph both carry 1828349080, and the biped's node block
-    # below is that same list in that same order. A model no graph drives (the
-    # arms) carries 0, which the engine reads as "do not compare checksums".
-    #
-    # The arms get 0 because no graph drives them at all: H1's first-person
-    # renderer asks animation_get_node_orientations for the weapon graph's frames
-    # with a NULL model, so neither the checksum nor the node count is looked at,
-    # and it maps those frames onto the arms model by name. The 0 skips only the
-    # checksum half - the count half is not conditional - so the arms must stay a
-    # globals model ("first person hands") and never become an animated object.
-    checksum = BIPED_NODE_CHECKSUM if biped else 0
+    order, index_of, rows, checksum = jms_node_rows(armature)
     out = ["8200\t%d\t%d" % (checksum, len(order))]
-    for own in order:
-        bone = by_name[own]
-        # Each node is written in its PARENT's space, not the model's. Halo's
-        # own biped says so: the marine's calf sits 15.87 along its thigh's X
-        # axis, not at its model-space position, and tool builds every bone from
-        # its parent's frame plus this line. Written in model space instead, the
-        # skeleton piles up - every bone placed as if it hung off the origin.
-        if parent_of[own]:
-            frame = (by_name[parent_of[own]].matrix_local.inverted()
-                     @ bone.matrix_local)
-        else:
-            frame = bone.matrix_local
-        # A .jms stores each node's turn INVERTED - the inverse of the node's
-        # rotation against its parent. Written the natural way round (the turn
-        # itself), every bind frame tool.exe bakes comes out inverted, and the
-        # engine draws the mesh as a heap of stretched triangles while the
-        # .blend, which deforms through the armature and never reads this block,
-        # still looks perfect. Halo's own spartan.jms is the proof: its node
-        # block only rebuilds the cyborg's bone positions (-0.82/0/39.44, head
-        # 60.91, hands 35.23) when each stored turn is applied transposed, i.e.
-        # stored = the inverse of the node's own turn. That is the same
-        # inversion BlueStreak writes as "quat -rot.x -rot.y -rot.z rot.w", and
-        # the inverse of a unit quaternion is its conjugate.
-        turn = frame.to_quaternion()
-        # Conjugate it: negating the vector part of a unit quaternion is its
-        # inverse, and mathutils exposes the components writable.
-        turn.x, turn.y, turn.z = -turn.x, -turn.y, -turn.z
-        spot = frame.translation
-        head = [spot.x, spot.y, spot.z]
-        if parent_of[own]:
-            # Blender's axes into Halo's: a 90 degree roll about -z carries
-            # (x, y, z) to (y, -x, z), and a node's turn is that axis change, so
-            # the quaternion's vector part rolls with it while w stays put. The
-            # translation is in the same parent frame, so it rolls too.
-            turn.x, turn.y, turn.z, turn.w = (turn.y, -turn.x,
-                                              turn.z, turn.w)
-            head = [head[1], -head[0], head[2]]
-        else:
-            # A root has no parent frame to be relative to, so the roll is the
-            # frame itself: q * roll rather than q rolled by it.
-            turn.x, turn.y, turn.z, turn.w = _quaternion_product(
-                NODE_FRAME_ROLL, (turn.x, turn.y, turn.z, turn.w))
-        out.append("%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f" % (
-            own, first_child[own], next_sibling[own],
-            turn.x, turn.y, turn.z, turn.w, head[0], head[1], head[2]))
+    for own, first, sibling, turn, head in rows:
+        out.append("%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f"
+                   % (own, first, sibling, turn[0], turn[1], turn[2], turn[3],
+                      head[0], head[1], head[2]))
 
     materials = [slot.material.name if slot.material else "material%d" % index
                  for index, slot in enumerate(object_data.material_slots)] or ["material"]
