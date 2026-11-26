@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v155"
-BUILD = "The crotch is one piece, on the pelvis"
+VERSION = "v156"
+BUILD = "Shoulder pads on the arm, crotch in one piece"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5547,6 +5547,32 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
                            for index in indices for name in weights[index]):
                     continue
                 centre = sum(spots, Vector()) / len(spots)
+                # A shoulder pad is a plate on the arm: it sits over the deltoid,
+                # so at this armour's height it is the one chest-band shell that
+                # is nearer an upper arm than the spine - and the sleeve it sits
+                # in rides that same upper arm, so it has to ride it too, or the
+                # pad and its sleeve are drawn apart the moment the arm swings.
+                # The whole shell, rigid: a pauldron does not bend.
+                arm = None
+                reach = [name for name in ("bip01 l upperarm", "bip01 r upperarm")
+                         if name in segments]
+                if reach:
+                    near = min(reach, key=lambda name: point_segment_distance(
+                        centre, *segments[name]))
+                    trunk = min(point_segment_distance(centre, *segments[name])
+                                for name in column) if column else None
+                    if trunk is None or point_segment_distance(
+                            centre, *segments[near]) < trunk:
+                        arm = near
+                if arm is not None:
+                    for index in indices:
+                        weights[index] = {arm: 1.0}
+                    log("%s: the %d-vertex pad at z %.1f, %.1f units out from the "
+                        "centre line, is nearer the arm than the spine, so it "
+                        "rides %s whole - the sleeve under it rides the same arm"
+                        % (object_data.name, len(indices), centre.z, abs(centre.y),
+                           arm))
+                    continue
                 spans = [(name, min(segments[name][0].z, segments[name][1].z),
                           max(segments[name][0].z, segments[name][1].z))
                          for name in column]
