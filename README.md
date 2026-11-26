@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v145.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v146.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -613,10 +613,10 @@ suit can be built with the decal or without it.
     blue 11, the cloth warm at 35, so the plates take 1.0 and the cloth 0.32.
     `tools/tint_preview.py` writes the base map out under a few team colours
     beside the mask, so an authored mask can be judged before it is compiled.
-    The one-click .bat takes the same choice without a command line: a file
-    named `tint_mask.png` beside it becomes `--tint` that file. There is no
-    text file to set a mode - nobody using a one-click program is going to
-    type one - so without that mask nothing tints and the report says why.
+    The one-click .bat makes no such choice for you: it passes no `--tint`, so
+    an item tints only where its own tint slot says so - which for the Marine
+    armour is nowhere - and the report says why. `--tint` stays on the command
+    line for the day this build does more than a double-click.
 
     The slot beside the tint mask (parameter id 3) is a **decal**: artwork blended
     over the base map by its own alpha, a tee's logo. It is never read as a mask.
@@ -714,13 +714,13 @@ it; in Halo PC and CE it is the **red** channel. A detail map with nothing
 painted in red is invisible however the shader is set, which is why the build
 paints red itself.
 
-**Detail maps.** Put `detail.png` beside the `.bat` and it becomes
-`<item> detail` in all three formats; `detail_mask.png` says where it shows
-(white = detail), and without one the mask is the texels the item paints.
-On the command line `--detail derived` builds one from the item's own base map
-instead - its luminance against a blurred copy of itself, on the painted texels
-- but the one-click `.bat` takes pictures only, never text files. A derived map
-is a rule, not art the item shipped, and `report.txt` says so. The
+**Detail maps.** `--detail` takes one: a PNG becomes `<item> detail` in all
+three formats, and `--detail-mask` says where it shows (white = detail); without
+one the mask is the texels the item paints. `--detail derived` builds one from
+the item's own base map instead - its luminance against a blurred copy of
+itself, on the painted texels. A derived map is a rule, not art the item
+shipped, and `report.txt` says so. The carrier passes neither, because a
+double-click is the whole program. The
 multipurpose map's red channel is written from the mask, and `report.txt` gives
 the tag settings: detail map, detail mask = multipurpose map alpha *which is
 really red here*, detail map scale 1-4, and the fact that H1X's "detail after
@@ -741,10 +741,11 @@ times the suit.
 masks from the multipurpose map's **blue** (specular/reflection, with a cube map
 showing through it) and **green** (self-illumination). Nothing this build reads
 out of an avatar item's slots is either of them, so they are authored or
-derived, never invented silently: `shine_mask.png` lands in blue, and
-`glow_mask.png` lands in green. Both are pictures, because that is what an
-artist makes anyway; the carrier reads no text files. Each mask is also written
-beside the item so it can be looked at, and `report.txt` says which was used.
+derived, never invented silently: `--shine` takes a PNG for blue, and `--glow`
+a PNG for green. Both are command-line options for now, because the carrier is a
+single double-click and reads nothing beside itself but `MyAvatar.glb`. Each
+mask is also written beside the item so it can be looked at, and `report.txt`
+says which was used.
 
 For the shine itself, use the **same cube map the stock cyborg (Master Chief)
 armour shader uses, in both its SP and its MP version** — copy the reference out
@@ -767,16 +768,16 @@ the usual case for an armour item, whose paint the multiplayer version whitens s
 the team colour shows — is one material, so the whole body counts as plate and
 reflects; a flat black map stays black. A varied map is decided texel by texel.
 
-`shine_mask.png` hand-paints where the reflection sits instead; on the command
-line `--shine off` leaves it matte.
+`--shine` with a PNG hand-paints where the reflection sits instead, and
+`--shine off` leaves it matte.
 
 **What glows.** On this suit, nothing. The Marine armour is paint, not lamps: an
 avatar item carries no self-illumination map, and the body sheet is a flat
 colour, so the multipurpose map's green channel is written empty and no lights
 are invented. `report.txt` says so in its `glow:` line. If you want lamps the
 item does not have - a visor strip, a backpack light, whatever the paint job
-suggests - paint them white on `glow_mask.png` beside the `.bat`, and they will
-light up in the dark without a light source.
+suggests - paint them white and pass the file with `--glow`; they will light up
+in the dark without a light source.
 
 None of this is measured in game: there is no `tool.exe` here, so the tag
 settings above are from the documented channel behaviour, not from a compiled
@@ -1284,7 +1285,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v145.bat` and
+`Extract UNSC Marine Armor Avatar-v146.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1299,7 +1300,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v145.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v146.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1349,9 +1350,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v145.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v146.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v145.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v146.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it

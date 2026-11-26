@@ -2103,8 +2103,8 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
         lines.append("glow:      none - nothing on this armour lights up. An avatar")
         lines.append("           item carries no self-illumination map, so the")
         lines.append("           multipurpose map's GREEN channel stays empty and no")
-        lines.append("           lights are invented. glow_mask.png beside the .bat adds")
-        lines.append("           them if you want any: white lights up.")
+        lines.append("           lights are invented. No lamp is painted, so there is")
+        lines.append("           nothing for the shader to light up.")
     team = facts.get("team_colour_base") or {}
     if team.get("tif"):
         lines.append("team colour: %s - the item's base map with the tinted texels"
