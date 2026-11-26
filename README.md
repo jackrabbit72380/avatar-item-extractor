@@ -1324,3 +1324,46 @@ scene holding only that item, made with `copy=True`, with the rest of the scene
 put back afterwards - and that the datablock library writer is never used, since
 that is what produced files that opened empty. `RIG_MODULES` points it at any
 unpacked build to check a shipped version.
+
+```sh
+python3 tools/test_halo_skin.py "…/source/UNSC Marine Armor superhigh.jms"
+```
+
+Poses the compiled `.jms` with Halo's own rule - each vertex moved by
+`node_matrix(posed) x inverse(node_matrix(bind))`, exactly as `objects/models.c`
+does it - and reports, at 10, 20, 45 and 80 degrees of shoulder and elbow, the
+worst edge stretch, how many edges are pulled past x3, how many are squeezed
+past x3, how many split seams open, and how much of its own travel the arm's
+vertices actually carry. The file's float32 quaternions mean a good file
+measures x1.00002 at rest rather than exactly x1.000.
+
+Its controls run first and the pose numbers are not printed unless they pass: no
+pose must move nothing, the arm's vertices must carry at least half of the arm's
+own travel, and rigid edges must keep their length - a control that tests zero
+edges is a failure, not a pass. That last one is what caught a deformer that
+composed the parent's rotation twice and invented x44.96 of motion at zero pose,
+and the seam count is what caught weights relaxed per vertex instead of per
+position opening 1,107 cracks in a surface that had none.
+
+```sh
+python3 tools/test_halo_shape.py "…superhigh.jms" "…/UNSC Marine Armor.obj"
+```
+
+The other half of "looks right": a rig can be perfectly smooth on a mesh that
+has been squashed into a different shape. Every triangle must keep the item's own
+shape - its three side lengths over the longest, which a fit that scales the
+armour to someone's proportions leaves alone and a warp or a shear does not -
+the worst thin triangle must be no worse than the item already had, and every
+vertex must ride one or two bones with weights summing to one.
+
+```sh
+python3 tools/render_halo_skin.py "…superhigh.jms" shots/
+```
+
+Draws the compiled file instead of counting it: the same node maths, then a
+z-buffered triangle fill and a PNG written through `zlib`, so it needs no
+Blender, no GPU and no third-party module. It writes four views at rest and at
+45 and 80 degrees, plain and tinted by the bone each vertex rides, and takes an
+optional `x y z radius` to crop in on a joint. This is what showed the shoulder
+plates staying on the chest while the arms swung out from under them - the
+clavicle was the nearest bone to a pauldron, and a pauldron hangs off the arm.
