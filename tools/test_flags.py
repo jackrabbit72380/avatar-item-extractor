@@ -19,7 +19,13 @@ So this reads the batch half of the shipped .bat and checks:
     never as --keep-shape;
   * nothing else beside the .bat is read - no .txt, no mask PNG;
   * the shine is still asked for, so the suit reflects by default;
-  * the command line still forwards %PORT%.
+  * the command line still forwards %PORT%;
+  * the carrier's own command line gets past the extractor's parser. The batch
+    half sets the RIGGING pass's flags in variables and forwards them on the
+    same line as the extractor's; v146-v152 forwarded --stand with them, and
+    argparse answers an unknown argument with exit 2, so every double-click
+    stopped before one item was extracted. The check below runs the carrier's
+    real command line, which is the only thing that would have caught it.
 
     python3 tools/test_flags.py
 
@@ -29,7 +35,9 @@ Exits 0 only when the carrier asks for the fit and nothing else.
 import glob
 import os
 import re
+import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(HERE)
@@ -56,6 +64,35 @@ def batch_half(path):
     marker = "###PAYLOAD###"
     at = text.rfind(marker)
     return text[:at] if at >= 0 else text
+
+
+def bootstrap_half(path):
+    """The Python the batch half writes out, exactly as it stands in the file."""
+    with open(path, encoding="utf-8", newline="") as handle:
+        text = handle.read()
+    start = text.rfind("###BOOTSTRAP###") + len("###BOOTSTRAP###")
+    end = text.rfind("###PAYLOAD###")
+    return text[start:end].strip("\r\n")
+
+
+def runs_past_the_parser(boot):
+    """Run the carrier's own command line and see what the extractor says.
+
+    Returns (returncode, output). Code 2 is argparse refusing an argument: the
+    extractor never starts. Anything else means the line was understood - 4 is
+    what it answers when the folder holds no items, which is this repository.
+    """
+    work = tempfile.mkdtemp(prefix="carrier-")
+    path = os.path.join(work, "boot.py")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(boot + "\n")
+    out = os.path.join(work, "extracted")
+    os.makedirs(out, exist_ok=True)
+    done = subprocess.run(
+        [sys.executable, path, BAT, os.path.join(work, "cache"),
+         "--obj", "--out", out, "--stand", "--shine", "derived"],
+        capture_output=True, text=True)
+    return done.returncode, done.stdout + done.stderr
 
 
 def main():
@@ -94,6 +131,20 @@ def main():
     check(not re.search(r"--(tint|detail|glow|fit-limbs|t-pose|keep-shape)\b",
                         "\n".join(run)),
           "the command line passes an option the carrier is not meant to set")
+
+    # The rigging half's flags travel on the extractor's command line, so the
+    # bootstrap has to take them back out before the extractor parses it.
+    boot = bootstrap_half(BAT)
+    for word in ("--stand",):
+        check(re.search(r"if word not in \([^)]*%s" % re.escape(word), boot),
+              "the bootstrap no longer takes %s out of the extractor's"
+              " arguments" % word)
+    check('["--stand"]' in boot,
+          "the bootstrap no longer hands --stand to the rigging pass")
+    code_ran, output = runs_past_the_parser(boot)
+    check("unrecognized arguments" not in output and code_ran != 2,
+          "the one-click command line is refused by the extractor (code %r): %s"
+          % (code_ran, output.strip().splitlines()[-1] if output.strip() else ""))
 
     print("carrier: %s" % os.path.basename(BAT))
     if failures:
