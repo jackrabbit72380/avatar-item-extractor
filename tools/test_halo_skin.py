@@ -18,14 +18,15 @@ a Halo CE gbxmodel does. The pose is applied as a rotation about a bone's head,
 in its parent's frame, which is what an animation's node rotation is.
 """
 
-# NOT TRUSTWORTHY YET. This deformer fails its own identity control: with the
-# pose set to zero it must report exactly 1.000 on every edge, because the
-# relative matrix node x inverse(bind) is then the identity for every node. It
-# reports x44.96, so the posed frames are not equal to the bind frames for some
-# node and every number it prints today (torn-edge counts included) is void.
-# The controls are: (1) no pose -> 1.000; (2) a model whose vertices all ride
-# one bone -> 1.000 at any pose. Until both pass, no weight change may be
-# judged with it.
+# Checked before use, by two controls that are arithmetic, not judgement:
+#   1. no pose at all - node x inverse(bind) is then the identity for every
+#      node, so every edge must measure exactly 1.000. It does.
+#   2. an edge whose two ends ride the same single node at 100% must keep its
+#      length exactly, however the pose turns. It does.
+# The bug this caught: the posed frames were composed from each node's WORLD
+# rotation instead of its own local turn, so the parent's rotation was applied
+# twice and the deformer invented motion from nothing (x44.96 at zero pose).
+# Every torn count printed before this fix was an artefact and is void.
 
 import math
 import sys
@@ -149,7 +150,7 @@ def bind_worlds(first, sib, turns, spots):
     return worlds, parent
 
 
-def posed_worlds(worlds, parent, spots, names, shoulder, elbow):
+def posed_worlds(worlds, parent, turns, spots, names, shoulder, elbow):
     """The same frames, with the arms turned, as an animation turns them."""
     bent = {}
     for index, name in enumerate(names):
@@ -159,7 +160,7 @@ def posed_worlds(worlds, parent, spots, names, shoulder, elbow):
             bent[index] = elbow
     posed = {}
     for index in levels(parent, len(names)):
-        base_r, base_t = worlds[index][0], spots[index]
+        base_r, base_t = transposed(turn_matrix(turns[index])), spots[index]
         if index in bent:
             base_r = product(axis_rotation((1, 0, 0), bent[index]), base_r)
         up = parent.get(index)
@@ -185,7 +186,7 @@ def measure(path, shoulder, elbow, limit=0.2):
     worlds, parent = bind_worlds(first, sib, turns, spots)
     global first_of, sibling_of
     first_of, sibling_of = first, sib
-    posed = posed_worlds(worlds, parent, spots, names, shoulder, elbow)
+    posed = posed_worlds(worlds, parent, turns, spots, names, shoulder, elbow)
     relative = [product(posed[i][0], inverse(worlds[i])[0]) for i in range(len(names))]
     shift = []
     for index in range(len(names)):
@@ -227,6 +228,43 @@ def measure(path, shoulder, elbow, limit=0.2):
         if was / max(now, 1e-9) > 3.0:
             squashed += 1
     return worst_stretch, torn, worst_squash, squashed, len(edges)
+
+
+def same_node_control(path, shoulder=45.0, elbow=60.0):
+    """Edges that ride one node at both ends must not change length at all."""
+    names, first, sib, turns, spots, points, weights, triangles = parse(path)
+    worlds, parent = bind_worlds(first, sib, turns, spots)
+    global first_of, sibling_of
+    first_of, sibling_of = first, sib
+    posed = posed_worlds(worlds, parent, turns, spots, names, shoulder, elbow)
+    shift = []
+    for index in range(len(names)):
+        posed_r, posed_t = posed[index]
+        back = inverse(worlds[index])
+        shift.append((product(posed_r, back[0]),
+                      tuple(posed_t[a] + carried(posed_r, back[1])[a] for a in range(3))))
+    moved = []
+    for point, ride in zip(points, weights):
+        if len(ride) != 1 or abs(sum(ride.values()) - 1.0) > 1e-9:
+            moved.append(None)
+            continue
+        rotation, spot = shift[next(iter(ride))]
+        turned = carried(rotation, point)
+        moved.append(tuple(turned[a] + spot[a] for a in range(3)))
+    worst = 0.0
+    seen = 0
+    for a, b, c in triangles:
+        for x, y in ((a, b), (b, c), (c, a)):
+            if moved[x] is None or moved[y] is None:
+                continue
+            if next(iter(weights[x])) != next(iter(weights[y])):
+                continue
+            was = math.dist(points[x], points[y])
+            if was < 0.2:
+                continue
+            seen += 1
+            worst = max(worst, math.dist(moved[x], moved[y]) / was)
+    return worst, seen
 
 
 if __name__ == "__main__":
