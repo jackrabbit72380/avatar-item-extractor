@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v128"
-BUILD = "the item's own face painted from the avatar's sheet, a live percentage, and materials named after their maps"
+VERSION = "v129"
+BUILD = "the body stands in Halo's pose, one rigid turn per shell"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -258,7 +258,7 @@ def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parsed = {"items": "extracted", "rig": None, "fp": None, "out": "rigged",
               "fbx": True, "jms": True, "name": None, "port": None,
-              "keep_shape": False, "eyes_forward": True}
+              "keep_shape": False, "eyes_forward": True, "stand": True}
     index = 0
     while index < len(argv):
         word = argv[index]
@@ -273,6 +273,12 @@ def args():
             index += 1
         elif word == "--keep-shape":
             parsed["keep_shape"] = True
+            index += 1
+        elif word == "--stand":
+            parsed["stand"] = True
+            index += 1
+        elif word == "--t-pose":
+            parsed["stand"] = False
             index += 1
         elif word == "--eyes-forward":
             parsed["eyes_forward"] = True
@@ -2106,25 +2112,29 @@ def fit_body_points(points, edges, plan):
 
 
 def stand_in_halo_pose(object_data, armature, fit=1.0):
-    """Turn a whole body into the pose Halo's own skeleton holds - no scaling.
+    """Stand a whole body in the pose Halo's own skeleton holds - no scaling.
 
     One uniform factor keeps the avatar's shape but not its pose. An avatar is
     authored in a T-pose with its knees apart, while Halo's nodes sit with the
     arms hanging and the legs under the hips: measured on this armour, the
-    avatar's shoulders are 0.97 m up against Halo's 1.73 m, and its arms run
-    out sideways against bones that run down. Skinned as authored, every
-    animation turns the avatar's own T-pose by Halo's node turns - so the arms
-    stay stuck out to the sides and the body reads as half crouched in every
-    animation, which is what the game showed.
+    avatar's shoulders are 0.97 m up against Halo's 1.73 m and its arms run out
+    sideways against bones that run down - 79 degrees away at the shoulder. So
+    every animation turns the avatar's own T-pose by Halo's node turns: the arms
+    stay out to the sides, look twisted about their own length, and the body
+    reads as half crouched, which is what the game showed.
 
-    So the mesh is posed into Halo's rest pose BEFORE it is skinned. Each body
-    segment is turned about its own joint by the turn that carries the avatar's
-    segment onto Halo's bone, and the turns are shared out between the joints
-    that claim each point, the same way the fit shares them. A turn cannot
-    change an edge's length, so the avatar keeps its shape exactly - what moves
-    is the pose it stands in, which is the one its animations are written for.
-    Nothing is scaled and no joint is displaced: the size and the joint
-    positions stay where the uniform factor put them.
+    This moves the mesh into Halo's rest pose, and the weights are the game's
+    own: each vertex is carried by the same blends `skin` gave it, so the
+    movement is exactly what Halo does to this surface on the first frame of an
+    arm-down animation - with one difference, that it is done once here instead
+    of every frame after. The alternative, moving the mesh before it is skinned,
+    gave the weights a different surface to be measured on and tore it x8.
+
+    ``fit`` is the uniform factor already applied to the mesh, so the avatar's
+    joints are compared where Halo keeps them. Nothing is scaled: a joint's
+    anchor is exact, and only the turn from the avatar's segment to Halo's bone
+    is applied, about that joint. Edges inside a segment keep their length; the
+    band where two bones blend deforms, which is what skinning is.
     """
     mesh = object_data.data
     points = [tuple(vertex.co) for vertex in mesh.vertices]
@@ -2133,80 +2143,50 @@ def stand_in_halo_pose(object_data, armature, fit=1.0):
     plan = body_fit_plan(armature, fit, points)
     if not plan:
         return None
-    by_joint = {entry["joint"]: entry for entry in plan}
-    # The segment each joint owns: between its own joint and the next one along
-    # the body, or a cap along its bone for a leaf (the head, a hand, a foot),
-    # whose geometry would otherwise fall to the joint above it.
-    segments = {}
-    for entry in plan:
-        beyond = entry["beyond"]
-        if beyond is not None and beyond in by_joint:
-            segments[entry["joint"]] = (entry["source"],
-                                         by_joint[beyond]["source"])
+    by_bone = {entry["bone"]: entry for entry in plan}
+    groups = {group.index: group.name for group in object_data.vertex_groups}
+    # Shells, not vertices: a plate of armour is one rigid piece, and turning
+    # each of its vertices by its own blend shears it - a few per cent over most
+    # of the suit, which is a shape change all the same. So each shell is turned
+    # once, by the bone most of it rides, exactly as the plate is worn. The
+    # weights are the game's own, and they were smoothed along each shell, so
+    # the bone that carries a plate is the bone the game turns it by.
+    parent = list(range(len(mesh.vertices)))
+
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for polygon in mesh.polygons:
+        corners = list(polygon.vertices)
+        for other in corners[1:]:
+            first, second = find(corners[0]), find(other)
+            if first != second:
+                parent[second] = first
+    shells = {}
+    for index in range(len(mesh.vertices)):
+        shells.setdefault(find(index), []).append(index)
+    placed = list(points)
+    turned_shells = 0
+    for corners in shells.values():
+        votes = {}
+        for index in corners:
+            for entry in mesh.vertices[index].groups:
+                name = groups.get(entry.group)
+                if name in by_bone:
+                    votes[name] = votes.get(name, 0.0) + entry.weight
+        if not votes:
             continue
-        parent = NXE_JOINTS[entry["joint"]][0]
-        direction = None
-        if 0 <= parent < len(NXE_JOINTS):
-            direction = fit_unit(fit_between(halo_point(NXE_JOINTS[parent]),
-                                             entry["source"]))
-        if direction is None:
-            direction = (0.0, 0.0, 1.0)
-        length = max(entry["cap"], 1e-3)
-        segments[entry["joint"]] = (
-            entry["source"],
-            fit_shift(entry["source"],
-                      tuple(value * length for value in direction)))
-
-    def shares(point):
-        """How a point's ride is shared out - smooth everywhere, no cuts.
-
-        Every joint votes, by how far the point is from its segment, with a
-        steep fall-off. Voting by *all* of them rather than by the few nearest
-        is what makes the field continuous: which joints are in a "nearest
-        four" set changes as a point crosses a line, and two points either side
-        of that line then ride different turns - measured, that cut the surface
-        x8 apart at the hip, where a point inside the thigh's segment had a
-        neighbour inside the spine's. The steep fall-off keeps a far joint's
-        vote at nearly nothing, so the field is still one body part per place.
-
-        The distances are measured on the AVATAR's own skeleton, in the pose
-        the mesh was authored in: its hand is out to the side, nowhere near its
-        hip, where Halo's hand hangs beside this body's hip. Which part a point
-        belongs to is its own skeleton's answer; Halo's bones only say where
-        that part has to end up.
-        """
-        nearest = None
-        best = None
-        for joint, (first, second) in segments.items():
-            gap = fit_gap(point, first, second)
-            if best is None or gap < best:
-                best = gap
-                nearest = joint
-        if nearest is None:
-            return []
-        return [(nearest, 1.0)]
-
-    placed = []
-    rides = []
-    for point in points:
-        own = sorted(shares(point), key=lambda pair: -pair[1])[:BODY_FIT_INFLUENCES]
-        total = sum(value for _joint, value in own) or 1.0
-        if not own:
-            placed.append(point)
-            rides.append({})
-            continue
-        moved = [0.0, 0.0, 0.0]
-        ride = {}
-        for joint, share in own:
-            entry = by_joint[joint]
-            offset = fit_between(entry["source"], point)
-            turned = fit_turned(entry["turn"], offset)
-            for axis in range(3):
-                moved[axis] += (share / total) * (entry["source"][axis]
-                                                  + turned[axis])
-            ride[entry["bone"]] = ride.get(entry["bone"], 0.0) + share / total
-        placed.append(tuple(moved))
-        rides.append(ride)
+        ridden = max(votes, key=votes.get)
+        entry = by_bone[ridden]
+        source = entry["source"]
+        turned_shells += 1
+        for index in corners:
+            turned = fit_turned(entry["turn"],
+                                fit_between(source, points[index]))
+            placed[index] = tuple(source[axis] + turned[axis] for axis in range(3))
     worst = 1.0
     for edge in mesh.edges:
         first, second = edge.vertices
@@ -2222,12 +2202,13 @@ def stand_in_halo_pose(object_data, armature, fit=1.0):
     mesh.update()
     tallest = max(point[2] for point in placed)
     lowest = min(point[2] for point in placed)
-    line = ("%d joints turned into Halo's rest pose, worst edge x%.2f, "
-            "%.2f m tall, soles at %.2f units"
-            % (len(plan), worst, tallest / HALO_UNITS_PER_METRE, lowest))
+    line = ("%d joints, %d shell(s) turned into Halo's rest pose, worst edge "
+            "x%.2f, %.2f m tall, soles at %.2f units"
+            % (len(plan), turned_shells, worst,
+               tallest / HALO_UNITS_PER_METRE, lowest))
     log("stood %s in Halo's rest pose: %s" % (object_data.name, line))
     return {"worst": worst, "height": tallest / HALO_UNITS_PER_METRE,
-            "rides": rides, "lines": ["biped pose : " + line]}
+            "lines": ["biped pose : " + line]}
 
 
 def retarget_body(object_data, armature, fit=1.0):
@@ -6449,6 +6430,17 @@ def main():
                      "slow part, thirteen poses"
                      % (number, len(items), merged.name, len(armature.data.bones)))
             record["binding"] = skin(merged, armature, rigid=prop)
+            # Stand the body in the pose Halo's skeleton holds, with the weights
+            # just given it. On by default: a T-posed body skinned to Halo's
+            # hanging arms holds the arms out and twists them in every
+            # animation, which is what the game showed. t_pose.txt beside the
+            # .bat turns it off, and the mesh is then left exactly as authored.
+            if options.get("stand") and body and body_grow:
+                stood = stand_in_halo_pose(merged, armature, body_grow)
+                if stood:
+                    record["stand"] = stood["lines"][0]
+                    log("%s stood in Halo's pose: worst edge x%.2f over the "
+                        "whole body" % (merged.name, stood["worst"]))
             progress(stage + 0.88 * 0.92,
                      "item %d of %d: %s skinned"
                      % (number, len(items), merged.name))
