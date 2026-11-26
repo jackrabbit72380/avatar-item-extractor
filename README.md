@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v124.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v125.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1185,7 +1185,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v124.bat` and
+`Extract UNSC Marine Armor Avatar-v125.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1200,7 +1200,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v124.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v125.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1250,9 +1250,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v124.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v125.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v124.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v125.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
@@ -1390,37 +1390,35 @@ point's better pair can pull its neighbour past the limit, and the best-scoring
 round is what comes out: an earlier version returned whatever the last round
 happened to leave.
 
-Measured on the shipped model: worst edge at 45 and 80 degrees x2.50 and x3.77,
-none past x3 at 45 degrees and four at 80, worst fold x2.39 with none collapsed,
-split seams 0 at every pose, and the arm's vertices still carry 0.84 of the arm's
-own travel over four bones. The last two edges are the strip's own geometry: it
-is 0.449 units wide and the pad travels about five units at eighty degrees, so
-what is left is spread as thinly as the surface allows rather than standing in
-one tear. Those two edges read a little worse than the build before this one,
-which had the arms themselves fitted out of place - the pose is an extreme one,
-and the arms now come out of it unbroken, which is worth more than the number.
+Measured on the shipped model: worst edge at 45 and 80 degrees x1.45 and x2.05,
+none past x3 at any pose and none torn, worst fold x2.13 with none collapsed,
+split seams 0 at every pose, and the arm's vertices carry 0.87 of the arm's own
+travel.
 
-## Where the item's arms actually are
+## A body is scaled, never fitted
 
-The armour's skeleton and the armour's mesh disagree about the arms. The file's
-joints put the wrist at y 20.1, z 43.0 - a T-pose - while the mesh is modelled
-with its arms down: the glove reaches y 13.5 at z 25. Fitting the arm from the
-joints therefore anchored the whole hand seven units past the sleeve it was
-supposed to move, and the fit measured an edge x25 longer than it started; the
-glove came out as a rake of spikes and the shoulders as scattered plates.
+The avatar's shape is not negotiable, and no joint-by-joint fit can respect that.
+Carrying an item's joints onto Halo's bones necessarily stretches it - every
+`axial` in that fit is a factor along a bone - and this avatar is not Halo's
+shape to begin with: its head is 29% of its height where Halo's is 12%, so its
+shoulders sit at 60% of its height against the biped's 91%. Fitting it bent the
+body to Halo's proportions on the way: measured, the sleeve came out x1.4 longer
+and x1.2 thick, the glove a rake of spikes, the shoulder plates fanned apart.
 
-The arm's joints are now taken from the mesh instead: the shoulder where the
-sleeve leaves the torso, the wrist in the glove, the elbow between them. An item
-that really is modelled in a T-pose gives the same answer, so this is the mesh
-saying where its arm is rather than a special case.
+So a body gets ONE uniform factor and a rigid placement, and nothing else. The
+factor is the one that puts the avatar's own head joint on Halo's head bone
+(x1.630 for this armour), because that is the most a uniform scale can do for the
+rig - and it does a lot: every other joint of this body then lands within a few
+units of its bone, since the avatar's joints are consistent with Halo's when both
+are measured from the floor. The model stands 2.617 m: that is the avatar's own
+proportion of head to body, scaled, not a choice about how tall a Spartan is.
 
-The fit also shares a point between joints with a field that is continuous
-everywhere in space - every joint within twice the nearest one's distance, fading
-to nothing at that window. Taking the four nearest instead hands two points half
-a unit apart different pairs, and the armour is not one shell but many plates
-lying on each other, so each plate took its own ride and fanned off its
-neighbours. Measured, that alone was the difference between a shattered shoulder
-and a whole one, and the fit's worst edge fell from x25.44 to x10.73 - a fold
-0.94 units wide closing to 0.09, not a tear. The shape check now reads 100.0% of
-triangles keeping the item's shape, and the model's worst thin triangle x16
-against the item's own x17.
+What that buys, measured on the shipped file: every triangle is the item's own at
+the same factor - side ratios within 0.000, bounding box within 1.000 of the
+item's - so no angle can show it stretched or squashed; the model's worst thin
+triangle is x17, exactly what the item itself has; and the posed skin tears
+nowhere, at 45, 80, 20 and 10 degrees, with no faces unfolded.
+
+The 6.6% of triangles that are not the item's are the avatar's own head and
+accessories, which a costume export carries above the suit; they are scaled by
+the same factor and held to the same rule.

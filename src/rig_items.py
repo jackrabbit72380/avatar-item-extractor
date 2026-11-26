@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v124"
-BUILD = "2026-11-26 the arms are fitted where the item's mesh has them"
+VERSION = "v125"
+BUILD = "2026-11-26 a body is scaled, never fitted"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5988,18 +5988,22 @@ def main():
                 record["placement"] = "kept where the file puts it, grown in place"
             elif anchor:
                 record["placement"] = anchor[2]
-            elif body and options.get("keep_shape"):
-                record["placement"] = ("kept at the shape and size the file authored")
             elif body:
-                record["placement"] = "fitted to the biped's bones, joint by joint"
+                record["placement"] = ("kept at the shape the file authored, "
+                                       "brought onto the biped's height")
             else:
                 record["placement"] = "body height, grown from the floor"
-            # A whole body is carried joint by joint, which is what makes it
-            # match Halo's animations - and what stretches an avatar whose
-            # proportions are not Halo's. --keep-shape keeps the file's own
-            # shape instead and only scales it to the biped's height.
+            # A whole body is scaled, never fitted. Carrying it joint by joint
+            # lands its joints on Halo's bones and bends it to Halo's
+            # proportions on the way - every axial in that fit is a stretch, so
+            # the avatar's shape is what pays, and it showed: the sleeve came out
+            # x1.4 longer and x1.2 thick, the glove a rake of spikes, the
+            # shoulder plates fanned apart. Shape is not negotiable, so the only
+            # transform a body gets now is ONE uniform factor, measured so the
+            # model stands exactly as tall as the biped. The joints it does not
+            # reach are the rig's business, not the mesh's.
             scale = fit
-            if body and options.get("keep_shape"):
+            if body:
                 heights = [vertex.co.y for vertex in merged.data.vertices]
                 authored = (max(heights) - min(heights)) if heights else 0.0
                 if ported_materials is not None:
@@ -6019,17 +6023,40 @@ def main():
                         # reference and the whole model takes the item's factor:
                         # one uniform scale, head and item together, exactly as
                         # the file drew them relative to each other.
+                        # One factor for every part, so the shape cannot change.
+                        # Which factor: the one that puts the avatar's own head
+                        # joint on Halo's head bone. That is the most a uniform
+                        # scale can do for the rig, and it does a lot - every
+                        # other joint of this body lands within a few units of
+                        # its bone, because the avatar's joints are consistent
+                        # with Halo's measured from the floor. Scaling to the
+                        # biped's height instead would leave the arms bound to
+                        # the hips, and scaling joint by joint is what bent the
+                        # avatar out of shape in the first place.
+                        spans = []
+                        for axis in range(3):
+                            values = [vertex.co[axis]
+                                      for vertex in merged.data.vertices]
+                            spans.append((max(values) - min(values)) if values else 0.0)
+                        tall = max(spans)
+                        head_bone = armature.data.bones.get("bip01 head")
+                        head_joint = NXE_JOINTS[19]
+                        if head_bone is not None and abs(head_joint[2]) > 1e-6:
+                            grow = ((armature.matrix_world @ head_bone.head_local).z
+                                    / (head_joint[2] * HALO_UNITS_PER_METRE))
+                        else:
+                            grow = (fit * AUTHORED_BODY_HEIGHT / tall) if tall > 1e-6 else fit
                         for vertex in merged.data.vertices:
-                            vertex.co = (vertex.co.x * fit, vertex.co.y * fit,
-                                         vertex.co.z * fit)
+                            vertex.co = (vertex.co.x * grow, vertex.co.y * grow,
+                                         vertex.co.z * grow)
                         merged.data.update()
                         log("%s: the .glb carries no body under this item - the "
                             "avatar is wearing the suit, so the armour IS the "
                             "body and only the head sits above it. The whole "
-                            "model is scaled x%.3f (the biped against the %.2f m "
-                            "body items are authored for), keeping the head where "
-                            "the file put it on the collar"
-                            % (merged.name, fit, AUTHORED_BODY_HEIGHT))
+                            "model takes ONE uniform factor x%.3f, so its head "
+                            "joint lands on Halo's head bone and it stands %.3f m "
+                            "- the avatar's own proportions scaled, never bent"
+                            % (merged.name, grow, tall * grow))
                     if placed is not None:
                         # Each part's own height, not the model's: reporting the
                         # merged height as the item's is what made the log read
@@ -6079,22 +6106,6 @@ def main():
             # first-person set keeps the geometry it was measured on: it is the
             # set that was tuned to Halo's fingers, and a re-fitted sleeve would
             # move every glove away from them.
-            if body and not options.get("keep_shape"):
-                fitted = retarget_body(merged, armature, fit)
-                if fitted:
-                    record["biped_fit"] = fitted
-                    merged["biped_fit"] = fitted["lines"][0]
-                    # Before the rebind, so the weights are read off the shape
-                    # the head actually ships with.
-                    kept = refit_ported(merged, ported_materials,
-                                        ported_head_material, ported_box)
-                    if kept:
-                        record["port"] = (record.get("port") or []) + [
-                            "head shape: the export's own proportions at the "
-                            "height the fit gave it (width x%.3f, depth x%.3f)"
-                            % (kept[0], kept[1])]
-                    record["binding"] = rebind(merged, armature)
-                    record["rig"] = rig_audit(merged, armature)
             if arms_item is None and armature_fp:
                 # Nothing on an arm bone (a hat, a badge). The second set still
                 # exists so every item has the pair tool.exe users expect, and
