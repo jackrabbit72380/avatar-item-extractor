@@ -233,6 +233,7 @@ def main():
         print(__doc__)
         return 2
     path, folder, out = sys.argv[1], sys.argv[2], sys.argv[3]
+    zoom = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0
     os.makedirs(out, exist_ok=True)
     stem = os.path.basename(path).split(" superhigh")[0]
     materials, uvs, shaders = read_uvs_and_materials(path)
@@ -249,7 +250,8 @@ def main():
                              % (path, len(corners), len(corners), len(shaders)))
         posed = [(shaders[k], a, b, c) for k, (a, b, c) in enumerate(corners)]
         for view, target in views.items():
-            picture = render_shaded(moved, posed, uvs, shaders, sheets, target)
+            picture = render_shaded(moved, posed, uvs, shaders, sheets, target,
+                                    zoom=zoom)
             name = "shaded-%s-%02d-%02d.png" % (view, int(shoulder), int(elbow))
             R.write_png(os.path.join(out, name), 760, 760, picture)
             made += 1
