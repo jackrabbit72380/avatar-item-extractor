@@ -2443,8 +2443,22 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
     for vertex, point in zip(mesh.vertices, placed):
         vertex.co = point
     mesh.update()
-    tallest = max(point[2] for point in placed)
+    # The soles belong on the floor before this returns: the pose turns the
+    # feet with their segments, and a foot that was on z = 0 in the avatar's
+    # pose can end under it once it is stood in Halo's. Left there, the model's
+    # lowest point is below the biped's origin and the game draws the boots in
+    # the ground - the model is placed by that origin, so the whole body has to
+    # come back up by the amount the pose pushed it down.
     lowest = min(point[2] for point in placed)
+    if abs(lowest) > 0.01:
+        for object_data_part in (object_data,):
+            for vertex in object_data_part.data.vertices:
+                vertex.co.z -= lowest
+            object_data_part.data.update()
+        placed = [(x, y, z - lowest) for x, y, z in placed]
+        log("soles lifted %.2f units onto the floor after the pose" % -lowest)
+        lowest = 0.0
+    tallest = max(point[2] for point in placed)
     log("arms: %d plate(s) swung with the arm - the sleeve and glove, not the "
         "shoulder pads, which are shaped for the T-pose and stay put"
         % arms_turned)
@@ -5969,7 +5983,7 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
     the radius the sphere gets. Physics does not animate, so every sphere rides
     the pelvis, and the pelvis sphere is the pill a biped stands on.
     """
-    out, index_of, _rows = _jms_header(armature)
+    out, index_of, rows = _jms_header(armature)
     out.append("1")
     out.append("%s\t<none>" % " ".join(str(material_name).split()))
     # Spheres at each part's own node origin, with no offset: a marker's
@@ -5979,10 +5993,23 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
     # feet spheres are what it stands on, and without them the origin is the
     # only thing touching the floor and the character sinks into it.
     # A sphere's bottom is what the biped stands on, so its radius is measured
-    # down to the sole, not across the foot. Half the foot's width made a sphere
-    # far wider than the ankle is high, its bottom sank below the ground, and the
-    # engine lifted the whole character to clear it - the floating feet.
-    ground = min(low[2] for _, low, _ in boxes) if boxes else 0.0
+    # from the ankle down to the sole, not across the foot and not from the
+    # boot's height. Half the foot's width made a sphere wider than the ankle is
+    # high, its bottom sank below the ground and the engine lifted the whole
+    # character to clear it - the floating feet. Half the boot's height is the
+    # opposite mistake: the sphere then ends midway up the boot, so the engine
+    # drops the biped until that midpoint is on the floor and the feet stand in
+    # it. The sole is the lowest vertex of the body, and the ankle is the foot
+    # node's own origin, so the radius is the distance between the two.
+    inverse = armature.matrix_world.inverted()
+    world = object_data.matrix_world
+    soles = [inverse @ (world @ vertex.co)
+             for vertex in object_data.data.vertices]
+    ground = min(point[2] for point in soles) if soles else 0.0
+    # The ankle is the foot bone's own head, in the same armature space the
+    # sole was measured in. The node block's translation is parent-space, so it
+    # is not the height wanted here.
+    ankle = {bone.name: bone.head_local[2] for bone in armature.data.bones}
     wanted = [("bip01 pelvis", 0.5), ("bip01 l foot", 0.0), ("bip01 r foot", 0.0)]
     spheres = []
     for bone, share in wanted:
@@ -5996,9 +6023,13 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
                 widest = max(high[0] - low[0], high[2] - low[2])
                 spheres.append((node, max(widest * share, 1.0)))
             else:
-                # The ankle sits `high - ground` above the sole; a sphere that
-                # size, centred on the ankle, ends exactly on the ground.
-                spheres.append((node, max((high[2] - ground) * 0.5, 1.0)))
+                # The sphere is centred on the foot node (its marker offset is
+                # zero), so a radius of ankle-minus-sole ends exactly on the
+                # floor and the soles rest there.
+                her = ankle.get(bone)
+                if her is None:
+                    her = high[2]
+                spheres.append((node, max(her - ground, 1.0)))
     if not spheres:
         return []
     out.append("%d" % len(spheres))
