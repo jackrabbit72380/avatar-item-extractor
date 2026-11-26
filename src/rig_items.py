@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v134"
-BUILD = "the arms swing as one piece, and plates stay on the body"
+VERSION = "v138"
+BUILD = "arms hang, feet stand, and it is checked by rendering it"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2115,12 +2115,16 @@ def fit_body_points(points, edges, plan):
     return placed, scale, worst
 
 
-# The bones an arm's plates ride, and how far from the arm's line a plate may
-# sit and still count as part of it. A sleeve is 3-4 units across; a shoulder pad
-# reaches 7, and a plate as far out as that belongs to the shoulder, not the arm.
+# The bones an arm's plates ride, and the tube around the arm's own line that a
+# plate must sit in to travel with the arm: near the shoulder it stops before the
+# torso, far out it allows the length of the glove.
 ARM_GROUPS = ("bip01 l upperarm", "bip01 l forearm", "bip01 l hand",
               "bip01 r upperarm", "bip01 r forearm", "bip01 r hand")
-ARM_TUBE = 6.0
+ARM_ACROSS = 8.0      # how far off the arm line a sleeve plate may sit
+ARM_NEAR = 2.5        # and how far along it a sleeve starts, clear of the pad
+ARM_FAR = 6.0         # past the glove's reach, so the fingers are included
+ARM_CLEAR = 6.0       # out here a plate is arm even if it hangs wide of the line
+ARM_WIDE = 14.0
 
 
 def shell_direction(points):
@@ -2158,6 +2162,20 @@ def shell_direction(points):
     if longest < other * 1.4:
         return None
     return tuple(direction)
+
+
+def segment_distance(point, start_point, end_point):
+    """How far a point is from a bone's own segment, not from its infinite line."""
+    span = fit_between(start_point, end_point)
+    length = fit_length(span)
+    if length < 1e-9:
+        return fit_length(fit_between(start_point, point))
+    step = fit_unit(span)
+    offset = fit_between(start_point, point)
+    along = sum(offset[axis] * step[axis] for axis in range(3))
+    along = max(0.0, min(length, along))
+    nearest = tuple(start_point[axis] + step[axis] * along for axis in range(3))
+    return fit_length(fit_between(nearest, point))
 
 
 def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
@@ -2222,6 +2240,15 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
     # that shoulder to its hand. Turning every plate of an arm by this same
     # rotation keeps the arm together; measuring each plate separately does not.
     arm_turn = {}
+    # Every bone's own segment, in the item's space, so a plate can be asked
+    # which bone it actually sits nearest - geometry, not weights.
+    matrix = armature.matrix_world
+    bone_segments = {}
+    for bone in armature.data.bones:
+        start_point = tuple(matrix @ bone.head_local)
+        end_point = tuple(matrix @ bone.tail_local)
+        if fit_length(fit_between(start_point, end_point)) > 1e-6:
+            bone_segments[bone.name] = (start_point, end_point)
     for side, up, hand in (("l", "bip01 l upperarm", "bip01 l hand"),
                            ("r", "bip01 r upperarm", "bip01 r hand")):
         upper = by_bone.get(up)
@@ -2230,6 +2257,9 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
             continue
         shoulder = upper["source"]
         arm_group = {up, "bip01 %s forearm" % side, hand}
+        # The arm's own reach: the farthest point of any plate that weights to
+        # the arm, from the shoulder. That direction, turned onto Halo's line
+        # from the same shoulder to its hand, is the arm's swing.
         tip, reach = None, 0.0
         for corners_shell in shells.values():
             voted = {}
@@ -2246,7 +2276,6 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
                     reach, tip = far, points[index]
         if tip is None or reach < 8.0:
             continue
-        matrix = armature.matrix_world
         halo = fit_unit(fit_between(tuple(matrix @ armature.data.bones[up].head_local),
                                     tuple(matrix @ wrist.head_local)))
         own = fit_unit(fit_between(shoulder, tip))
@@ -2258,7 +2287,7 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         swing = fit_turn(own, halo)
         if swing is not None:
             for name in arm_group:
-                arm_turn[name] = (shoulder, swing, tip)
+                arm_turn[name] = (shoulder, swing, own, reach)
     placed = list(points)
     turned_shells = 0
     arms_turned = 0
@@ -2291,20 +2320,27 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         # turn produced. So the swing is measured once, from where the arm's
         # plates actually end, and a plate joins the arm only if it sits inside
         # the arm's own tube.
-        if ridden in ARM_GROUPS and arm_turn.get(ridden) is not None:
-            shoulder, swing, tip = arm_turn[ridden]
+        if ridden in arm_turn:
+            shoulder, swing, own_axis, own_length = arm_turn[ridden]
             middle = [sum(points[index][step] for index in corners) / len(corners)
                       for step in range(3)]
+            # Along the arm is the item's own arm line - shoulder towards its own
+            # hand - because that is the pose the plates were shaped in. Across
+            # it is how far off that line a plate sits. A sleeve and a glove are
+            # narrow and start a little way out from the joint; a shoulder pad is
+            # wide and sits right on it. The pad is also modelled for a T-pose,
+            # so swinging it down stands it up as a spike: pads stay on the body,
+            # and everything out along the arm travels with the arm.
             offset = fit_between(shoulder, middle)
-            along = fit_unit(fit_between(shoulder, tip))
-            if along is not None:
-                down = sum(offset[step] * along[step] for step in range(3))
-                across = [offset[step] - along[step] * down for step in range(3)]
-                if (fit_length(across) < ARM_TUBE
-                        and -ARM_TUBE < down < fit_length(fit_between(shoulder, tip))):
-                    turn = swing
-                    centre = shoulder
-                    arms_turned += 1
+            along = sum(offset[axis] * own_axis[axis] for axis in range(3))
+            across = fit_length([offset[axis] - own_axis[axis] * along
+                                 for axis in range(3)])
+            sleeve = ARM_NEAR < along < own_length + ARM_FAR and across < ARM_ACROSS
+            far_out = along >= ARM_CLEAR and across < ARM_WIDE
+            if sleeve or far_out:
+                turn = swing
+                centre = shoulder
+                arms_turned += 1
         # Two ways to place a plate, and they answer different questions.
         #
         # `limbs` also puts the JOINT on its bone and lengthens the limb to
@@ -2357,9 +2393,9 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
     mesh.update()
     tallest = max(point[2] for point in placed)
     lowest = min(point[2] for point in placed)
-    log("arms: %d plate(s) swung with the arm, the rest left on the body "
-        "(only plates inside the arm's own tube of %.1f units move with it)"
-        % (arms_turned, ARM_TUBE))
+    log("arms: %d plate(s) swung with the arm - the sleeve and glove, not the "
+        "shoulder pads, which are shaped for the T-pose and stay put"
+        % arms_turned)
     line = ("%d joints, %d shell(s) %s, worst edge x%.2f, %.2f m tall, "
             "soles at %.2f units"
             % (len(plan), turned_shells,
@@ -5889,7 +5925,12 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
     # is zero. A biped needs them under the feet as well as at the hips: the
     # feet spheres are what it stands on, and without them the origin is the
     # only thing touching the floor and the character sinks into it.
-    wanted = [("bip01 pelvis", 0.5), ("bip01 l foot", 0.75), ("bip01 r foot", 0.75)]
+    # A sphere's bottom is what the biped stands on, so its radius is measured
+    # down to the sole, not across the foot. Half the foot's width made a sphere
+    # far wider than the ankle is high, its bottom sank below the ground, and the
+    # engine lifted the whole character to clear it - the floating feet.
+    ground = min(low[2] for _, low, _ in boxes) if boxes else 0.0
+    wanted = [("bip01 pelvis", 0.5), ("bip01 l foot", 0.0), ("bip01 r foot", 0.0)]
     spheres = []
     for bone, share in wanted:
         node = index_of.get(bone)
@@ -5898,8 +5939,13 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
         for piece, low, high in boxes:
             if piece != node:
                 continue
-            widest = max(high[0] - low[0], high[2] - low[2])
-            spheres.append((node, max(widest * share, 1.0)))
+            if share:
+                widest = max(high[0] - low[0], high[2] - low[2])
+                spheres.append((node, max(widest * share, 1.0)))
+            else:
+                # The ankle sits `high - ground` above the sole; a sphere that
+                # size, centred on the ankle, ends exactly on the ground.
+                spheres.append((node, max((high[2] - ground) * 0.5, 1.0)))
     if not spheres:
         return []
     out.append("%d" % len(spheres))
