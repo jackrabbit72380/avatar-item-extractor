@@ -140,7 +140,7 @@ def sheet_for(materials, uvs, shaders, folder, stem):
 
 
 def render_shaded(points, triangles, uvs, shaders, sheets, target,
-                  size=760, zoom=1.0, background=(18, 20, 26)):
+                  size=760, zoom=1.0, background=(18, 20, 26), focus=None):
     side, level, out = R.basis(target)
     light = tuple(-a for a in target)
     norm = math.sqrt(sum(a * a for a in light)) or 1.0
@@ -152,6 +152,9 @@ def render_shaded(points, triangles, uvs, shaders, sheets, target,
     high = [max(p[a] for p in flat) for a in range(2)]
     span = max(high[0] - low[0], high[1] - low[1]) / zoom or 1.0
     middle = ((low[0] + high[0]) / 2.0, (low[1] + high[1]) / 2.0)
+    if focus is not None:
+        middle = (sum(focus[a] * side[a] for a in range(3)),
+                  sum(focus[a] * level[a] for a in range(3)))
     step = 2
     wide = size * step
     screen = [((a - middle[0]) / span * wide + wide / 2.0,
@@ -234,6 +237,8 @@ def main():
         return 2
     path, folder, out = sys.argv[1], sys.argv[2], sys.argv[3]
     zoom = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0
+    focus = (tuple(float(value) for value in sys.argv[5:8])
+             if len(sys.argv) >= 8 else None)
     os.makedirs(out, exist_ok=True)
     stem = os.path.basename(path).split(" superhigh")[0]
     materials, uvs, shaders = read_uvs_and_materials(path)
@@ -251,7 +256,7 @@ def main():
         posed = [(shaders[k], a, b, c) for k, (a, b, c) in enumerate(corners)]
         for view, target in views.items():
             picture = render_shaded(moved, posed, uvs, shaders, sheets, target,
-                                    zoom=zoom)
+                                    zoom=zoom, focus=focus)
             name = "shaded-%s-%02d-%02d.png" % (view, int(shoulder), int(elbow))
             R.write_png(os.path.join(out, name), 760, 760, picture)
             made += 1
