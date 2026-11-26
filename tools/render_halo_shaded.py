@@ -245,8 +245,12 @@ def main():
     sheets = sheet_for(materials, uvs, shaders, folder, stem)
     '' if sheets else print("no base map found in %s - drawing flat grey" % folder)
     poses = [(0.0, 0.0), (45.0, 45.0), (80.0, 60.0)]
-    views = {"front": (0.0, -1.0, 0.06), "side": (1.0, -0.12, 0.06),
-             "quarter": (0.72, -0.72, 0.30), "back": (0.05, 1.0, 0.06)}
+    # The model looks along +x - it is Halo's own axis - so the camera has to
+    # stand in front of it there. Looking down -y instead showed every build in
+    # profile: the helmet's rim hid the eyes and the near shoulder hid the far
+    # one, and a broken face read as a correct one.
+    views = {"front": (1.0, -0.05, 0.06), "side": (0.05, -1.0, 0.06),
+             "quarter": (0.72, -0.72, 0.30), "back": (-1.0, 0.05, 0.06)}
     made = 0
     for shoulder, elbow in poses:
         names, _rest, moved, weights, corners = R.posed_points(path, shoulder, elbow)
