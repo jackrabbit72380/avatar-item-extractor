@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v123.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v124.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1185,7 +1185,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v123.bat` and
+`Extract UNSC Marine Armor Avatar-v124.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1200,7 +1200,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v123.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v124.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1250,9 +1250,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v123.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v124.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v123.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v124.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
@@ -1390,10 +1390,37 @@ point's better pair can pull its neighbour past the limit, and the best-scoring
 round is what comes out: an earlier version returned whatever the last round
 happened to leave.
 
-Measured on the shipped model: worst edge at 45 and 80 degrees x1.86 and x3.06
-(was x6.74 and x11.14), no edge past x3 at 45 degrees and two at 80 (was 8 and
-36), worst fold x2.37 with none collapsed, split seams 0 at every pose, and the
-arm's vertices still carry 0.71 of the arm's own travel over four bones. The last
-two edges are the strip's own geometry: it is 0.449 units wide and the pad
-travels about five units at eighty degrees, so what is left is spread as thinly
-as the surface allows rather than standing in one tear.
+Measured on the shipped model: worst edge at 45 and 80 degrees x2.50 and x3.77,
+none past x3 at 45 degrees and four at 80, worst fold x2.39 with none collapsed,
+split seams 0 at every pose, and the arm's vertices still carry 0.84 of the arm's
+own travel over four bones. The last two edges are the strip's own geometry: it
+is 0.449 units wide and the pad travels about five units at eighty degrees, so
+what is left is spread as thinly as the surface allows rather than standing in
+one tear. Those two edges read a little worse than the build before this one,
+which had the arms themselves fitted out of place - the pose is an extreme one,
+and the arms now come out of it unbroken, which is worth more than the number.
+
+## Where the item's arms actually are
+
+The armour's skeleton and the armour's mesh disagree about the arms. The file's
+joints put the wrist at y 20.1, z 43.0 - a T-pose - while the mesh is modelled
+with its arms down: the glove reaches y 13.5 at z 25. Fitting the arm from the
+joints therefore anchored the whole hand seven units past the sleeve it was
+supposed to move, and the fit measured an edge x25 longer than it started; the
+glove came out as a rake of spikes and the shoulders as scattered plates.
+
+The arm's joints are now taken from the mesh instead: the shoulder where the
+sleeve leaves the torso, the wrist in the glove, the elbow between them. An item
+that really is modelled in a T-pose gives the same answer, so this is the mesh
+saying where its arm is rather than a special case.
+
+The fit also shares a point between joints with a field that is continuous
+everywhere in space - every joint within twice the nearest one's distance, fading
+to nothing at that window. Taking the four nearest instead hands two points half
+a unit apart different pairs, and the armour is not one shell but many plates
+lying on each other, so each plate took its own ride and fanned off its
+neighbours. Measured, that alone was the difference between a shattered shoulder
+and a whole one, and the fit's worst edge fell from x25.44 to x10.73 - a fold
+0.94 units wide closing to 0.09, not a tear. The shape check now reads 100.0% of
+triangles keeping the item's shape, and the model's worst thin triangle x16
+against the item's own x17.

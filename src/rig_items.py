@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v123"
-BUILD = "2026-11-26 the collar rides the game's own frames"
+VERSION = "v124"
+BUILD = "2026-11-26 the arms are fitted where the item's mesh has them"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -1653,6 +1653,17 @@ BODY_JOINTS = (
 # that joint actually reaches: measured from the mesh, not guessed.
 BODY_FIT_INFLUENCES = 4
 
+# The joints whose geometry is a limb: an upper arm, a forearm, a hand, a
+# thigh, a calf, a foot. These are scaled by their own stretch so the limb keeps
+# its girth when the bone has to reach further than the item's does.
+LIMB_UNIFORM = {2, 3, 6, 8, 11, 15, 20, 22, 25, 28, 33, 36}
+
+# The range a joint's geometry may be stretched about its anchor. The anchors
+# are exact, so this only softens the shear between a short Halo bone and the
+# longer item bone beside it.
+FIT_STRETCH_MIN = 0.8
+FIT_STRETCH_MAX = 1.6
+
 
 def halo_point(joint, fit=1.0):
     """One of the avatar's joints, in Halo's axes and units.
@@ -1754,6 +1765,34 @@ def body_fit_plan(armature, fit=1.0, points=None):
                      "target": tuple(matrix @ bone.head_local), "turn": None,
                      "axis": None, "axial": None, "cap": 0.0})
     by_joint = {entry["joint"]: entry for entry in plan}
+    # The item's skeleton and its own mesh can disagree about where an arm is.
+    # This armour is modelled with the arms down - the glove reaches y 13.5 at
+    # z 25 - while the item's joints put the wrist at y 20.1, z 43.0, which is
+    # a T-pose. Carrying the arm from those joints anchors the whole hand seven
+    # units past the sleeve it is meant to move: the fit measured an edge x25
+    # longer than it started and the glove came out as a rake of spikes. So the
+    # arm's joints are placed on the geometry instead - shoulder where the
+    # sleeve leaves the torso, wrist in the glove, elbow between the two - and
+    # turned onto the biped from there like every other joint. An item whose
+    # mesh really is in a T-pose gives the same answer, so this is not a
+    # special case for one armour: it is the mesh saying where its arm is.
+    for up, down, wrist, side in ((20, 25, 33, 1.0), (22, 28, 36, -1.0)):
+        if not points or up not in by_joint or down not in by_joint:
+            continue
+        if wrist not in by_joint:
+            continue
+        shoulder = by_joint[up]["source"]
+        arm = [point for point in points
+               if point[1] * side > 6.0 and 20.0 < point[2] < shoulder[2] + 1.0
+               and fit_length(fit_between(shoulder, point)) < 30.0]
+        if len(arm) < 24:
+            continue
+        tip = max(arm, key=lambda point: fit_length(fit_between(shoulder, point)))
+        span = fit_between(shoulder, tip)
+        by_joint[down]["source"] = fit_shift(shoulder,
+                                            tuple(value * 0.45 for value in span))
+        by_joint[wrist]["source"] = fit_shift(shoulder,
+                                             tuple(value * 0.88 for value in span))
     for entry in plan:
         beyond = entry["beyond"]
         if beyond is None or beyond not in by_joint:
@@ -1777,6 +1816,7 @@ def body_fit_plan(armature, fit=1.0, points=None):
     if 19 in by_joint:
         by_joint[19]["turn"] = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     for entry in plan:
+        entry.setdefault("scale", None)
         if entry["turn"] is None:
             entry["turn"] = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     leaves = [entry for entry in plan if entry["beyond"] is None]
@@ -1827,24 +1867,65 @@ def fit_body_points(points, edges, plan):
                                              for value in direction)))
 
     def weights_of(point):
-        scored = sorted(((fit_gap(point, first, second), joint)
-                         for joint, (first, second) in segments.items()),
-                        key=lambda pair: pair[0])[:BODY_FIT_INFLUENCES]
-        shares = [(joint, 1.0 / max(gap, 1e-4) ** 2) for gap, joint in scored]
+        """How a point's ride is shared out, continuous everywhere in space.
+
+        Taking the four nearest joints looks equivalent to a smooth field and is
+        not: the fourth nearest can be one joint for a point and another for the
+        point beside it, and the two then ride maps that disagree. That is what
+        fanned the armour's shoulder plates out like scattered cards - they are
+        not one shell but many plates lying on each other, so each plate took a
+        different ride and drifted off its neighbour. A joint therefore counts
+        only within twice the nearest joint's distance and fades to nothing at
+        that window, which leaves no edge for two points to fall either side of.
+        """
+        gaps = sorted(((fit_gap(point, first, second), joint)
+                       for joint, (first, second) in segments.items()),
+                      key=lambda pair: pair[0])
+        if not gaps:
+            return []
+        window = max(gaps[0][0] * 2.0, 1e-3)
+        shares = []
+        for gap, joint in gaps:
+            if gap >= window:
+                break
+            shares.append((joint, (window - gap) ** 2 / max(gap, 1e-4) ** 2))
         total = sum(share for _joint, share in shares) or 1.0
         return [(joint, share / total) for joint, share in shares]
 
-    placed = []
+    trimmed = []
     for point in points:
+        own = weights_of(point)
+        top = sorted(own, key=lambda pair: -pair[1])[:BODY_FIT_INFLUENCES]
+        total = sum(value for _joint, value in top) or 1.0
+        trimmed.append({joint: value / total for joint, value in top})
+
+    placed = []
+    for index, point in enumerate(points):
         moved = [0.0, 0.0, 0.0]
-        for joint, share in weights_of(point):
+        for joint, share in trimmed[index].items():
             entry = by_joint[joint]
             offset = fit_between(entry["source"], point)
             bone_axis = entry["axis"] or (0.0, 0.0, 1.0)
             axial = entry["axial"] if entry["axial"] is not None else scale
+            # A joint's anchor is exact, so how much its geometry is stretched
+            # about that anchor is free to be gentler than the bone lengths ask.
+            # Left raw, Halo's clavicle is 56% of this avatar's shoulder width
+            # and its neck bone 32% of the avatar's neck, so the yoke and the
+            # throat were crushed while the arm beside them stretched x1.43 -
+            # and the plates spanning the two were torn apart. Held near 1 they
+            # still land on their bones and stop shearing their neighbours.
+            axial = max(FIT_STRETCH_MIN, min(FIT_STRETCH_MAX, axial))
+            # A limb is stretched along its bone to reach Halo's joint: the
+            # item's arm is 18 units to Halo's 22, so the sleeve is drawn out
+            # x1.4 while its girth stays at the body's x1.195. That is a limb
+            # x1.4 long and x1.2 thick - the stick arms the picture shows. Its
+            # girth is taken up between the two, the geometric mean, so the arm
+            # keeps most of its roundness without growing a shoulder thicker
+            # than the body it hangs from.
+            side = (axial * scale) ** 0.5 if entry["joint"] in LIMB_UNIFORM else scale
             along = sum(offset[i] * bone_axis[i] for i in range(3))
             stretched = tuple(bone_axis[i] * along * axial
-                              + (offset[i] - bone_axis[i] * along) * scale
+                              + (offset[i] - bone_axis[i] * along) * side
                               for i in range(3))
             turned = fit_turned(entry["turn"], stretched)
             for axis in range(3):
