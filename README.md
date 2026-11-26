@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v144.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v145.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -614,9 +614,9 @@ suit can be built with the decal or without it.
     `tools/tint_preview.py` writes the base map out under a few team colours
     beside the mask, so an authored mask can be judged before it is compiled.
     The one-click .bat takes the same choice without a command line: a file
-    named `tint_mask.png` beside it becomes `--tint` that file, and
-    `tint_mode.txt` can say `full` or `derived` instead. With neither, nothing
-    tints and the report says why.
+    named `tint_mask.png` beside it becomes `--tint` that file. There is no
+    text file to set a mode - nobody using a one-click program is going to
+    type one - so without that mask nothing tints and the report says why.
 
     The slot beside the tint mask (parameter id 3) is a **decal**: artwork blended
     over the base map by its own alpha, a tee's logo. It is never read as a mask.
@@ -644,9 +644,11 @@ suit can be built with the decal or without it.
 
     The `.png` is 1024x1024 and a few kilobytes; the `.tga` and `.tif` are the same
     mask at 256, because uncompressed at 1024 they are 4 MB each and 256 is what a
-    bitmap compiled by `tool.exe` uses anyway. Detail, specular and
-    self-illumination are zero, because an item does not say which parts are
-    shiny, glow or take a detail map, and inventing that would be a guess.
+    bitmap compiled by `tool.exe` uses anyway.     Detail, specular and
+    self-illumination start empty, because an item does not say which parts are
+    shiny, glow or take a detail map, and inventing that would be a guess. The
+    shine is the one rule the carrier adds on its own (below); detail and glow
+    only come from a picture you supply.
 
     The mask is read in **the base map's UV set**, because that is the space the
     shader samples it in. A tint mask painted in another set is decided by where
@@ -715,9 +717,10 @@ paints red itself.
 **Detail maps.** Put `detail.png` beside the `.bat` and it becomes
 `<item> detail` in all three formats; `detail_mask.png` says where it shows
 (white = detail), and without one the mask is the texels the item paints.
-`detail_mode.txt` holding `derived` builds a detail map from the item's own base
-map instead - its luminance against a blurred copy of itself, on the painted
-texels. That is a rule, not art the item shipped, and `report.txt` says so. The
+On the command line `--detail derived` builds one from the item's own base map
+instead - its luminance against a blurred copy of itself, on the painted texels
+- but the one-click `.bat` takes pictures only, never text files. A derived map
+is a rule, not art the item shipped, and `report.txt` says so. The
 multipurpose map's red channel is written from the mask, and `report.txt` gives
 the tag settings: detail map, detail mask = multipurpose map alpha *which is
 really red here*, detail map scale 1-4, and the fact that H1X's "detail after
@@ -738,11 +741,10 @@ times the suit.
 masks from the multipurpose map's **blue** (specular/reflection, with a cube map
 showing through it) and **green** (self-illumination). Nothing this build reads
 out of an avatar item's slots is either of them, so they are authored or
-derived, never invented silently: `shine_mask.png` (or `shine_mode.txt`
-containing `derived`, which reads a specular mask off the base map by the same
-armour/cloth split the team colour uses) lands in blue, and `glow_mask.png`
-lands in green. Both are also written beside the item as lookable masks, and
-`report.txt` says which was used.
+derived, never invented silently: `shine_mask.png` lands in blue, and
+`glow_mask.png` lands in green. Both are pictures, because that is what an
+artist makes anyway; the carrier reads no text files. Each mask is also written
+beside the item so it can be looked at, and `report.txt` says which was used.
 
 For the shine itself, use the **same cube map the stock cyborg (Master Chief)
 armour shader uses, in both its SP and its MP version** — copy the reference out
@@ -765,8 +767,16 @@ the usual case for an armour item, whose paint the multiplayer version whitens s
 the team colour shows — is one material, so the whole body counts as plate and
 reflects; a flat black map stays black. A varied map is decided texel by texel.
 
-`shine_mask.png` hand-paints where the reflection sits instead, and
-`shine_mode.txt` holding `off` leaves it matte.
+`shine_mask.png` hand-paints where the reflection sits instead; on the command
+line `--shine off` leaves it matte.
+
+**What glows.** On this suit, nothing. The Marine armour is paint, not lamps: an
+avatar item carries no self-illumination map, and the body sheet is a flat
+colour, so the multipurpose map's green channel is written empty and no lights
+are invented. `report.txt` says so in its `glow:` line. If you want lamps the
+item does not have - a visor strip, a backpack light, whatever the paint job
+suggests - paint them white on `glow_mask.png` beside the `.bat`, and they will
+light up in the dark without a light source.
 
 None of this is measured in game: there is no `tool.exe` here, so the tag
 settings above are from the documented channel behaviour, not from a compiled
@@ -870,11 +880,11 @@ The armour is not touched. With and without `--port` its geometry comes out
 identical to the last bit - all 4,876 triangles, 0.000000 units of movement -
 because the fit is driven by joints, and the head only supplies one more cap.
 
-With `MyAvatar.glb` beside the `.bat`, `--keep-shape` and `--eyes-forward` are
-asked for as well, because those are the two things that keep the model looking
-like the avatar it came from: its own proportions, and pupils drawn in the
-middle of its eyes. `keep_shape.txt` and `eyes_forward.txt` still request them
-on their own, and `rig_items.py` run without the flags gives the plain fit.
+With `MyAvatar.glb` beside the `.bat` the head is ported and `--eyes-forward`
+is asked for as well, because a painted pupil sits wherever the artist left it
+and under a helmet he looks there in every frame; the flag draws the eye again
+with its pupil in the middle. The flags are still there for `rig_items.py` run
+by hand - there is no text file beside the `.bat` to ask for them.
 
 `--port` is used only for a whole body, an item that reaches 1.45 m or more. A
 hat or a tee is worn on the catalogue's body, which brings its own head, and two
@@ -900,8 +910,8 @@ off: a lid left behind by a removed pupil is a hairline where a bold, sharp
 stroke was painted. The eye is drawn at 512 texels too - about seventy by
 twenty of them - so cutting it about a texel at a time leaves a staircase,
 which is what the earlier attempts looked like on the head.
-`--eyes-forward` (or an `eyes_forward.txt` beside the `.bat`) therefore measures
-the drawing and draws it again, finer:
+`--eyes-forward` (which the `.bat` passes whenever an avatar is beside it)
+therefore measures the drawing and draws it again, finer:
 
   * the lash's centre line is a curve fitted through the stroke's painted top
     edge, so it keeps the shape it was drawn with and loses the steps,
@@ -976,8 +986,8 @@ Both are single factors on all three axes, so nothing is squashed. What the old
 code did until v70 was scale the whole model by the *item's* height instead of
 the avatar's, which turned a 1.85 m avatar into 1.45 m.
 
-A `keep_shape.txt` beside the `.bat` asks for it on a double-click, the way
-`tint_mask.png` asks for a team-colour mask.
+`--keep-shape` on the `rig_items.py` command line is the same switch; the
+`.bat` reads no text files, so there is nothing to put beside it for this.
 
 The trade is honest and worth stating plainly: the joint fit exists so that the
 mesh's joints sit on the bones Halo animates, and `--keep-shape` does not do
@@ -1274,7 +1284,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v144.bat` and
+`Extract UNSC Marine Armor Avatar-v145.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1289,7 +1299,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v144.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v145.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1339,9 +1349,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v144.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v145.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v144.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v145.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
@@ -1615,8 +1625,8 @@ What it costs is honest and visible: plates are rigid, so where two plates meet
 at a joint that has turned - the sleeve and the shoulder pad - they open a gap
 instead of stretching over it. That is what armour does, and it is the same gap
 the game's own arm-down frame produces, done once at build time instead of every
-frame. A `t_pose.txt` beside the `.bat` turns the pass off and leaves the mesh
-exactly as the item authored it.
+frame. `--t-pose` on the `rig_items.py` command line turns the pass off and
+leaves the mesh exactly as the item authored it.
 
 **Exporting the avatar in another pose does not change this.** The suit's arms
 come from the item's own model, which is authored in the T-pose; the avatar
@@ -1624,7 +1634,7 @@ export only supplies the head, face and neck, and those are one rigid shell that
 the head bone turns by nothing. So the pose is answered in the build, not in the
 `.glb` - any pose exported from 360sona gives the same suit.
 
-### Fitting the limbs onto Halo's bones (fit_limbs.txt)
+### Fitting the limbs onto Halo's bones (`--fit-limbs`)
 
 Turning the body into Halo's pose keeps every plate's shape and size, so the
 avatar's own proportions survive - and that is also its limit: this avatar's arms
@@ -1633,13 +1643,13 @@ bone sits outside the sleeve and Halo's hand bone reaches past the glove. A
 weapon is placed from the hand node, so it comes to rest at the wrist where the
 glove is, not out at Halo's fingertips.
 
-`fit_limbs.txt` beside the `.bat` asks for the other answer: each plate is also
+`--fit-limbs` on the command line asks for the other answer: each plate is also
 slid so its joint sits on the bone head and stretched along the bone by the
 bone-length ratio, girth untouched - a sleeve that is longer without being
 fatter. It was built and measured, and it is **not** the default, because on
 this avatar it costs more than it gives:
 
-| | pose only (default) | fit limbs (`fit_limbs.txt`) |
+| | pose only (default) | fit limbs (`--fit-limbs`) |
 |---|---|---|
 | triangles still the item's shape | **99.8%** | 39.9% |
 | worst edge while standing the body | **x1.00** | x1.50 |

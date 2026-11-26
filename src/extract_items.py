@@ -2099,6 +2099,12 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
         lines.append("           Guerilla: the multipurpose map's GREEN channel is"
                      " the self-illumination mask; white lights up in the dark"
                      " without a light source")
+    else:
+        lines.append("glow:      none - nothing on this armour lights up. An avatar")
+        lines.append("           item carries no self-illumination map, so the")
+        lines.append("           multipurpose map's GREEN channel stays empty and no")
+        lines.append("           lights are invented. glow_mask.png beside the .bat adds")
+        lines.append("           them if you want any: white lights up.")
     team = facts.get("team_colour_base") or {}
     if team.get("tif"):
         lines.append("team colour: %s - the item's base map with the tinted texels"
@@ -2156,9 +2162,11 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
     lines.append("  means the item states no team colour, so the multiplayer build")
     lines.append("  tints the whole item and the single-player map masks nothing.")
     lines.append("  The decal (id 3) is artwork blended over the base map by its")
-    lines.append("  alpha, never a mask. Detail, specular and self-illumination are")
-    lines.append("  zero: an item does not say which parts are shiny, glow or take a")
-    lines.append("  detail map.")
+    lines.append("  alpha, never a mask. Detail, specular and self-illumination")
+    lines.append("  start empty, because an item does not say which parts are shiny,")
+    lines.append("  glow or take a detail map, and none is invented: the shine above")
+    lines.append("  comes from the colour rule, and detail and glow only from a")
+    lines.append("  picture supplied with the build.")
     lines.append("")
     lines.append("  The .png and .tga show the colour change in colour as well as in its")
     lines.append("  channel, so they can be looked at. The .tif in bitmaps\\ is the file")
