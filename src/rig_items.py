@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v158"
-BUILD = "report.txt names the shader the face needs"
+VERSION = "v159"
+BUILD = "the sleeve is held by the arm, not the shoulder"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5334,6 +5334,78 @@ def transfer_from_body(weights, mesh, ported, world):
     return weights, copied
 
 
+ARM_CHAIN = ("upperarm", "forearm", "hand")
+CLAVICLES = ("bip01 l clavicle", "bip01 r clavicle")
+
+
+def hold_the_arm(weights, mesh, segments, world):
+    """A plate that hangs out along the arm rides the arm, not the shoulder.
+
+    Distance alone hands the sleeve to the clavicle: Halo's clavicle runs from
+    y 5.98 to 9.02 at the shoulder, and the plates that cover the deltoid are
+    nearer that short segment than the upper arm's, which starts where the
+    clavicle ends. It is the wrong answer for a plate that sits past the joint -
+    the clavicle barely turns, so in game the arm swings out of its own sleeve
+    and the plates are left behind.
+
+    So the plates a shell holds are looked at one shell at a time: a shell out
+    past the clavicle's tail whose weight is its clavicle's is handed to the arm
+    bone nearest it. Whole shells, never vertices: a cut across a continuous
+    sleeve is a tear, and a shell with its own edge cannot tear from anything.
+    """
+    if not all(name in segments for name in CLAVICLES):
+        return weights, 0
+    chains = {}
+    for side in ("l", "r"):
+        names = ["bip01 %s %s" % (side, part) for part in ARM_CHAIN]
+        if all(name in segments for name in names):
+            chains[side] = names
+    if not chains:
+        return weights, 0
+    root = list(range(len(mesh.vertices)))
+
+    def shell_of(index):
+        while root[index] != index:
+            root[index] = root[root[index]]
+            index = root[index]
+        return index
+
+    for edge in mesh.edges:
+        one, two = edge.vertices
+        first, second = shell_of(one), shell_of(two)
+        if first != second:
+            root[first] = second
+    shells = {}
+    for vertex in mesh.vertices:
+        shells.setdefault(shell_of(vertex.index), []).append(vertex.index)
+    moved = 0
+    for indices in shells.values():
+        if len(indices) > 2000:
+            continue
+        owning = {}
+        for index in indices:
+            for name, weight in weights[index].items():
+                owning[name] = owning.get(name, 0.0) + weight
+        if not owning:
+            continue
+        shoulder = max(owning, key=owning.get)
+        if shoulder not in CLAVICLES:
+            continue
+        spots = [world @ mesh.vertices[index].co for index in indices]
+        centre = sum(spots, Vector()) / len(spots)
+        if abs(centre.y) < abs(segments[shoulder][1].y) - 0.5:
+            continue
+        chain = chains.get("l" if centre.y > 0 else "r")
+        if not chain:
+            continue
+        arm = min(chain, key=lambda name: point_segment_distance(
+            centre, *segments[name]))
+        for index in indices:
+            weights[index] = {arm: 1.0}
+        moved += 1
+    return weights, moved
+
+
 def skin(object_data, armature, influences=2, rigid=False, given=None):
     """Distance weighting against the biped, so shells and open meshes work.
 
@@ -5452,6 +5524,11 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
                 "deformation - %d round(s) over %d body poses, until no edge "
                 "stretched past x%.1f"
                 % (object_data.name, chosen, len(halo_pose.BODY_POSES), TEAR_LIMIT))
+        weights, held = hold_the_arm(weights, mesh, segments, world)
+        if held:
+            log("%s: %d shell(s) out along the arm were held by the clavicle - "
+                "the shoulder bone barely turns, so they now ride the arm bone "
+                "nearest them, whole" % (object_data.name, held))
         groups = {name: object_data.vertex_groups.new(name=name) for name in names}
         tally = {}
         for index, own in enumerate(weights):
