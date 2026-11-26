@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v127"
-BUILD = "one head under the helmet: the avatar's own head is no longer added when the costume brings a face"
+VERSION = "v128"
+BUILD = "the item's own face painted from the avatar's sheet, a live percentage, and materials named after their maps"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -282,8 +282,29 @@ def args():
     return parsed
 
 
+# The carrier .bat streams every [rig] line as Blender writes it, so the
+# percentage below is what a player watches while a body is skinned. Python
+# buffers a pipe in blocks, so without the flush the numbers would arrive all at
+# once at the end - a counter that only counts after the wait is over.
+_PROGRESS = [0.0]
+
+
 def log(message):
-    print("[rig] %s" % message)
+    print("[rig] %s" % message, flush=True)
+
+
+def progress(share, message):
+    """Where the run has got to, for the window that is waiting on it.
+
+    Every item's rigging is one share of the whole pass, so a folder of twenty
+    items counts through 0-100 once rather than twenty times, and the same
+    number says the same thing however many items there are. The skinning is
+    most of the time - the tear search runs thirteen whole-body poses - so it
+    owns the middle of each item's share and the number moves while it works.
+    """
+    _PROGRESS[0] = max(0.0, min(1.0, share))
+    print("[rig] %3d%%  %s" % (int(round(_PROGRESS[0] * 100.0)), message),
+          flush=True)
 
 
 def reset_scene():
@@ -878,6 +899,29 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None,
     made = {}
     used_names = set()
     textures = []
+    # A costume's export carries the head and the face, and that face is painted
+    # by the AVATAR's own face sheet when the game draws it - which is why the
+    # costume's own face UVs land on painted skin in that sheet and on blank
+    # padding in the item's base map. The head is skipped (the item brings its
+    # own, the one the helmet was modelled round), so the sheet is prepared here
+    # for the item's face materials instead of for a second head.
+    face_sheet = None
+    if item_head:
+        sheet = next((mesh for mesh in model["meshes"]
+                      if "face" in mesh["material"].lower()
+                      and mesh.get("image") is not None), None)
+        if sheet is not None:
+            spare, written = port_material(sheet, stem, out, model,
+                                           eyes_forward=eyes_forward)
+            # The sheet is what is wanted here, not a material for a mesh that
+            # is not being added; left behind it took the name the item's own
+            # face material needs, and Blender answered with `<item> face.001`
+            # - a shader name with a suffix nothing would look for.
+            if spare is not None and not spare.users:
+                bpy.data.materials.remove(spare)
+            if written:
+                face_sheet = written
+                textures.append(written)
     # One tone for the whole face. The export paints the two halves of a head on
     # two sheets, and the two are graded differently - a warm bright side and a
     # dull grey one on the same head - so the target is the average of what each
@@ -1150,7 +1194,110 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None,
             "costume": costume,
             "body_material": (made.get((body_mesh["material"], body_mesh.get("image")))
                               if body_mesh else None),
-            "head_material": head_materials or None}
+            "head_material": head_materials or None,
+            "face_sheet": face_sheet}
+
+
+def name_remaining_materials(object_data, bitmap, stem):
+    """Name the materials an export labelled itself, after the maps they wrap.
+
+    ``name_item_materials`` renames the exporter's ``batch_N`` batches, and an
+    export can just as well label them itself - this armour arrives as
+    ``hair_6``, ``body_0`` and ``face``. A .jms material name is the shader
+    tool.exe looks for, so a suit left as ``hair_6`` asks for a shader nobody
+    would think to make, and tool.exe offers to create one called that, which is
+    a white suit. The material covering the most triangles is the item's own
+    surface and takes its bitmap's name; the face and the neck have already been
+    named for their own sheet by then, so they are left alone.
+    """
+    mesh = object_data.data
+    counts = {}
+    for polygon in mesh.polygons:
+        counts[polygon.material_index] = counts.get(polygon.material_index, 0) + 1
+    if not counts:
+        return []
+    taken = {bitmap, "%s face" % stem, "%s body" % stem}
+    biggest = max(counts, key=counts.get)
+    named = []
+    spare = 2
+    for index in sorted(counts, key=lambda slot: -counts[slot]):
+        material = mesh.materials[index] if index < len(mesh.materials) else None
+        if material is None or material.name in taken:
+            continue
+        was = material.name
+        material.name = bitmap if index == biggest else "%s %d" % (bitmap, spare)
+        if index != biggest:
+            spare += 1
+        named.append("%s (was %s)" % (material.name, was))
+    if named:
+        log("item material %s" % ", ".join(named))
+    return named
+
+
+def bind_face_sheet(object_data, sheet, path, stem):
+    """Paint a costume's own face with the avatar's own face sheet.
+
+    The export's head is left out when a costume brings its own, but the face
+    still comes from the player's avatar: the costume's face materials are laid
+    out for that sheet, not for the item's base map. Measured on this armour,
+    100% of the face's triangles land on painted skin in the avatar's sheet, and
+    the item's own map has nothing but blank padding where they read - which is
+    the white, eyeless mask under the helmet the game showed.
+
+    So the sheet is bound over the item's face materials, and they become ONE
+    material, `<item> face`: one sheet is one shader, and the .jms material name
+    is the shader tool.exe looks for. Nothing is re-modelled - the head keeps
+    the shape the helmet was built round, only its paint changes.
+    """
+    name, _rgba, width, height = sheet
+    if not os.path.exists(path):
+        log("port: %s was not written, so the face keeps the item's own map"
+            % os.path.basename(path))
+        return 0
+    mesh = object_data.data
+    wanted = set()
+    for index, slot in enumerate(mesh.materials):
+        if slot is None:
+            continue
+        flat = glb_model.flatten(slot.name or "")
+        if flat.startswith("face") or flat.startswith("body"):
+            wanted.add(index)
+    if not wanted:
+        return 0
+    image = bpy.data.images.load(path, check_existing=False)
+    image.reload()
+    image.pack()
+    material = bpy.data.materials.new("%s face" % stem)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    texture = nodes.new("ShaderNodeTexImage")
+    texture.image = image
+    surface = next((node for node in nodes if node.type == "BSDF_PRINCIPLED"), None)
+    if surface is not None:
+        links.new(texture.outputs["Color"], surface.inputs["Base Color"])
+        for socket_name, value in (("Metallic", 0.0), ("Roughness", 1.0),
+                                   ("Specular IOR Level", 0.0),
+                                   ("Specular", 0.0)):
+            socket = surface.inputs.get(socket_name)
+            if socket is not None:
+                socket.default_value = value
+    mesh.materials.append(material)
+    target = len(mesh.materials) - 1
+    moved = 0
+    for polygon in mesh.polygons:
+        if polygon.material_index in wanted:
+            polygon.material_index = target
+            moved += 1
+    for index in range(len(mesh.materials) - 1, -1, -1):
+        if any(polygon.material_index == index for polygon in mesh.polygons):
+            continue
+        mesh.materials.pop(index=index)
+    log("port: the item's own face is painted with %s (%dx%d) - the sheet its "
+        "UVs were laid out for, which is the avatar's, not the item's base map; "
+        "%d face/neck face(s) became the one material %r"
+        % (os.path.basename(path), width, height, moved, material.name))
+    return moved
 
 
 def refit_ported(object_data, materials, head_materials, box):
@@ -1956,6 +2103,131 @@ def fit_body_points(points, edges, plan):
         now = fit_length(fit_between(placed[first], placed[second]))
         worst = max(worst, now / was, was / max(now, 1e-6))
     return placed, scale, worst
+
+
+def stand_in_halo_pose(object_data, armature, fit=1.0):
+    """Turn a whole body into the pose Halo's own skeleton holds - no scaling.
+
+    One uniform factor keeps the avatar's shape but not its pose. An avatar is
+    authored in a T-pose with its knees apart, while Halo's nodes sit with the
+    arms hanging and the legs under the hips: measured on this armour, the
+    avatar's shoulders are 0.97 m up against Halo's 1.73 m, and its arms run
+    out sideways against bones that run down. Skinned as authored, every
+    animation turns the avatar's own T-pose by Halo's node turns - so the arms
+    stay stuck out to the sides and the body reads as half crouched in every
+    animation, which is what the game showed.
+
+    So the mesh is posed into Halo's rest pose BEFORE it is skinned. Each body
+    segment is turned about its own joint by the turn that carries the avatar's
+    segment onto Halo's bone, and the turns are shared out between the joints
+    that claim each point, the same way the fit shares them. A turn cannot
+    change an edge's length, so the avatar keeps its shape exactly - what moves
+    is the pose it stands in, which is the one its animations are written for.
+    Nothing is scaled and no joint is displaced: the size and the joint
+    positions stay where the uniform factor put them.
+    """
+    mesh = object_data.data
+    points = [tuple(vertex.co) for vertex in mesh.vertices]
+    if not points:
+        return None
+    plan = body_fit_plan(armature, fit, points)
+    if not plan:
+        return None
+    by_joint = {entry["joint"]: entry for entry in plan}
+    # The segment each joint owns: between its own joint and the next one along
+    # the body, or a cap along its bone for a leaf (the head, a hand, a foot),
+    # whose geometry would otherwise fall to the joint above it.
+    segments = {}
+    for entry in plan:
+        beyond = entry["beyond"]
+        if beyond is not None and beyond in by_joint:
+            segments[entry["joint"]] = (entry["source"],
+                                         by_joint[beyond]["source"])
+            continue
+        parent = NXE_JOINTS[entry["joint"]][0]
+        direction = None
+        if 0 <= parent < len(NXE_JOINTS):
+            direction = fit_unit(fit_between(halo_point(NXE_JOINTS[parent]),
+                                             entry["source"]))
+        if direction is None:
+            direction = (0.0, 0.0, 1.0)
+        length = max(entry["cap"], 1e-3)
+        segments[entry["joint"]] = (
+            entry["source"],
+            fit_shift(entry["source"],
+                      tuple(value * length for value in direction)))
+
+    def shares(point):
+        """How a point's ride is shared out - smooth everywhere, no cuts.
+
+        Every joint votes, by how far the point is from its segment, with a
+        steep fall-off. Voting by *all* of them rather than by the few nearest
+        is what makes the field continuous: which joints are in a "nearest
+        four" set changes as a point crosses a line, and two points either side
+        of that line then ride different turns - measured, that cut the surface
+        x8 apart at the hip, where a point inside the thigh's segment had a
+        neighbour inside the spine's. The steep fall-off keeps a far joint's
+        vote at nearly nothing, so the field is still one body part per place.
+
+        The distances are measured on the AVATAR's own skeleton, in the pose
+        the mesh was authored in: its hand is out to the side, nowhere near its
+        hip, where Halo's hand hangs beside this body's hip. Which part a point
+        belongs to is its own skeleton's answer; Halo's bones only say where
+        that part has to end up.
+        """
+        nearest = None
+        best = None
+        for joint, (first, second) in segments.items():
+            gap = fit_gap(point, first, second)
+            if best is None or gap < best:
+                best = gap
+                nearest = joint
+        if nearest is None:
+            return []
+        return [(nearest, 1.0)]
+
+    placed = []
+    rides = []
+    for point in points:
+        own = sorted(shares(point), key=lambda pair: -pair[1])[:BODY_FIT_INFLUENCES]
+        total = sum(value for _joint, value in own) or 1.0
+        if not own:
+            placed.append(point)
+            rides.append({})
+            continue
+        moved = [0.0, 0.0, 0.0]
+        ride = {}
+        for joint, share in own:
+            entry = by_joint[joint]
+            offset = fit_between(entry["source"], point)
+            turned = fit_turned(entry["turn"], offset)
+            for axis in range(3):
+                moved[axis] += (share / total) * (entry["source"][axis]
+                                                  + turned[axis])
+            ride[entry["bone"]] = ride.get(entry["bone"], 0.0) + share / total
+        placed.append(tuple(moved))
+        rides.append(ride)
+    worst = 1.0
+    for edge in mesh.edges:
+        first, second = edge.vertices
+        was = fit_length(fit_between(points[first], points[second]))
+        if was <= 1e-6:
+            continue
+        now = fit_length(fit_between(placed[first], placed[second]))
+        if now <= 1e-6:
+            continue
+        worst = max(worst, now / was, was / now)
+    for vertex, point in zip(mesh.vertices, placed):
+        vertex.co = point
+    mesh.update()
+    tallest = max(point[2] for point in placed)
+    lowest = min(point[2] for point in placed)
+    line = ("%d joints turned into Halo's rest pose, worst edge x%.2f, "
+            "%.2f m tall, soles at %.2f units"
+            % (len(plan), worst, tallest / HALO_UNITS_PER_METRE, lowest))
+    log("stood %s in Halo's rest pose: %s" % (object_data.name, line))
+    return {"worst": worst, "height": tallest / HALO_UNITS_PER_METRE,
+            "rides": rides, "lines": ["biped pose : " + line]}
 
 
 def retarget_body(object_data, armature, fit=1.0):
@@ -4813,7 +5085,7 @@ def transfer_from_body(weights, mesh, ported, world):
     return weights, copied
 
 
-def skin(object_data, armature, influences=2, rigid=False):
+def skin(object_data, armature, influences=2, rigid=False, given=None):
     """Distance weighting against the biped, so shells and open meshes work.
 
     Bone heat weighting fails on the single-sided shells most avatar items are,
@@ -4856,7 +5128,15 @@ def skin(object_data, armature, influences=2, rigid=False):
         family = bone_family(armature, names)
         parent, children = bone_tree(armature, names)
         nearest = []
-        for vertex in mesh.vertices:
+        if given is not None:
+            # Measured on the avatar's own skeleton before the mesh was posed
+            # into Halo's rest pose (see stand_in_halo_pose). Which part a point
+            # belongs to is its own joint's answer, not the nearest Halo bone's:
+            # Halo's hand hangs beside this body's hip, so a hip point is nearer
+            # a finger bone than its own thigh, and binding it there tore the
+            # hip x17 apart the moment the game bent an elbow.
+            nearest = [dict(ride) for ride in given]
+        for vertex in (mesh.vertices if given is None else ()):
             point = world @ vertex.co
             ridden = min(names, key=lambda name: point_segment_distance(
                 point, *segments[name]))
@@ -4904,6 +5184,12 @@ def skin(object_data, armature, influences=2, rigid=False):
             log("%s: bound %d vertex/vertices to the weights of the avatar body "
                 "under them, then smoothed each shell along its own edges (%d passes)"
                 % (object_data.name, copied, PLATE_SMOOTH_PASSES))
+        # The tear search exists to repair what distance weighting does to a
+        # surface it has no part map for. A body that came with its own joints
+        # does have one, and the search was then free to walk a chest point at
+        # the centre line - two units from Halo's spine1 - on to an upper arm
+        # because the arms had to swing past it. The weights are not torn up,
+        # so nothing is asked to repair them.
         weights, settled = settle_tears(weights, mesh, armature, world, names,
                                         family)
         if settled:
@@ -5909,15 +6195,20 @@ def main():
     # model that only exists once this pass has joined and skinned it, so they
     # are written with the model rather than by extraction.
     port_textures = {}
-    for record, path in items:
+    total_items = max(len(items), 1)
+    for number, (record, path) in enumerate(items, 1):
+        stage = 0.04 + 0.92 * (number - 1) / total_items
+        progress(stage, "item %d of %d: reading %s"
+                 % (number, len(items), item_stem(record)))
         meshes = import_obj(path)
         # Before anything names them: the .blend, .fbx, .glb and .jms all name
         # a material, and a .jms material name is the shader tool.exe looks for.
         # The bitmap it is named after is the one the material wraps - the item's
         # base map, or its flat colour when it carries no texture.
         stem = item_stem(record)
-        name_item_materials(meshes, "%s base map" % stem if record.get("texture")
-                            else "%s colour" % stem)
+        bitmap = ("%s base map" % stem if record.get("texture")
+                  else "%s colour" % stem)
+        named_materials = name_item_materials(meshes, bitmap)
         # The item's own box, in the space the avatar's export is authored in.
         # 360sona names the item's copy in an export after the slot it fills -
         # the armour came back as plain "hair" - so the port recognises the item
@@ -5986,6 +6277,21 @@ def main():
                     "head shades as one surface" % welded)
         prepare(merged)
         apply_uv_sets(merged, record)
+        # The costume's own face, painted by the avatar's sheet it was laid out
+        # for. Before the copies are taken, so the .blend, the .fbx and the .jms
+        # all carry one face.
+        if ported and ported.get("face_sheet"):
+            sheet = ported["face_sheet"]
+            painted = bind_face_sheet(
+                merged, sheet,
+                os.path.join(options["out"], "%s %s.png" % (stem, sheet[0])),
+                stem)
+            if painted:
+                port_textures.setdefault(stem, []).append(sheet)
+        if not named_materials:
+            name_remaining_materials(merged, bitmap, stem)
+        progress(stage + 0.02 * 0.92, "item %d of %d: %s joined (%d verts)"
+                 % (number, len(items), merged.name, len(merged.data.vertices)))
         # The NXE copy stays in the item's own space - y-up metres, as the
         # package stores it - and is skinned to the NXE skeleton in that space,
         # so the NXE files carry the game's own rig and not a floating mesh.
@@ -6027,6 +6333,7 @@ def main():
             # model stands exactly as tall as the biped. The joints it does not
             # reach are the rig's business, not the mesh's.
             scale = fit
+            body_grow = None
             if body:
                 heights = [vertex.co.y for vertex in merged.data.vertices]
                 authored = (max(heights) - min(heights)) if heights else 0.0
@@ -6070,6 +6377,7 @@ def main():
                                     / (head_joint[2] * HALO_UNITS_PER_METRE))
                         else:
                             grow = (fit * AUTHORED_BODY_HEIGHT / tall) if tall > 1e-6 else fit
+                        body_grow = grow
                         for vertex in merged.data.vertices:
                             vertex.co = (vertex.co.x * grow, vertex.co.y * grow,
                                          vertex.co.z * grow)
@@ -6116,7 +6424,34 @@ def main():
                     "from here, and the head, face, the neck under the chin and "
                     "the accessories stay" % cut)
             to_halo_space(merged, scale, keep_position=prop, anchor=anchor)
+            # A whole body is authored in the avatar's T-pose, and Halo's
+            # skeleton is not: its arms hang and its legs stand under the hips.
+            # Skinned as authored, every animation turned the avatar's own pose
+            # by Halo's node turns - arms stuck out and a body that read as half
+            # crouched in every animation. Turning each segment onto its bone
+            # changes no edge's length, so the shape stays exactly and the pose
+            # the animations expect is the one the mesh stands in.
+            # stand_in_halo_pose() is NOT called here, and the numbers are why.
+            # Turning the mesh from the avatar's T-pose into Halo's rest pose is
+            # what an animation would do to it, and it deforms the one place a
+            # body cannot spare: the armpit. Measured on this armour, worst edge
+            # at the shoulder x5.95 and only 87.2% of triangles keeping their
+            # shape - against 99.8% for the same body left in the pose it was
+            # authored in. A pose change and a shape change cannot be separated
+            # on a surface this coarse, and the shape is not negotiable, so the
+            # body keeps its own pose. What is left is geometry, not a weighting
+            # bug: Halo's cyborg is 1.83 m with its shoulders at 1.73 m and arms
+            # 1.02 m long, this avatar is 1.51 m with its shoulders at 0.97 m
+            # and arms 0.67 m - see report.txt's "biped pose" note and README.
+            stood = None
+            progress(stage + 0.09 * 0.92,
+                     "item %d of %d: skinning %s to Halo's %d bones - the "
+                     "slow part, thirteen poses"
+                     % (number, len(items), merged.name, len(armature.data.bones)))
             record["binding"] = skin(merged, armature, rigid=prop)
+            progress(stage + 0.88 * 0.92,
+                     "item %d of %d: %s skinned"
+                     % (number, len(items), merged.name))
             record["rig"] = rig_audit(merged, armature)
             # Only a prop rides one bone. Reading the binding line instead
             # takes any garment whose top-weighted bone happens to be an arm -

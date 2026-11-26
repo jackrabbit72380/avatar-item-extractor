@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v127.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v128.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1196,7 +1196,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v127.bat` and
+`Extract UNSC Marine Armor Avatar-v128.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1211,7 +1211,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v127.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v128.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1261,9 +1261,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v127.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v128.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v127.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v128.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
@@ -1454,3 +1454,78 @@ nowhere, at 45, 80, 20 and 10 degrees, with no faces unfolded.
 The 6.6% of triangles that are not the item's are the avatar's own head and
 accessories, which a costume export carries above the suit; they are scaled by
 the same factor and held to the same rule.
+
+## What the rigging window shows while it works
+
+Rigging a body is the long part - the weights are shaped and checked against
+thirteen whole-body poses - and the window used to sit blank until all of it was
+over. It now prints one line per step, with the share of the whole run in front:
+
+```
+   [rig]   4%  item 1 of 1: reading UNSC Marine Armor
+   [rig]   6%  item 1 of 1: UNSC Marine Armor joined (8654 verts)
+   [rig]  12%  item 1 of 1: skinning UNSC Marine Armor to Halo's 19 bones - the slow part, thirteen poses
+   [rig]  85%  item 1 of 1: UNSC Marine Armor skinned
+```
+
+The number is the share of the whole run, not of one item, so a folder of twenty
+items counts through 0-100 once and the same number means the same thing however
+many there are. The carrier streams those lines as Blender writes them (and still
+keeps the whole account in `blender.log`), so the window moves while the work
+does.
+
+## The item's own face, painted with the avatar's own sheet
+
+A costume's export carries the head and both halves of the face, and the game
+paints that face with the player's **avatar's** face sheet - not with anything in
+the item. Measured on this armour, 100% of its face triangles land on painted
+skin in the avatar's sheet, and the item's own base map has nothing but blank
+padding where they read. Bound to the base map, which is the only map an
+extracted item has, the face drew as a white, eyeless mask under the helmet.
+
+So when an item brings its own head, the face sheet that arrives with
+`MyAvatar.glb` is still prepared - the same eye centring, hole filling, tone and
+padding passes a ported head gets - and is bound over the item's own face
+materials. They become one material, `<item> face`, and `<item> face.tif` is
+written into both channel orders' `bitmaps\` folders, because one sheet is one
+shader. The head keeps the shape the helmet was modelled round; only its paint
+changes. A costume with no avatar beside the `.bat` keeps the map it came with.
+
+An export that names its own materials instead of `batch_N` - this armour arrives
+as `hair_6`, `body_0`, `face` - now has them named after the maps they wrap as
+well: the material covering the item is `<item> base map` (or `<item> colour`
+when it has no texture), the face and neck take their sheet's name. A `.jms`
+material name is the shader `tool.exe` looks for, so a suit left called `hair_6`
+would have asked for a shader nobody would think to make.
+
+## Why the body keeps its own pose
+
+Halo's animations carry a node transform for every frame, so the model is not
+free to sit in a different rest pose from the skeleton its graph drives. This
+avatar is: it is authored in a T-pose with its knees apart, while Halo's biped
+holds its arms down and its legs under its hips. Measured, the avatar's shoulders
+are 0.97 m up against Halo's 1.73 m, and its arms are 0.67 m from shoulder to
+fingertips against 1.02 m. Applying the game's node turns to the avatar's pose is
+what makes the arms stay out through every animation and the body read as half
+crouched.
+
+Turning the mesh into Halo's rest pose was built, measured and **not shipped**.
+Each body segment is turned about its own joint by the rotation that carries the
+avatar's segment onto Halo's bone - a rotation changes no edge's length, so the
+shape is untouched in principle. On a surface this coarse it is not: the turn has
+to be shared out between the joints that claim each vertex, and the shoulder -
+where the avatar's T-pose is 79 degrees from Halo's arm - is exactly where skin
+cannot be shared without deforming. Measured on this armour, the worst edge came
+out x5.95 at the shoulder and only **87.2%** of triangles kept the item's shape,
+against **99.8%** for the same body left in the pose it was authored in. It also
+still tore at 80 degrees (x8.26), because after the turn the arms really do ride
+the arm bones.
+
+That is not a weighting bug that a better blend will close: it is the same
+deformation the game's own 79-degree shoulder turn produces, done once at build
+time instead of every frame. A body that both keeps this avatar's shape and
+animates cleanly on Halo's skeleton does not exist; the two ways to have one are
+to fit the limbs onto Halo's bones (which changes their length - the arms need
+about x1.5) or to give the model its own skeleton and animation graph. Until one
+of those is chosen, the body keeps its own pose - the shape rule wins - and
+`report.txt` says so rather than shipping a stretched model.
