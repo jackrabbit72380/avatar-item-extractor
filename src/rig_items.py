@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v131"
-BUILD = "the biped's collision model and physics, written and compiled by the build"
+VERSION = "v132"
+BUILD = "the arms come down and the body stands on its feet"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2115,6 +2115,48 @@ def fit_body_points(points, edges, plan):
     return placed, scale, worst
 
 
+# The four bones whose plates are turned by where their own far end reaches.
+ARM_BONES = ("bip01 l upperarm", "bip01 l forearm",
+             "bip01 r upperarm", "bip01 r forearm")
+
+
+def shell_direction(points):
+    """The direction a plate is longest in, by variance, or None if it is round.
+
+    A sleeve is long one way and thin the other two, so the axis of the plate's
+    own geometry is the arm's axis in whatever pose the item was drawn in. That
+    is the only way to know an arm is out to the side without trusting a plan
+    computed from the skeleton the arm has to end up on - the plan's turn, on a
+    rig that is already Halo's, is the identity, which is how a "standing" build
+    kept its arms in the air.
+    """
+    if len(points) < 8:
+        return None
+    middle = [sum(point[axis] for point in points) / len(points)
+              for axis in range(3)]
+    spread = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+    for point in points:
+        offset = [point[axis] - middle[axis] for axis in range(3)]
+        for row in range(3):
+            for column in range(3):
+                spread[row][column] += offset[row] * offset[column]
+    direction = [1.0, 0.0, 0.0]
+    for _ in range(12):
+        moved = [sum(spread[row][column] * direction[column]
+                     for column in range(3)) for row in range(3)]
+        length = sum(value * value for value in moved) ** 0.5
+        if length < 1e-9:
+            return None
+        direction = [value / length for value in moved]
+    longest = sum(direction[row] * spread[row][column] * direction[column]
+                  for row in range(3) for column in range(3))
+    other = max(sum(spread[row][column] for column in range(3)) - longest, 1e-9)
+    # A plate as wide as it is long has no axis worth turning by.
+    if longest < other * 1.4:
+        return None
+    return tuple(direction)
+
+
 def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
     """Stand a whole body in the pose Halo's own skeleton holds - no scaling.
 
@@ -2187,6 +2229,36 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         entry = by_bone[ridden]
         source = entry["source"]
         turned_shells += 1
+        # What the plate is asked to become: the bone it rides, from that bone's
+        # own head to its tail. The turn the plan carries is the item's joint
+        # onto Halo's and is right for a joint the item authored in a T-pose
+        # only if the item's joints say so - this one's arms are modelled down
+        # while its joints are not, so where the plate's own axis can be
+        # measured, that axis is what is turned onto the bone.
+        turn = entry["turn"]
+        bone = armature.data.bones.get(ridden)
+        # Only the arms are measured this way, and only against the far end of
+        # the plate they ride. The rest of the body is already where its bones
+        # are, and a plate whose longest side is not the bone's side - a pelvis
+        # is widest across the hips, not up the spine - would be turned flat by
+        # measuring it, which is how a first attempt ended with the soles at
+        # -6 units and the body in the floor.
+        if ridden in ARM_BONES and bone is not None and len(corners) >= 8:
+            matrix = armature.matrix_world
+            along = fit_unit(fit_between(tuple(matrix @ bone.head_local),
+                                         tuple(matrix @ bone.tail_local)))
+            far = max(corners, key=lambda index: fit_length(
+                fit_between(source, points[index])))
+            reach = fit_unit(fit_between(source, points[far]))
+            if along is not None and reach is not None:
+                # The plate's far end has to be a real reach out from the
+                # joint, or a shoulder pad would be turned by its own thickness.
+                if fit_length(fit_between(source, points[far])) > 8.0:
+                    facing = sum(reach[step] * along[step] for step in range(3))
+                    if facing > -0.999:
+                        measured = fit_turn(reach, along)
+                        if measured is not None:
+                            turn = measured
         # Two ways to place a plate, and they answer different questions.
         #
         # `limbs` also puts the JOINT on its bone and lengthens the limb to
@@ -2214,13 +2286,12 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
                 stretched = tuple(axis[step] * along * axial
                                   + (offset[step] - axis[step] * along)
                                   for step in range(3))
-                turned = fit_turned(entry["turn"], stretched)
+                turned = fit_turned(turn, stretched)
                 placed[index] = tuple(target[step] + turned[step]
                                       for step in range(3))
             continue
         for index in corners:
-            turned = fit_turned(entry["turn"],
-                                fit_between(source, points[index]))
+            turned = fit_turned(turn, fit_between(source, points[index]))
             placed[index] = tuple(target[step] + turned[step] for step in range(3))
     worst = 1.0
     for edge in mesh.edges:
@@ -5747,32 +5818,37 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
     out, index_of, _rows = _jms_header(armature)
     out.append("1")
     out.append("%s\t<none>" % " ".join(str(material_name).split()))
+    # Spheres at each part's own node origin, with no offset: a marker's
+    # translation is read in its node's frame, and those frames are turned -
+    # the pelvis 120 degrees - so the one translation that cannot be misplaced
+    # is zero. A biped needs them under the feet as well as at the hips: the
+    # feet spheres are what it stands on, and without them the origin is the
+    # only thing touching the floor and the character sinks into it.
+    wanted = [("bip01 pelvis", 0.5), ("bip01 l foot", 0.75), ("bip01 r foot", 0.75)]
     spheres = []
-    pelvis = index_of.get("bip01 pelvis", 0)
-    for node, low, high in boxes:
-        if node != pelvis:
+    for bone, share in wanted:
+        node = index_of.get(bone)
+        if node is None:
             continue
-        # At the pelvis node's own origin, with no offset: a marker's
-        # translation is read in its node's frame, and the pelvis frame is
-        # turned 120 degrees - so the one translation that cannot be misplaced
-        # is zero. The radius is half the hips' larger horizontal side, which
-        # wraps the body without making the pill too wide for a doorway.
-        widest = max(high[0] - low[0], high[2] - low[2])
-        spheres.append((max(widest * 0.5, 1.0),))
+        for piece, low, high in boxes:
+            if piece != node:
+                continue
+            widest = max(high[0] - low[0], high[2] - low[2])
+            spheres.append((node, max(widest * share, 1.0)))
     if not spheres:
         return []
     out.append("%d" % len(spheres))
-    for number, (radius,) in enumerate(spheres):
+    for number, (node, radius) in enumerate(spheres):
         out.append("physics%d\t-1\t%d\t0.000000\t0.000000\t0.000000"
                    "\t1.000000\t0.000000\t0.000000\t0.000000\t%.6f"
-                   % (number, pelvis, radius))
+                   % (number, node, radius))
     out.append("1")
     out.append("unnamed")
     out.append("0")                    # no vertices
     out.append("0")                    # no faces
     _jms_write(path, out)
-    log("physics: %d sphere(s) on the pelvis, radius %.2f units"
-        % (len(spheres), spheres[0][0]))
+    log("physics: %d sphere(s) - pelvis %.2f units, each foot %.2f"
+        % (len(spheres), spheres[0][1], spheres[-1][1]))
     log("wrote %s" % os.path.basename(path))
     return spheres
 

@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v131.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v132.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1196,7 +1196,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v131.bat` and
+`Extract UNSC Marine Armor Avatar-v132.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1211,7 +1211,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v131.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v132.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1261,9 +1261,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v131.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v132.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v131.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v132.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
@@ -1612,8 +1612,10 @@ face wound outward and every face given a material, all twelve triangles of a
 box sharing their eight positions - the rules the collision compiler checks. It
 carries the model's own node block and its header checksum, and names the one
 region the model names, which is what stops "region counts don't match". The
-physics model is a sphere on the pelvis, radius half the hips' wider side, with
-no node offset - a marker's translation is read in its node's frame and the
+physics model is three spheres with no node offset - pelvis, radius 11.42 units,
+and one under each foot, radius 10.77: a biped stands on its spheres, and with
+only the pelvis one the origin was the sole thing at floor height and the
+character sank into the terrain - a marker's translation is read in its node's frame and the
 pelvis frame is turned 120 degrees, so zero is the one offset that cannot be
 misplaced.
 
