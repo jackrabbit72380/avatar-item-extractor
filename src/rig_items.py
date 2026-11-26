@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v149"
-BUILD = "the pose, fixed rather than skipped"
+VERSION = "v150"
+BUILD = "Chief's size, one uniform factor"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -6890,11 +6890,23 @@ def main():
                                       for vertex in merged.data.vertices]
                             spans.append((max(values) - min(values)) if values else 0.0)
                         tall = max(spans)
+                        # Match the model's own height to the skeleton's head
+                        # top, one factor for every vertex. Putting the avatar's
+                        # head JOINT on Halo's head bone is what inflated him: a
+                        # 360 avatar's head is a third of its height, so its neck
+                        # joint sits far lower than a Spartan's, and reaching the
+                        # bone with it stretched a 1.61 m body to 2.63 m. Height
+                        # for height keeps the suit the size of Chief's.
+                        # The mesh is in metres here and the skeleton in Halo
+                        # units, so the bone height is converted before it is
+                        # compared with the model's.
                         head_bone = armature.data.bones.get("bip01 head")
-                        head_joint = NXE_JOINTS[19]
-                        if head_bone is not None and abs(head_joint[2]) > 1e-6:
-                            grow = ((armature.matrix_world @ head_bone.head_local).z
-                                    / (head_joint[2] * HALO_UNITS_PER_METRE))
+                        top = None
+                        if head_bone is not None:
+                            top = ((armature.matrix_world @ head_bone.tail_local).z
+                                   / HALO_UNITS_PER_METRE)
+                        if top and tall > 1e-6:
+                            grow = top / tall
                         else:
                             grow = (fit * AUTHORED_BODY_HEIGHT / tall) if tall > 1e-6 else fit
                         body_grow = grow
@@ -6906,8 +6918,8 @@ def main():
                             "avatar is wearing the suit, so the armour IS the "
                             "body and only the head sits above it. The whole "
                             "model takes ONE uniform factor x%.3f, so its head "
-                            "joint lands on Halo's head bone and it stands %.3f m "
-                            "- the avatar's own proportions scaled, never bent"
+                            "stands %.3f m, the biped's own height - one factor on "
+                            "every vertex, so nothing is stretched"
                             % (merged.name, grow, tall * grow))
                     if placed is not None:
                         # Each part's own height, not the model's: reporting the
