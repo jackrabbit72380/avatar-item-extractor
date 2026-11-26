@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v117"
-BUILD = "2026-11-26 body-fit-not-skipped"
+VERSION = "v118"
+BUILD = "2026-11-26 plates-ride-one-bone"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4220,6 +4220,87 @@ def smooth_weights(weights, mesh, passes=SMOOTH_PASSES, keep=2):
     return trimmed
 
 
+def bone_hood(armature, names):
+    """Each bone with its parent and children: the bones that bend the same skin."""
+    bones = {bone.name: bone for bone in armature.data.bones}
+    hood = {}
+    for name in names:
+        near = {name}
+        bone = bones.get(name)
+        if bone is not None:
+            if bone.parent:
+                near.add(bone.parent.name)
+            near.update(child.name for child in bone.children)
+        hood[name] = near
+    return hood
+
+
+def keep_neighbour_bones(weights, armature):
+    """Drop a second bone that is not next to the first in the skeleton.
+
+    Distance alone hands a knee the hand that hangs beside it and gives a
+    shoulder plate a weight from a forearm; in Halo those vertices then follow a
+    bone on the other side of the body and the shell rips into slivers. A
+    vertex may ride its own bone, its parent or one of its children.
+    """
+    names = sorted({name for own in weights for name in own})
+    hood = bone_hood(armature, names)
+    kept = []
+    for own in weights:
+        top = sorted(own.items(), key=lambda pair: -pair[1])
+        if not top:
+            kept.append(own)
+            continue
+        primary = top[0][0]
+        allowed = hood.get(primary, {primary})
+        chosen = [(name, value) for name, value in top if name in allowed][:2]
+        if not chosen:
+            chosen = [top[0]]
+        total = sum(value for _, value in chosen) or 1.0
+        kept.append({name: value / total for name, value in chosen})
+    return kept
+
+
+def rigid_plates(weights, mesh, most=400, share=0.6):
+    """Bind each small shell of armour to the one bone it mostly rides.
+
+    A plate is a solid piece: spreading it over two bones is what puts half of
+    a pauldron on the forearm and turns it into a spike. Big shells - the suit
+    itself - keep their smoothed weights, because they have to bend.
+    """
+    inside = [[] for _ in mesh.vertices]
+    for edge in mesh.edges:
+        first, second = edge.vertices
+        inside[first].append(second)
+        inside[second].append(first)
+    seen = [False] * len(mesh.vertices)
+    for start in range(len(mesh.vertices)):
+        if seen[start]:
+            continue
+        shell, stack = [], [start]
+        seen[start] = True
+        while stack:
+            index = stack.pop()
+            shell.append(index)
+            for other in inside[index]:
+                if not seen[other]:
+                    seen[other] = True
+                    stack.append(other)
+        if len(shell) > most:
+            continue
+        tally = {}
+        for index in shell:
+            for name, value in weights[index].items():
+                tally[name] = tally.get(name, 0.0) + value
+        total = sum(tally.values()) or 1.0
+        name, value = max(tally.items(), key=lambda pair: pair[1])
+        if value / total < share:
+            continue
+        for index in shell:
+            weights[index] = {name: 1.0}
+    return weights
+
+
 def skin(object_data, armature, influences=2, rigid=False):
     """Distance weighting against the biped, so shells and open meshes work.
 
@@ -4262,6 +4343,8 @@ def skin(object_data, armature, influences=2, rigid=False):
             nearest.append({name: 1.0 / max(distance, 1e-4) ** 2
                             for distance, name in scored})
         weights = smooth_weights(nearest, mesh)
+        weights = keep_neighbour_bones(weights, armature)
+        weights = rigid_plates(weights, mesh)
         groups = {name: object_data.vertex_groups.new(name=name) for name in names}
         tally = {}
         for index, own in enumerate(weights):
