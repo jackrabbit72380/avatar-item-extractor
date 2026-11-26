@@ -631,6 +631,12 @@ PLAIN_SUFFIX = ""
 # that never changes colour. The other values author a mask the item does not
 # have, and report.txt says so.
 TINT_MODE = "item"
+# The detail map: Halo's fine-grain layer, multiplied in where the multipurpose
+# map's RED channel (Guerilla's "detail mask", labelled alpha because the Xbox
+# kept it there) is white. None means no detail map, "derived" builds one from
+# the base map, anything else is a path to a .png.
+DETAIL_MODE = None
+DETAIL_MASK = None
 
 
 def plain_build(stem):
@@ -1243,6 +1249,108 @@ def mask_from_image(path, size):
         target = y * size
         for x in range(size):
             out[target + x] = rgba[(row + min(width - 1, x * width // size)) * 4]
+    return bytes(out)
+
+
+def stretch(mask, size, target):
+    """A size x size mask resampled onto target x target, nearest texel."""
+    if size == target:
+        return mask
+    out = bytearray(target * target)
+    for y in range(target):
+        row = min(size - 1, y * size // target) * size
+        at = y * target
+        for x in range(target):
+            out[at + x] = mask[row + min(size - 1, x * size // target)]
+    return bytes(out)
+
+
+def detail_image(path, size):
+    """An authored detail bitmap as RGBA on a size x size grid."""
+    try:
+        with open(path, "rb") as handle:
+            picture = read_png(handle.read())
+    except (IOError, OSError):
+        return None
+    if not picture:
+        return None
+    rgba, width, height = picture
+    out = bytearray(size * size * 4)
+    for y in range(size):
+        row = min(height - 1, y * height // size) * width
+        at = y * size * 4
+        for x in range(size):
+            corner = (row + min(width - 1, x * width // size)) * 4
+            out[at + x * 4:at + x * 4 + 4] = rgba[corner:corner + 4]
+    return bytes(out), width, height
+
+
+def derived_detail(picture, size):
+    """A detail map and its mask, derived from the item's own base map.
+
+    Halo's detail map is a tiling fine-detail layer. There is no such layer in
+    an avatar item, so this is a rule rather than art: the base map's luminance
+    against a blurred copy of itself, centred on mid grey, which is the cloth
+    weave and panel grain the map already carries. The mask is the texels the
+    item actually paints, so the detail lands on the model and not on padding.
+    """
+    rgba, width, height = picture["rgba"], picture["width"], picture["height"]
+    luma = [(rgba[i * 4] * 299 + rgba[i * 4 + 1] * 587 + rgba[i * 4 + 2] * 114) // 1000
+            for i in range(width * height)]
+    radius = max(1, min(width, height) // 64)
+    art = bytearray(size * size * 4)
+    mask = bytearray(size * size)
+    for y in range(size):
+        source_y = min(height - 1, y * height // size)
+        for x in range(size):
+            source_x = min(width - 1, x * width // size)
+            total, count = 0, 0
+            for step_y in range(-radius, radius + 1):
+                row = min(height - 1, max(0, source_y + step_y)) * width
+                for step_x in range(-radius, radius + 1):
+                    total += luma[row + min(width - 1, max(0, source_x + step_x))]
+                    count += 1
+            blur = total // count
+            value = max(0, min(255, 128 + (luma[source_y * width + source_x] - blur) * 3))
+            at = (y * size + x) * 4
+            art[at:at + 4] = bytes((value, value, value, 255))
+            mask[y * size + x] = 255 if rgba[(source_y * width + source_x) * 4 + 3] > 8 else 0
+    return bytes(art), bytes(mask)
+
+
+def packed_multipurpose(detail, tint, size):
+    """The four masks in one bitmap, in Halo CE / Gearbox order.
+
+    red detail, green self-illumination, blue specular, alpha colour change.
+    Self-illumination and specular stay zero: the item states neither, and a
+    guess about which panels glow or shine is still a guess.
+    """
+    packed = bytearray(size * size * 4)
+    if detail:
+        packed[0::4] = detail
+    if tint:
+        packed[3::4] = tint
+    return bytes(packed)
+
+
+def team_colour_base(rgba, width, height, tint, size):
+    """The base map with the team colour's texels taken to white.
+
+    Halo CE multiplies the base map by the change colour, so the team colour
+    only comes through clean where the map is white - a green suit gives a green
+    team colour. White mask, white texel; black mask, untouched; grey, the two
+    mixed by the mask's amount. Alpha is kept: it is the shader's transparency.
+    """
+    out = bytearray(len(rgba))
+    for y in range(height):
+        row = min(size - 1, y * size // height) * size
+        for x in range(width):
+            at = (y * width + x) * 4
+            amount = tint[row + min(size - 1, x * size // width)]
+            for channel in range(3):
+                value = rgba[at + channel]
+                out[at + channel] = value + ((255 - value) * amount) // 255
+            out[at + 3] = rgba[at + 3]
     return bytes(out)
 
 
@@ -1884,6 +1992,36 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                  " red detail, green self-illumination, blue specular,"
                  " alpha colour change. The .png and .tga show the mask in colour"
                  " too; the .tif keeps it in alpha alone" % stem)
+    detail_map = facts.get("detail_map") or {}
+    if detail_map.get("tif"):
+        lines.append("detail:    %s - %s, written at %d"
+                     % (detail_map["tif"], detail_map.get("source") or "authored",
+                        detail_map.get("size") or 0))
+        lines.append("           Guerilla: shader_model -> detail map = %s detail;"
+                     " detail mask = multipurpose map alpha, which in Halo PC and"
+                     " Custom Edition is really the RED channel whatever the label"
+                     " says; detail map scale 1-4 (4 is the tightest grain). The"
+                     " 'detail after reflection' flag is inverted in H1X - leave it"
+                     " off unless the detail disappears behind the shine"
+                     % stem)
+        lines.append("           the red channel of %s multipurpose is the mask:"
+                     " %s" % (stem, detail_map.get("mask_source")))
+    elif detail_map.get("source"):
+        lines.append("detail:    %s" % detail_map["source"])
+    team = facts.get("team_colour_base") or {}
+    if team.get("tif"):
+        lines.append("team colour: %s - the item's base map with the tinted texels"
+                     " taken to white (%.0f%% of the map), because Halo CE"
+                     " MULTIPLIES the base map by the change colour: point the"
+                     " multiplayer shader's base map here and the team colour is"
+                     " the colour, not the colour times the suit"
+                     % (team["tif"], (team.get("white") or 0) * 100))
+        lines.append("           reflection: for the armour's shine set shader_model"
+                     " -> reflection type = cube map and give it a cube map (the HEK"
+                     " ships them under tags\\characters\\..., e.g. the Elite's"
+                     " 'cubemap blue tone'); the multipurpose BLUE channel masks"
+                     " where it shows, and it is zero here because the item states"
+                     " no shine")
     if facts.get("mask_source"):
         lines.append("mask source: %s" % facts["mask_source"])
     if facts.get("mask_coverage") is not None:
@@ -2064,10 +2202,22 @@ def main(argv=None):
                         help="the mp team-colour mask: item (default: the item's"
                              " own mask, and a blank slot means nothing tints),"
                              " full, derived, or a black-and-white PNG to author one")
+    parser.add_argument("--detail", default=None, metavar="MODE",
+                        help="the detail map: 'derived' from the item's own base map,"
+                             " or a .png of your own; written as <item> detail and"
+                             " masked by the multipurpose map's red channel")
+    parser.add_argument("--detail-mask", dest="detail_mask", default=None,
+                        metavar="PNG",
+                        help="where that detail shows: white = detail. Default is the"
+                             " texels the item paints (or the detail art's own coverage)")
     args = parser.parse_args(argv)
-    global TINT_MODE
+    global TINT_MODE, DETAIL_MODE, DETAIL_MASK
     if args.tint is not None:
         TINT_MODE = args.tint
+    if args.detail is not None:
+        DETAIL_MODE = args.detail
+    if args.detail_mask is not None:
+        DETAIL_MASK = args.detail_mask
 
     out = args.out_option or args.out or "extracted"
 
@@ -2600,8 +2750,66 @@ def main(argv=None):
                 "source": source,
                 "coverage": round(painted / float(png_size * png_size), 3),
             }
+            # The detail map, and the red channel that shows it. Halo CE's
+            # detail mask is the multipurpose map's RED channel: Guerilla labels
+            # that slot "alpha" because the Xbox kept the detail mask there, and
+            # the label was never corrected for the port. A detail map with
+            # nothing painted in red is invisible however the shader is set.
+            detail_art = None
+            detail_mask_small = None
+            detail_note = None
+            if DETAIL_MODE:
+                if DETAIL_MODE == "derived" and picture:
+                    art, derived_mask = derived_detail(picture, small_size)
+                    detail_art = art
+                    detail_mask_small = (mask_from_image(DETAIL_MASK, small_size)
+                                         if DETAIL_MASK else derived_mask)
+                    detail_note = ("derived from the item's own base map - its"
+                                   " luminance against a blurred copy of itself, on"
+                                   " the texels the item paints: a rule, not art"
+                                   " the item shipped")
+                elif DETAIL_MODE != "derived":
+                    got = detail_image(DETAIL_MODE, small_size)
+                    if got:
+                        detail_art = got[0]
+                        detail_mask_small = (mask_from_image(DETAIL_MASK, small_size)
+                                             if DETAIL_MASK else
+                                             (mask_from_coverage(picture, small_size)
+                                              if picture else
+                                              bytes([255]) * (small_size * small_size)))
+                        detail_note = ("authored from %s" % os.path.basename(DETAIL_MODE))
+                if detail_art is None:
+                    detail_note = ("none - %s could not be read as a detail map, so"
+                                   " the shader gets no detail" % DETAIL_MODE)
+            if detail_art:
+                name = os.path.join(out, "%s detail" % stem)
+                write_png(name + ".png", detail_art, small_size, small_size)
+                write_tga(name + ".tga", detail_art, small_size, small_size)
+                write_tiff(name + ".tif", detail_art, small_size, small_size)
+            facts["detail_map"] = record["detail_map"] = {
+                "png": "%s detail.png" % stem if detail_art else None,
+                "tga": "%s detail.tga" % stem if detail_art else None,
+                "tif": "%s detail.tif" % stem if detail_art else None,
+                "size": small_size,
+                "mask": "multipurpose map red channel (Halo CE / Gearbox order)",
+                "mask_source": ("authored from %s" % os.path.basename(DETAIL_MASK)
+                                if DETAIL_MASK else
+                                "the item's painted texels" if DETAIL_MODE == "derived"
+                                else "the detail art's own coverage"),
+                "source": detail_note,
+            }
+
             multipurpose = os.path.join(out, "%s multipurpose" % stem)
-            write_mask(multipurpose, 3)
+            if detail_mask_small is None:
+                write_mask(multipurpose, 3)
+            else:
+                write_png(multipurpose + ".png",
+                          packed_multipurpose(stretch(detail_mask_small, small_size,
+                                                      png_size), big, png_size),
+                          png_size, png_size)
+                packed = packed_multipurpose(detail_mask_small, small, small_size)
+                write_tga(multipurpose + ".tga", packed, small_size, small_size)
+                write_tiff(multipurpose + ".tif", packed, small_size, small_size)
             record["multipurpose"] = {
                 "png": "%s multipurpose.png" % stem,
                 "tga": "%s multipurpose.tga" % stem,
@@ -2612,9 +2820,34 @@ def main(argv=None):
                               "blue colour change, alpha detail",
                 "png_size": png_size,
                 "tga_tif_size": small_size,
-                "painted": "the item's own UV layout",
+                "painted": ("the item's own UV layout, with the detail mask in red"
+                            if detail_mask_small is not None
+                            else "the item's own UV layout"),
                 "coverage": round(painted / float(png_size * png_size), 3),
             }
+            # The multiplayer base map. Halo CE multiplies the base map by the
+            # change colour, so the team colour can only come through clean where
+            # the map is white. The masked texels are taken to white (grey mask,
+            # partial mixture) and the rest is left exactly as the item painted
+            # it: same model, same shader, a map whose tinted areas are the
+            # player's colour instead of the colour times the suit.
+            if painted and picture:
+                team = team_colour_base(picture["rgba"], picture["width"],
+                                        picture["height"], small, small_size)
+                name = os.path.join(out, "%s base map (team colour)" % stem)
+                write_png(name + ".png", team, picture["width"], picture["height"])
+                write_tga(name + ".tga", team, picture["width"], picture["height"])
+                write_tiff(name + ".tif", team, picture["width"], picture["height"])
+                facts["team_colour_base"] = record["team_colour_base"] = {
+                    "png": "%s base map (team colour).png" % stem,
+                    "tga": "%s base map (team colour).tga" % stem,
+                    "tif": "%s base map (team colour).tif" % stem,
+                    "white": round(painted / float(png_size * png_size), 3),
+                    "why": ("Halo CE multiplies the base map by the change colour,"
+                            " so the tinted texels are taken to white: the team"
+                            " colour is then the colour, not the colour times"
+                            " the suit's own paint"),
+                }
             record["slot_textures"] = facts.get("slot_images") or {}
 
             # Every item says what its colours are: a chip card and a hex list

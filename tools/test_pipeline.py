@@ -735,6 +735,61 @@ def main():
                 print("\nFAIL: report.txt does not say the derived mask was authored")
                 return 1
 
+        # --detail derived writes a detail map and paints the multipurpose map's
+        # RED channel with the mask that shows it: Guerilla's "detail mask" slot
+        # is red in Halo PC/CE whatever the label says, and a detail map with
+        # nothing in red is invisible. The team-colour copy of the base map is
+        # checked here too, because CE MULTIPLIES the base map by the change
+        # colour, so the team colour only reads clean where the map is white.
+        out_detail = os.path.join(work, "detail-out")
+        extract_items.TINT_MODE = "derived"
+        extract_items.DETAIL_MODE = "derived"
+        try:
+            code = extract_items.main(["--root", inbox_tint, "--obj", "--out", out_detail])
+        finally:
+            extract_items.TINT_MODE = "item"
+            extract_items.DETAIL_MODE = None
+        if code not in (0, None):
+            print("FAIL: the --detail derived extractor returned %r" % (code,))
+            return 1
+        detail_users = os.path.join(out_detail, "extracted for max users")
+        detail_texels = pixels(os.path.join(detail_users, "Tint Trap detail.png"))
+        grey = sum(1 for pixel in detail_texels if pixel[0] == pixel[1] == pixel[2])
+        print("  --detail derived  %d of %d detail texels are grey"
+              % (grey, len(detail_texels)))
+        if grey != len(detail_texels):
+            print("\nFAIL: the derived detail map is not grey")
+            return 1
+        packed = pixels(os.path.join(detail_users, "Tint Trap multipurpose.png"))
+        red = sum(1 for pixel in packed if pixel[0])
+        alpha = sum(1 for pixel in packed if pixel[3])
+        print("  multipurpose      red (detail mask) %d, alpha (colour change) %d"
+              % (red, alpha))
+        if not red:
+            print("\nFAIL: the multipurpose map has no red - detail would be"
+                  " invisible however the shader is set")
+            return 1
+        if not alpha:
+            print("\nFAIL: the multipurpose map lost its colour change")
+            return 1
+        team_path = os.path.join(detail_users, "Tint Trap base map (team colour).png")
+        if not os.path.exists(team_path):
+            print("\nFAIL: no team-colour base map was written")
+            return 1
+        team = pixels(team_path)
+        white = sum(1 for pixel in team if pixel[:3] == (255, 255, 255))
+        print("  team colour       %d of %d texels taken to white"
+              % (white, len(team)))
+        if not white:
+            print("\nFAIL: the team-colour base map was not whitened")
+            return 1
+        with open(os.path.join(out_detail, "report.txt"), encoding="utf-8") as handle:
+            report_detail = handle.read()
+        for wanted in ("detail:", "mask = multipurpose map alpha", "team colour:"):
+            if wanted not in report_detail:
+                print("\nFAIL: report.txt does not mention %r" % wanted)
+                return 1
+
         # Two base maps side by side: the item's own, and a copy with its decal
         # blended in - decal.rgb by its own alpha, the rule both readers of the
         # format use. The plain map must carry none of the decal, and the blend

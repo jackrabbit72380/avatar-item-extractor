@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v139.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v140.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -694,6 +694,57 @@ found, and each part's shader and texture bindings. The extractor writes it
 before any Blender runs, so a run without Blender still describes the file;
 the rigging section is added underneath it when Blender is there.
 
+## Detail maps and the multiplayer team colour
+
+`shader_model` has more inputs than a base map, and two of them matter here.
+Both are channel masks, and the channel order is the thing that trips people up
+(c20's `shader_model` page, invader's `shader_model.json`):
+
+| channel | Halo PC / Custom Edition | original Xbox |
+|---|---|---|
+| red | **detail mask** | specular / reflection |
+| green | self-illumination | self-illumination |
+| blue | specular / reflection | **colour change** |
+| alpha | **colour change** | **detail mask** |
+
+Guerilla still labels the detail mask *alpha* because that is where the Xbox kept
+it; in Halo PC and CE it is the **red** channel. A detail map with nothing
+painted in red is invisible however the shader is set, which is why the build
+paints red itself.
+
+**Detail maps.** Put `detail.png` beside the `.bat` and it becomes
+`<item> detail` in all three formats; `detail_mask.png` says where it shows
+(white = detail), and without one the mask is the texels the item paints.
+`detail_mode.txt` holding `derived` builds a detail map from the item's own base
+map instead - its luminance against a blurred copy of itself, on the painted
+texels. That is a rule, not art the item shipped, and `report.txt` says so. The
+multipurpose map's red channel is written from the mask, and `report.txt` gives
+the tag settings: detail map, detail mask = multipurpose map alpha *which is
+really red here*, detail map scale 1-4, and the fact that H1X's "detail after
+reflection" flag works inverted, so leave it off unless detail disappears.
+
+**The multiplayer team colour.** CE *multiplies* the base map by the change
+colour, so a team colour only comes through clean where the base map is white -
+a green suit gives a green team colour, which is the "needs to be white or
+grey" rule and it is right. So a tinted item also gets
+`<item> base map (team colour)`, its masked texels taken to white by the tint
+mask's amount (grey mask, partial mixture), everything else left exactly as the
+item painted it. Point the multiplayer shader's base map at that copy and its
+multipurpose slot at `<item> multipurpose`: the alpha marks what takes the
+colour and the tinted areas read as the player's colour rather than the colour
+times the suit.
+
+**The armour's shine is a cube map**, and nothing here can invent one: in
+Guerilla set reflection type = cube map and give it a cube map (the HEK ships
+them under `tags\characters\...`; the Elite's is `cubemap blue tone`). The
+multipurpose map's **blue** channel masks where it shows, and blue is zero in
+these builds because the item states no shine - painting blue is the step that
+turns it on.
+
+None of this is measured in game: there is no `tool.exe` here, so the tag
+settings above are from the documented channel behaviour, not from a compiled
+biped.
+
 ## Putting an avatar's own head under an item
 
 An item is a shell: the game's own model has no head, because every player wears
@@ -1196,7 +1247,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v139.bat` and
+`Extract UNSC Marine Armor Avatar-v140.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1211,7 +1262,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v139.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v140.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1261,9 +1312,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v139.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v140.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v139.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v140.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
