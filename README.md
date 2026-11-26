@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v129.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v130.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1196,7 +1196,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v129.bat` and
+`Extract UNSC Marine Armor Avatar-v130.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1211,7 +1211,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v129.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v130.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1261,9 +1261,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v129.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v130.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v129.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v130.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
@@ -1545,3 +1545,54 @@ come from the item's own model, which is authored in the T-pose; the avatar
 export only supplies the head, face and neck, and those are one rigid shell that
 the head bone turns by nothing. So the pose is answered in the build, not in the
 `.glb` - any pose exported from 360sona gives the same suit.
+
+### Fitting the limbs onto Halo's bones (fit_limbs.txt)
+
+Turning the body into Halo's pose keeps every plate's shape and size, so the
+avatar's own proportions survive - and that is also its limit: this avatar's arms
+are 0.67 m from shoulder to fingertips against Halo's 1.02 m, so Halo's elbow
+bone sits outside the sleeve and Halo's hand bone reaches past the glove. A
+weapon is placed from the hand node, so it comes to rest at the wrist where the
+glove is, not out at Halo's fingertips.
+
+`fit_limbs.txt` beside the `.bat` asks for the other answer: each plate is also
+slid so its joint sits on the bone head and stretched along the bone by the
+bone-length ratio, girth untouched - a sleeve that is longer without being
+fatter. It was built and measured, and it is **not** the default, because on
+this avatar it costs more than it gives:
+
+| | pose only (default) | fit limbs (`fit_limbs.txt`) |
+|---|---|---|
+| triangles still the item's shape | **99.8%** | 39.9% |
+| worst edge while standing the body | **x1.00** | x1.50 |
+| thirteen-pose battery | **x3.10, 2 torn** | x5.59, 38 torn |
+| arms at 45 degrees | x2.06, 0 torn | x3.48, 2 torn |
+
+The reason is geometric, not a bug: Halo's elbow is 10.86 units from its
+shoulder where this avatar's is 5.6, so the sleeve has to stretch x1.94 to reach
+it - past the x1.6 cap - and plates that reach different bones are then spaced
+by the bone lengths instead of the avatar's, which opens them at every joint.
+Try it if you want the hands at Halo's fingertips; the default keeps the armour's
+own shape and lets the glove sit at the wrist.
+
+### What Halo CE itself requires of a biped
+
+Checked against the editing-kit community and the tag reference, because these
+are the rules the toolchain enforces rather than choices this build makes:
+
+* **Rig the mesh to the cyborg's own bone structure.** The usual answer on the
+  Halo CE forums is to import an existing biped, delete its mesh and rig the
+  custom one to the bones underneath - which is why the mesh has to end up in
+  the pose those bones hold. A vertex may ride **two** nodes; a third is dropped
+  by `tool.exe` ([gbxmodel](https://c20.reclaimers.net/h1/tags/gbxmodel)).
+* **The node list checksum must match.** A gbxmodel whose node list differs from
+  the animation graph's prints "the model ... and the animation graph ... don't
+  match" and the biped will not animate - the same checksum has to be in the
+  gbxmodel, the model_animations tag **and** the collision model
+  ([thread](https://halomaps.haloman30.com/index.cfm?page=topic&topicID=50736)).
+* **A biped needs a collision model tag, and its regions must match the
+  gbxmodel's** - otherwise "the object will not be collidable". Collision
+  geometry is its own JMS compiled with `tool collision-geometry`, and physics
+  is another (`tool physics`, spheres linked to the pelvis)
+  ([thread](https://halomaps.haloman30.com/index.cfm?page=topic&topicID=48038)).
+  This build writes neither yet; the `.jms` it writes is the render model only.

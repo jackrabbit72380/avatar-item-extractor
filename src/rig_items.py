@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v129"
-BUILD = "the body stands in Halo's pose, one rigid turn per shell"
+VERSION = "v130"
+BUILD = "the limb fit built and measured; the default keeps the armour's own shape"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -258,7 +258,8 @@ def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parsed = {"items": "extracted", "rig": None, "fp": None, "out": "rigged",
               "fbx": True, "jms": True, "name": None, "port": None,
-              "keep_shape": False, "eyes_forward": True, "stand": True}
+              "keep_shape": False, "eyes_forward": True, "stand": True,
+              "limbs": False}
     index = 0
     while index < len(argv):
         word = argv[index]
@@ -279,6 +280,9 @@ def args():
             index += 1
         elif word == "--t-pose":
             parsed["stand"] = False
+            index += 1
+        elif word == "--fit-limbs":
+            parsed["limbs"] = True
             index += 1
         elif word == "--eyes-forward":
             parsed["eyes_forward"] = True
@@ -2111,7 +2115,7 @@ def fit_body_points(points, edges, plan):
     return placed, scale, worst
 
 
-def stand_in_halo_pose(object_data, armature, fit=1.0):
+def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
     """Stand a whole body in the pose Halo's own skeleton holds - no scaling.
 
     One uniform factor keeps the avatar's shape but not its pose. An avatar is
@@ -2183,10 +2187,41 @@ def stand_in_halo_pose(object_data, armature, fit=1.0):
         entry = by_bone[ridden]
         source = entry["source"]
         turned_shells += 1
+        # Two ways to place a plate, and they answer different questions.
+        #
+        # `limbs` also puts the JOINT on its bone and lengthens the limb to
+        # Halo's: the plate is turned onto the bone, stretched along it by the
+        # bone-length ratio and slid so its joint sits on the bone's head. Its
+        # girth is untouched, so a sleeve gets longer without getting fatter -
+        # and because the gate is per plate, nothing tears: edges inside a plate
+        # stretch by that one factor and plates share no edges. This is what
+        # makes the elbows, the knees and the weapon in the hand land where the
+        # game expects them.
+        #
+        # Without it the body is only turned into the pose, keeps its own limb
+        # lengths, and the hand bone reaches past the glove.
+        axial = 1.0
+        target = source
+        if limbs:
+            axial = entry.get("axial") or 1.0
+            axial = max(FIT_STRETCH_MIN, min(FIT_STRETCH_MAX, axial))
+            target = tuple(entry["target"])
+        axis = entry.get("axis") or None
+        if limbs and axis is not None:
+            for index in corners:
+                offset = fit_between(source, points[index])
+                along = sum(offset[step] * axis[step] for step in range(3))
+                stretched = tuple(axis[step] * along * axial
+                                  + (offset[step] - axis[step] * along)
+                                  for step in range(3))
+                turned = fit_turned(entry["turn"], stretched)
+                placed[index] = tuple(target[step] + turned[step]
+                                      for step in range(3))
+            continue
         for index in corners:
             turned = fit_turned(entry["turn"],
                                 fit_between(source, points[index]))
-            placed[index] = tuple(source[axis] + turned[axis] for axis in range(3))
+            placed[index] = tuple(target[step] + turned[step] for step in range(3))
     worst = 1.0
     for edge in mesh.edges:
         first, second = edge.vertices
@@ -2202,10 +2237,11 @@ def stand_in_halo_pose(object_data, armature, fit=1.0):
     mesh.update()
     tallest = max(point[2] for point in placed)
     lowest = min(point[2] for point in placed)
-    line = ("%d joints, %d shell(s) turned into Halo's rest pose, worst edge "
-            "x%.2f, %.2f m tall, soles at %.2f units"
-            % (len(plan), turned_shells, worst,
-               tallest / HALO_UNITS_PER_METRE, lowest))
+    line = ("%d joints, %d shell(s) %s, worst edge x%.2f, %.2f m tall, "
+            "soles at %.2f units"
+            % (len(plan), turned_shells,
+               "fitted onto their bones" if limbs else "turned into Halo's rest pose",
+               worst, tallest / HALO_UNITS_PER_METRE, lowest))
     log("stood %s in Halo's rest pose: %s" % (object_data.name, line))
     return {"worst": worst, "height": tallest / HALO_UNITS_PER_METRE,
             "lines": ["biped pose : " + line]}
@@ -6436,7 +6472,8 @@ def main():
             # animation, which is what the game showed. t_pose.txt beside the
             # .bat turns it off, and the mesh is then left exactly as authored.
             if options.get("stand") and body and body_grow:
-                stood = stand_in_halo_pose(merged, armature, body_grow)
+                stood = stand_in_halo_pose(merged, armature, body_grow,
+                                           limbs=options.get("limbs", False))
                 if stood:
                     record["stand"] = stood["lines"][0]
                     log("%s stood in Halo's pose: worst edge x%.2f over the "
