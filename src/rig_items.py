@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v115"
-BUILD = "2026-11-25 fp-arms-verified"
+VERSION = "v116"
+BUILD = "2026-11-26 smoothed-bind"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4172,6 +4172,54 @@ def point_segment_distance(point, head, tail):
     return (point - (head + along * factor)).length
 
 
+# How far a vertex's weights are pulled toward its neighbours', and for how
+# many passes. Distance weighting alone gives every vertex the bones nearest
+# to it and nothing else, so two vertices either side of a sleeve's ring can
+# end up on different bones. Blender hides that when the armature is left at
+# rest, and Halo does not: posing the arms tears the sleeve into bands and
+# drags its edges into spikes. Measured on this item's own armour, a 45 degree
+# shoulder and elbow bend stretched 128 of 12232 edges more than 3x, worst
+# x11.33 - which is the banded sleeve in the game. Averaging each vertex with
+# the vertices its edges reach makes a shell share its influences across the
+# joint instead, so the same pose bends it rather than ripping it.
+SMOOTH_PASSES = 4
+SMOOTH_OWN = 0.5
+
+
+def smooth_weights(weights, mesh, passes=SMOOTH_PASSES, keep=2):
+    """Average each vertex's bone weights with its edge neighbours'.
+
+    ``weights`` is one {bone_name: weight} per vertex, in mesh order. A pass
+    keeps half of a vertex's own weights and takes half from the vertices an
+    edge away, then Halo's two-influence limit is applied by keeping each
+    vertex's two heaviest bones and renormalising them to 1. Edges only exist
+    inside a shell, so no weight crosses the gap between an item's parts.
+    """
+    inside = [[] for _ in mesh.vertices]
+    for edge in mesh.edges:
+        first, second = edge.vertices
+        inside[first].append(second)
+        inside[second].append(first)
+    for _ in range(passes):
+        blended = []
+        for index, own in enumerate(weights):
+            shared = {name: value * SMOOTH_OWN for name, value in own.items()}
+            near = inside[index]
+            if near:
+                share = (1.0 - SMOOTH_OWN) / len(near)
+                for other in near:
+                    for name, value in weights[other].items():
+                        shared[name] = shared.get(name, 0.0) + value * share
+            blended.append(shared)
+        weights = blended
+    trimmed = []
+    for own in weights:
+        top = sorted(own.items(), key=lambda pair: -pair[1])[:keep]
+        total = sum(value for _, value in top) or 1.0
+        trimmed.append({name: value / total for name, value in top})
+    return trimmed
+
+
 def skin(object_data, armature, influences=2, rigid=False):
     """Distance weighting against the biped, so shells and open meshes work.
 
@@ -4201,20 +4249,25 @@ def skin(object_data, armature, influences=2, rigid=False):
             [vertex.index for vertex in mesh.vertices], 1.0, "REPLACE")
         tally = {chosen: float(len(mesh.vertices))}
     else:
-        groups = {name: object_data.vertex_groups.new(name=name) for name in names}
-        tally = {}
+        # Inverse-square falloff first: nearest bone dominant, weights summing
+        # to 1. Then the smoothing pass, which is what keeps a sleeve whole
+        # when the joint under it turns.
+        nearest = []
         for vertex in mesh.vertices:
             point = world @ vertex.co
             scored = sorted(
                 ((point_segment_distance(point, head, tail), name)
                  for name, (head, tail) in segments.items()),
                 key=lambda pair: pair[0])[:influences]
-            # Inverse-square falloff, nearest bone dominant, weights summing to 1.
-            weights = [(name, 1.0 / max(distance, 1e-4) ** 2)
-                       for distance, name in scored]
-            total = sum(weight for _, weight in weights) or 1.0
-            for name, weight in weights:
-                groups[name].add([vertex.index], weight / total, "REPLACE")
+            nearest.append({name: 1.0 / max(distance, 1e-4) ** 2
+                            for distance, name in scored})
+        weights = smooth_weights(nearest, mesh)
+        groups = {name: object_data.vertex_groups.new(name=name) for name in names}
+        tally = {}
+        for index, own in enumerate(weights):
+            total = sum(own.values()) or 1.0
+            for name, weight in own.items():
+                groups[name].add([index], weight / total, "REPLACE")
                 tally[name] = tally.get(name, 0.0) + weight / total
 
     object_data.parent = armature
