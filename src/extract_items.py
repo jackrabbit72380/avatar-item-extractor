@@ -1325,13 +1325,22 @@ def derived_detail(picture, size):
 
 
 def derived_shine(texture, size):
-    """A specular mask from the base map: dark near-neutral plate shines.
+    """A specular mask from the base map: plate reflects, skin and black do not.
 
-    Halo's armour has a specular mask in the multipurpose map's blue channel and
-    the suit's cloth does not. The item carries no such mask, so this reads it
-    off the paint: the plates are dark and near-neutral, the cloth is warm and
-    lighter, which is the same split --tint derived uses. A rule, not the
-    item's data, and report.txt says so.
+    Halo's armour reflects a cube map through the multipurpose map's blue
+    channel, and the Chief's own shader does the same thing - cubemapped
+    specularity - so this is the mask that decides where. Three things are
+    deliberately excluded, because a reflection on them is wrong:
+
+      * the black parts (luma under about 0.10) - under-suit and joints, which
+        are meant to stay black;
+      * skin (warm and light: red well above blue), which the face and hands are;
+      * cloth, which is warm too, and the same armour/cloth split --tint derived
+        uses for the team colour.
+
+    What is left is the dark, near-neutral plate - the part of a Halo suit that
+    is metal. A rule read off the paint, not a mask the item shipped, and
+    report.txt says so.
     """
     rgba, width, height = texture["rgba"], texture["width"], texture["height"]
     out = bytearray(size * size)
@@ -1342,11 +1351,14 @@ def derived_shine(texture, size):
             at = (row + min(width - 1, x * width // size)) * 4
             red, green, blue = rgba[at], rgba[at + 1], rgba[at + 2]
             lit = (red * 299 + green * 587 + blue * 114) / 255000.0
-            warm = min(1.0, max(0.0, (red - blue - 8.0) / 22.0))
-            # The plates sit around 0.25-0.30 luminance and the tan cloth at
-            # 0.43, so the ramp is narrow: below 0.28 is plate and 0.40 is not.
-            dark = min(1.0, max(0.0, (0.40 - lit) / 0.12))
-            out[y * size + x] = int(round(255 * dark * (1.0 - warm)))
+            # Nothing below 0.10 (black under-suit), full from 0.16 to 0.32,
+            # gone by 0.42 (bright paint and light cloth).
+            low = min(1.0, max(0.0, (lit - 0.10) / 0.06))
+            high = min(1.0, max(0.0, (0.42 - lit) / 0.10))
+            # Warmth is red minus blue: plate sits under about 26, cloth around
+            # 35, skin over 100. 36 or more takes the shine to nothing.
+            warm = min(1.0, max(0.0, (36 - (red - blue)) / 10.0))
+            out[y * size + x] = int(round(255 * low * high * warm))
     return bytes(out)
 
 
@@ -2048,9 +2060,13 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
     if shine.get("source"):
         lines.append("specular:  %s" % shine["source"])
         lines.append("           Guerilla: shader_model -> reflection type = cube"
-                     " map, a cube map of your choice, and reflection colour;"
-                     " the multipurpose map's BLUE channel is the mask that shows"
-                     " it%s"
+                     " map, and the SAME cube map the stock cyborg (Master"
+                     " Chief) armour shader uses, in its SP and in its MP"
+                     " version - the stock model ships it as \"cyborg"
+                     " reflection armor\", with a separate cube map for the"
+                     " visor. Copy the reference out of the cyborg armour"
+                     " shader_model in your own tags. The multipurpose map's"
+                     " BLUE channel is the mask that shows it%s"
                      % ("" if shine.get("mask") else " - it is empty here, so no"
                         " shine is painted and nothing reflects"))
     glow = facts.get("glow") or {}

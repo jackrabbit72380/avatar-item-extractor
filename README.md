@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v141.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v142.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -744,10 +744,19 @@ armour/cloth split the team colour uses) lands in blue, and `glow_mask.png`
 lands in green. Both are also written beside the item as lookable masks, and
 `report.txt` says which was used.
 
-For the shine itself set reflection type = cube map and give it a cube map (the
-HEK ships them under `tags\characters\...`; the Elite's is `cubemap blue
-tone`). Painting blue is what switches it on; leaving it zero is a matte
-surface, not a claim that Halo has no shine.
+For the shine itself, use the **same cube map the stock cyborg (Master Chief)
+armour shader uses, in both its SP and its MP version** — copy the reference out
+of that `shader_model` in your own tags. The stock model ships the armour's as
+`cyborg reflection armor`, with a separate six-face cube map for the visor; the
+Elite uses `cubemap blue tone`. Nothing needs authoring: the armour reflects the
+level through the game's own cube map, exactly as his does, and both versions
+should reference the same one so SP and MP match.
+
+Painting blue is what switches it on, and the mask covers **armoured plate
+only**. The derived rule refuses the black parts (luma under about 0.10 — the
+under-suit and joints, which are meant to stay black) and anything warm: skin is
+red well above blue, so the face and hands never reflect, and neither does the
+tan cloth. Leaving blue zero is a matte surface, not a claim Halo has no shine.
 
 None of this is measured in game: there is no `tool.exe` here, so the tag
 settings above are from the documented channel behaviour, not from a compiled
@@ -1255,7 +1264,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v141.bat` and
+`Extract UNSC Marine Armor Avatar-v142.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1270,7 +1279,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v141.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v142.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1320,9 +1329,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v141.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v142.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v141.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v142.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
