@@ -76,6 +76,24 @@ check("green is self-illumination, unpainted", set(packed[1::4]), {0})
 check("blue is specular, unpainted", set(packed[2::4]), {0})
 check("alpha is the colour change", list(packed[3::4][:4]), [0, 64, 128, 255])
 
+print("shine and glow take blue and green, and nothing overrides the detail")
+shine = bytes([0, 64, 128, 255] * 4)
+glow = bytes([10, 20, 30, 40] * 4)
+packed_all = items.packed_multipurpose(detail, tint, 4, glow, shine)
+check("green is self-illumination", list(packed_all[1::4][:4]), [10, 20, 30, 40])
+check("blue is the specular mask", list(packed_all[2::4][:4]), [0, 64, 128, 255])
+check("red and alpha are untouched by them",
+      (list(packed_all[0::4][:2]), list(packed_all[3::4][:2])),
+      ([255, 255], [0, 64]))
+
+print("the derived specular mask shines on dark neutral plate, not warm cloth")
+plate = {"rgba": bytes([60, 66, 55, 255] * 4), "width": 2, "height": 2}
+cloth = {"rgba": bytes([123, 109, 88, 255] * 4), "width": 2, "height": 2}
+bright = {"rgba": bytes([235, 235, 235, 255] * 4), "width": 2, "height": 2}
+check("plate shines", set(items.derived_shine(plate, 2)), {255})
+check("cloth does not", max(items.derived_shine(cloth, 2)) < 60, True)
+check("bright paint does not", max(items.derived_shine(bright, 2)), 0)
+
 print("the team-colour base map is whitened by the mask, not recoloured")
 rgba = bytes([0, 128, 255, 200] * 4)
 mask = bytes([0, 255, 128, 64])

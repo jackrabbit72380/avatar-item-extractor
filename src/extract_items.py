@@ -637,6 +637,12 @@ TINT_MODE = "item"
 # the base map, anything else is a path to a .png.
 DETAIL_MODE = None
 DETAIL_MASK = None
+# The other two channels of the same bitmap: blue is the specular/reflection
+# mask (a cube map shines through it) and green is self-illumination. Halo's
+# armour has both; an avatar item's slots carry neither as a mask this build
+# can read, so they are authored or derived, and report.txt says which.
+SHINE_MODE = None
+GLOW_MASK = None
 
 
 def plain_build(stem):
@@ -1318,16 +1324,46 @@ def derived_detail(picture, size):
     return bytes(art), bytes(mask)
 
 
-def packed_multipurpose(detail, tint, size):
+def derived_shine(texture, size):
+    """A specular mask from the base map: dark near-neutral plate shines.
+
+    Halo's armour has a specular mask in the multipurpose map's blue channel and
+    the suit's cloth does not. The item carries no such mask, so this reads it
+    off the paint: the plates are dark and near-neutral, the cloth is warm and
+    lighter, which is the same split --tint derived uses. A rule, not the
+    item's data, and report.txt says so.
+    """
+    rgba, width, height = texture["rgba"], texture["width"], texture["height"]
+    out = bytearray(size * size)
+    for y in range(size):
+        source_y = min(height - 1, y * height // size)
+        row = source_y * width
+        for x in range(size):
+            at = (row + min(width - 1, x * width // size)) * 4
+            red, green, blue = rgba[at], rgba[at + 1], rgba[at + 2]
+            lit = (red * 299 + green * 587 + blue * 114) / 255000.0
+            warm = min(1.0, max(0.0, (red - blue - 8.0) / 22.0))
+            # The plates sit around 0.25-0.30 luminance and the tan cloth at
+            # 0.43, so the ramp is narrow: below 0.28 is plate and 0.40 is not.
+            dark = min(1.0, max(0.0, (0.40 - lit) / 0.12))
+            out[y * size + x] = int(round(255 * dark * (1.0 - warm)))
+    return bytes(out)
+
+
+def packed_multipurpose(detail, tint, size, glow=None, shine=None):
     """The four masks in one bitmap, in Halo CE / Gearbox order.
 
     red detail, green self-illumination, blue specular, alpha colour change.
-    Self-illumination and specular stay zero: the item states neither, and a
-    guess about which panels glow or shine is still a guess.
+    A channel stays zero when nothing supplied it: this writes what it is given
+    rather than inventing a shine or a light.
     """
     packed = bytearray(size * size * 4)
     if detail:
         packed[0::4] = detail
+    if glow:
+        packed[1::4] = glow
+    if shine:
+        packed[2::4] = shine
     if tint:
         packed[3::4] = tint
     return bytes(packed)
@@ -2008,6 +2044,21 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                      " %s" % (stem, detail_map.get("mask_source")))
     elif detail_map.get("source"):
         lines.append("detail:    %s" % detail_map["source"])
+    shine = facts.get("shine") or {}
+    if shine.get("source"):
+        lines.append("specular:  %s" % shine["source"])
+        lines.append("           Guerilla: shader_model -> reflection type = cube"
+                     " map, a cube map of your choice, and reflection colour;"
+                     " the multipurpose map's BLUE channel is the mask that shows"
+                     " it%s"
+                     % ("" if shine.get("mask") else " - it is empty here, so no"
+                        " shine is painted and nothing reflects"))
+    glow = facts.get("glow") or {}
+    if glow.get("source"):
+        lines.append("glow:      %s" % glow["source"])
+        lines.append("           Guerilla: the multipurpose map's GREEN channel is"
+                     " the self-illumination mask; white lights up in the dark"
+                     " without a light source")
     team = facts.get("team_colour_base") or {}
     if team.get("tif"):
         lines.append("team colour: %s - the item's base map with the tinted texels"
@@ -2206,18 +2257,28 @@ def main(argv=None):
                         help="the detail map: 'derived' from the item's own base map,"
                              " or a .png of your own; written as <item> detail and"
                              " masked by the multipurpose map's red channel")
+    parser.add_argument("--shine", default=None, metavar="MODE",
+                        help="the specular/reflection mask (multipurpose blue):"
+                             " 'derived' from the base map, or a .png")
+    parser.add_argument("--glow", default=None, metavar="PNG",
+                        help="the self-illumination mask (multipurpose green):"
+                             " a .png, white = lights up")
     parser.add_argument("--detail-mask", dest="detail_mask", default=None,
                         metavar="PNG",
                         help="where that detail shows: white = detail. Default is the"
                              " texels the item paints (or the detail art's own coverage)")
     args = parser.parse_args(argv)
-    global TINT_MODE, DETAIL_MODE, DETAIL_MASK
+    global TINT_MODE, DETAIL_MODE, DETAIL_MASK, SHINE_MODE, GLOW_MASK
     if args.tint is not None:
         TINT_MODE = args.tint
     if args.detail is not None:
         DETAIL_MODE = args.detail
     if args.detail_mask is not None:
         DETAIL_MASK = args.detail_mask
+    if args.shine is not None:
+        SHINE_MODE = args.shine
+    if args.glow is not None:
+        GLOW_MASK = args.glow
 
     out = args.out_option or args.out or "extracted"
 
@@ -2799,15 +2860,63 @@ def main(argv=None):
                 "source": detail_note,
             }
 
+            # The other two channels. Blue is the specular/reflection mask - the
+            # armour's shine, with a cube map showing through it - and green is
+            # self-illumination, the lights. Halo's armour has both; nothing the
+            # build reads out of an avatar item's slots is either as a mask, so
+            # they are authored or derived and the report says which.
+            shine_small = None
+            glow_small = None
+            shine_note = None
+            glow_note = None
+            if SHINE_MODE:
+                if SHINE_MODE == "derived" and picture:
+                    shine_small = derived_shine(picture, small_size)
+                    shine_note = ("derived from the base map: dark near-neutral"
+                                  " plate shines, warm cloth does not - a rule,"
+                                  " not the item's own data")
+                else:
+                    shine_small = mask_from_image(SHINE_MODE, small_size)
+                    shine_note = ("authored from %s" % os.path.basename(SHINE_MODE)
+                                  if shine_small else
+                                  "none - %s could not be read" % SHINE_MODE)
+            if GLOW_MASK:
+                glow_small = mask_from_image(GLOW_MASK, small_size)
+                glow_note = ("authored from %s: white lights up"
+                             % os.path.basename(GLOW_MASK) if glow_small else
+                             "none - %s could not be read" % GLOW_MASK)
+            for suffix, data, what in (("specular", shine_small, shine_note),
+                                       ("self-illumination", glow_small, glow_note)):
+                if not data:
+                    continue
+                name = os.path.join(out, "%s %s" % (stem, suffix))
+                shown = bytearray(len(data) * 4)
+                shown[0::4] = data
+                shown[1::4] = data
+                shown[2::4] = data
+                shown[3::4] = bytes([255]) * len(data)
+                write_png(name + ".png", bytes(shown), small_size, small_size)
+                write_tga(name + ".tga", bytes(shown), small_size, small_size)
+                write_tiff(name + ".tif", bytes(shown), small_size, small_size)
+            facts["shine"] = {"mask": bool(shine_small), "source": shine_note}
+            facts["glow"] = {"mask": bool(glow_small), "source": glow_note}
+
             multipurpose = os.path.join(out, "%s multipurpose" % stem)
-            if detail_mask_small is None:
+            if detail_mask_small is None and shine_small is None and glow_small is None:
                 write_mask(multipurpose, 3)
             else:
+                big_detail = (stretch(detail_mask_small, small_size, png_size)
+                              if detail_mask_small else None)
+                big_shine = (stretch(shine_small, small_size, png_size)
+                             if shine_small else None)
+                big_glow = (stretch(glow_small, small_size, png_size)
+                            if glow_small else None)
                 write_png(multipurpose + ".png",
-                          packed_multipurpose(stretch(detail_mask_small, small_size,
-                                                      png_size), big, png_size),
+                          packed_multipurpose(big_detail, big, png_size,
+                                              big_glow, big_shine),
                           png_size, png_size)
-                packed = packed_multipurpose(detail_mask_small, small, small_size)
+                packed = packed_multipurpose(detail_mask_small, small, small_size,
+                                             glow_small, shine_small)
                 write_tga(multipurpose + ".tga", packed, small_size, small_size)
                 write_tiff(multipurpose + ".tif", packed, small_size, small_size)
             record["multipurpose"] = {

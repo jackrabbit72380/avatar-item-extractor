@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v140.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v141.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -734,12 +734,20 @@ multipurpose slot at `<item> multipurpose`: the alpha marks what takes the
 colour and the tinted areas read as the player's colour rather than the colour
 times the suit.
 
-**The armour's shine is a cube map**, and nothing here can invent one: in
-Guerilla set reflection type = cube map and give it a cube map (the HEK ships
-them under `tags\characters\...`; the Elite's is `cubemap blue tone`). The
-multipurpose map's **blue** channel masks where it shows, and blue is zero in
-these builds because the item states no shine - painting blue is the step that
-turns it on.
+**Shine and lights.** Halo's armour has both, and `shader_model` reads the two
+masks from the multipurpose map's **blue** (specular/reflection, with a cube map
+showing through it) and **green** (self-illumination). Nothing this build reads
+out of an avatar item's slots is either of them, so they are authored or
+derived, never invented silently: `shine_mask.png` (or `shine_mode.txt`
+containing `derived`, which reads a specular mask off the base map by the same
+armour/cloth split the team colour uses) lands in blue, and `glow_mask.png`
+lands in green. Both are also written beside the item as lookable masks, and
+`report.txt` says which was used.
+
+For the shine itself set reflection type = cube map and give it a cube map (the
+HEK ships them under `tags\characters\...`; the Elite's is `cubemap blue
+tone`). Painting blue is what switches it on; leaving it zero is a matte
+surface, not a claim that Halo has no shine.
 
 None of this is measured in game: there is no `tool.exe` here, so the tag
 settings above are from the documented channel behaviour, not from a compiled
@@ -1247,7 +1255,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v140.bat` and
+`Extract UNSC Marine Armor Avatar-v141.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1262,7 +1270,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v140.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v141.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1312,9 +1320,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v140.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v141.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v140.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v141.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it

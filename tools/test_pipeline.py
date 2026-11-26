@@ -790,6 +790,50 @@ def main():
                 print("\nFAIL: report.txt does not mention %r" % wanted)
                 return 1
 
+        # Halo's armour shines and has lights; the blue and green channels are
+        # where shader_model reads those two masks, so a derived specular mask
+        # and an authored glow mask must land there and nowhere else.
+        glow_png = os.path.join(work, "glow.png")
+        extract_items.write_png(glow_png,
+                                bytes((255, 255, 255, 255)) * 64, 8, 8)
+        # Authored masks here: the derived specular rule is pinned by its own
+        # unit test against plate and cloth colours, and this fixture's base map
+        # is bright paint that the rule rightly leaves matte.
+        shine_png = os.path.join(work, "shine.png")
+        extract_items.write_png(shine_png,
+                                bytes((255, 255, 255, 255)) * 64, 8, 8)
+        out_shine = os.path.join(work, "shine-out")
+        extract_items.TINT_MODE = "derived"
+        extract_items.SHINE_MODE = shine_png
+        extract_items.GLOW_MASK = glow_png
+        try:
+            code = extract_items.main(["--root", inbox_tint, "--obj", "--out", out_shine])
+        finally:
+            extract_items.TINT_MODE = "item"
+            extract_items.SHINE_MODE = None
+            extract_items.GLOW_MASK = None
+        if code not in (0, None):
+            print("FAIL: the --shine/--glow extractor returned %r" % (code,))
+            return 1
+        shine_users = os.path.join(out_shine, "extracted for max users")
+        packed_shine = pixels(os.path.join(shine_users, "Tint Trap multipurpose.png"))
+        blue = sum(1 for pixel in packed_shine if pixel[2])
+        green = sum(1 for pixel in packed_shine if pixel[1])
+        print("  shine + glow      blue (specular) %d, green (self-illum) %d"
+              % (blue, green))
+        if not blue:
+            print("\nFAIL: the specular mask did not reach the blue channel")
+            return 1
+        if not green:
+            print("\nFAIL: the glow mask did not reach the green channel")
+            return 1
+        with open(os.path.join(out_shine, "report.txt"), encoding="utf-8") as handle:
+            report_shine = handle.read()
+        for wanted in ("specular:", "glow:", "BLUE channel", "GREEN channel"):
+            if wanted not in report_shine:
+                print("\nFAIL: report.txt does not mention %r" % wanted)
+                return 1
+
         # Two base maps side by side: the item's own, and a copy with its decal
         # blended in - decal.rgb by its own alpha, the rule both readers of the
         # format use. The plain map must carry none of the decal, and the blend
