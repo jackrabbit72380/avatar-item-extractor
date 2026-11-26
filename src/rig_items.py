@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v133"
-BUILD = "every plate is solid from both sides"
+VERSION = "v134"
+BUILD = "the arms swing as one piece, and plates stay on the body"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2115,9 +2115,12 @@ def fit_body_points(points, edges, plan):
     return placed, scale, worst
 
 
-# The four bones whose plates are turned by where their own far end reaches.
-ARM_BONES = ("bip01 l upperarm", "bip01 l forearm",
-             "bip01 r upperarm", "bip01 r forearm")
+# The bones an arm's plates ride, and how far from the arm's line a plate may
+# sit and still count as part of it. A sleeve is 3-4 units across; a shoulder pad
+# reaches 7, and a plate as far out as that belongs to the shoulder, not the arm.
+ARM_GROUPS = ("bip01 l upperarm", "bip01 l forearm", "bip01 l hand",
+              "bip01 r upperarm", "bip01 r forearm", "bip01 r hand")
+ARM_TUBE = 6.0
 
 
 def shell_direction(points):
@@ -2214,8 +2217,51 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
     shells = {}
     for index in range(len(mesh.vertices)):
         shells.setdefault(find(index), []).append(index)
+    # One swing per arm, measured from the arm's own plates: the shoulder the
+    # item gives, the farthest plate that rides the arm, and Halo's line from
+    # that shoulder to its hand. Turning every plate of an arm by this same
+    # rotation keeps the arm together; measuring each plate separately does not.
+    arm_turn = {}
+    for side, up, hand in (("l", "bip01 l upperarm", "bip01 l hand"),
+                           ("r", "bip01 r upperarm", "bip01 r hand")):
+        upper = by_bone.get(up)
+        wrist = armature.data.bones.get(hand)
+        if upper is None or wrist is None:
+            continue
+        shoulder = upper["source"]
+        arm_group = {up, "bip01 %s forearm" % side, hand}
+        tip, reach = None, 0.0
+        for corners_shell in shells.values():
+            voted = {}
+            for index in corners_shell:
+                for entry_group in mesh.vertices[index].groups:
+                    name = groups.get(entry_group.group)
+                    if name in arm_group:
+                        voted[name] = voted.get(name, 0.0) + entry_group.weight
+            if not voted or max(voted, key=voted.get) not in arm_group:
+                continue
+            for index in corners_shell:
+                far = fit_length(fit_between(shoulder, points[index]))
+                if far > reach:
+                    reach, tip = far, points[index]
+        if tip is None or reach < 8.0:
+            continue
+        matrix = armature.matrix_world
+        halo = fit_unit(fit_between(tuple(matrix @ armature.data.bones[up].head_local),
+                                    tuple(matrix @ wrist.head_local)))
+        own = fit_unit(fit_between(shoulder, tip))
+        if halo is None or own is None:
+            continue
+        facing = sum(own[step] * halo[step] for step in range(3))
+        if facing <= -0.999:
+            continue
+        swing = fit_turn(own, halo)
+        if swing is not None:
+            for name in arm_group:
+                arm_turn[name] = (shoulder, swing, tip)
     placed = list(points)
     turned_shells = 0
+    arms_turned = 0
     for corners in shells.values():
         votes = {}
         for index in corners:
@@ -2236,29 +2282,29 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         # while its joints are not, so where the plate's own axis can be
         # measured, that axis is what is turned onto the bone.
         turn = entry["turn"]
-        bone = armature.data.bones.get(ridden)
-        # Only the arms are measured this way, and only against the far end of
-        # the plate they ride. The rest of the body is already where its bones
-        # are, and a plate whose longest side is not the bone's side - a pelvis
-        # is widest across the hips, not up the spine - would be turned flat by
-        # measuring it, which is how a first attempt ended with the soles at
-        # -6 units and the body in the floor.
-        if ridden in ARM_BONES and bone is not None and len(corners) >= 8:
-            matrix = armature.matrix_world
-            along = fit_unit(fit_between(tuple(matrix @ bone.head_local),
-                                         tuple(matrix @ bone.tail_local)))
-            far = max(corners, key=lambda index: fit_length(
-                fit_between(source, points[index])))
-            reach = fit_unit(fit_between(source, points[far]))
-            if along is not None and reach is not None:
-                # The plate's far end has to be a real reach out from the
-                # joint, or a shoulder pad would be turned by its own thickness.
-                if fit_length(fit_between(source, points[far])) > 8.0:
-                    facing = sum(reach[step] * along[step] for step in range(3))
-                    if facing > -0.999:
-                        measured = fit_turn(reach, along)
-                        if measured is not None:
-                            turn = measured
+        centre = source
+        # The arms are turned as ONE unit, about the shoulder, and only the
+        # plates lying along the arm are turned at all. A plate near a shoulder
+        # can ride the upper arm while sticking out to the side of it - a
+        # shoulder pad, a collar plate - and turning that by the arm's own swing
+        # throws it away from the body: that is the ring of shards a per-plate
+        # turn produced. So the swing is measured once, from where the arm's
+        # plates actually end, and a plate joins the arm only if it sits inside
+        # the arm's own tube.
+        if ridden in ARM_GROUPS and arm_turn.get(ridden) is not None:
+            shoulder, swing, tip = arm_turn[ridden]
+            middle = [sum(points[index][step] for index in corners) / len(corners)
+                      for step in range(3)]
+            offset = fit_between(shoulder, middle)
+            along = fit_unit(fit_between(shoulder, tip))
+            if along is not None:
+                down = sum(offset[step] * along[step] for step in range(3))
+                across = [offset[step] - along[step] * down for step in range(3)]
+                if (fit_length(across) < ARM_TUBE
+                        and -ARM_TUBE < down < fit_length(fit_between(shoulder, tip))):
+                    turn = swing
+                    centre = shoulder
+                    arms_turned += 1
         # Two ways to place a plate, and they answer different questions.
         #
         # `limbs` also puts the JOINT on its bone and lengthens the limb to
@@ -2281,7 +2327,7 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         axis = entry.get("axis") or None
         if limbs and axis is not None:
             for index in corners:
-                offset = fit_between(source, points[index])
+                offset = fit_between(centre, points[index])
                 along = sum(offset[step] * axis[step] for step in range(3))
                 stretched = tuple(axis[step] * along * axial
                                   + (offset[step] - axis[step] * along)
@@ -2291,8 +2337,11 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
                                       for step in range(3))
             continue
         for index in corners:
-            turned = fit_turned(turn, fit_between(source, points[index]))
-            placed[index] = tuple(target[step] + turned[step] for step in range(3))
+            turned = fit_turned(turn, fit_between(centre, points[index]))
+            # A plate turned about a point other than its own joint lands where
+            # that point takes it, so the anchor moves with it.
+            anchor = target if centre is source else centre
+            placed[index] = tuple(anchor[step] + turned[step] for step in range(3))
     worst = 1.0
     for edge in mesh.edges:
         first, second = edge.vertices
@@ -2308,6 +2357,9 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
     mesh.update()
     tallest = max(point[2] for point in placed)
     lowest = min(point[2] for point in placed)
+    log("arms: %d plate(s) swung with the arm, the rest left on the body "
+        "(only plates inside the arm's own tube of %.1f units move with it)"
+        % (arms_turned, ARM_TUBE))
     line = ("%d joints, %d shell(s) %s, worst edge x%.2f, %.2f m tall, "
             "soles at %.2f units"
             % (len(plan), turned_shells,
