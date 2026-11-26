@@ -2060,10 +2060,16 @@ def write_report(path, stem, source, size, facts, batches, texture, tables):
                  " build, so this mask is what the shader reads in game. All three"
                  " formats show the mask in colour as well, so it can be looked at"
                  % stem)
+    map_size = 0
+    if facts.get("texture"):
+        map_size = min(int(facts["texture"].get("width") or 0),
+                       int(facts["texture"].get("height") or 0))
     lines.append("multipurpose: %s multipurpose.png/.tga/.tif - Halo CE order:"
                  " red detail, green self-illumination, blue specular,"
                  " alpha colour change. The .png and .tga show the mask in colour"
-                 " too; the .tif keeps it in alpha alone" % stem)
+                 " too; the .tif keeps it in alpha alone. Written at %d x %d, the"
+                 " base map's own size, so every mask texel sits on the texel it"
+                 " masks" % (stem, map_size or 256, map_size or 256))
     detail_map = facts.get("detail_map") or {}
     if detail_map.get("tif"):
         lines.append("detail:    %s - %s, written at %d"
@@ -2685,15 +2691,21 @@ def main(argv=None):
             # The shader samples these in the base map's texture space, so a mask
             # that is carried in from another UV set follows the geometry and
             # lands on the bases the item painted.
-            # The PNG is the one a person looks at and keeps, so it is 1024 and
-            # compresses to a few kilobytes. The .tga and .tif are the same mask
-            # uncompressed - at 1024 that is 4 MB each, four masks, three
-            # formats, six copies: 40-odd MB an item. They are the files that go
-            # into tool.exe or a legacy slot, where 256 is plenty, so they are
-            # written at 256 instead.
-            png_size = 1024
-            small_size = 256
+            # Every mask is written at the size of the base map it masks: one
+            # mask texel per base-map texel, the same layout at the same
+            # resolution, so the mask and the map it belongs to can be put side
+            # by side and read against each other. Fixed sizes were wrong twice
+            # over - a 1024 PNG and a 256 .tga/.tif beside a map that is neither
+            # - so nothing in the mask lined up with the texture it describes,
+            # and a mask that does not line up is not a mask anybody can check.
+            # With no base map there is nothing to match, so it falls back to
+            # 256.
             picture = facts.get("texture")
+            map_size = 0
+            if picture:
+                map_size = min(int(picture.get("width") or 0),
+                               int(picture.get("height") or 0))
+            png_size = small_size = map_size or 256
             # The decal is part of the item's look, and Halo CE's shader_model
             # has one colour layer: at run time there is nothing to blend with,
             # so the blend has to be a picture - decal.rgb by decal.a, the rule

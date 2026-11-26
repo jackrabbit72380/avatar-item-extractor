@@ -504,8 +504,11 @@ def main():
         covered = sum(1 for value in coverage if value) / float(len(coverage))
         print("  multipurpose    -> %d texels, %.1f%% lit, alpha values %r"
               % (len(ce), covered * 100, sorted(set(coverage))))
-        if len(ce) != 1024 * 1024:
-            print("\nFAIL: the mask is %d texels, expected 1024x1024" % (len(ce),))
+        # Every mask is written at the base map's own size, texel for texel. This
+        # item carries no base map, so it takes the 256 fallback.
+        if len(ce) != 256 * 256:
+            print("\nFAIL: the mask is %d texels, expected the base map's 256x256"
+                  % (len(ce),))
             return 1
         if sorted(set(coverage)) != [0, 255]:
             print("\nFAIL: the team-colour mask is not a two-value island mask")
@@ -761,6 +764,17 @@ def main():
             print("\nFAIL: the derived detail map is not grey")
             return 1
         packed = pixels(os.path.join(detail_users, "Tint Trap multipurpose.png"))
+        # The mask follows the base map's size, so a texel of it sits on the
+        # texel of the map it masks. The two are written from different code
+        # paths and were 1024 and 256 regardless of the map before this.
+        base_map_pixels = pixels(os.path.join(detail_users,
+                                              "Tint Trap base map.png"))
+        print("  mask size         %d texels against the base map's %d"
+              % (len(packed), len(base_map_pixels)))
+        if len(packed) != len(base_map_pixels):
+            print("\nFAIL: the multipurpose map is %d texels and the base map %d"
+                  % (len(packed), len(base_map_pixels)))
+            return 1
         red = sum(1 for pixel in packed if pixel[0])
         alpha = sum(1 for pixel in packed if pixel[3])
         print("  multipurpose      red (detail mask) %d, alpha (colour change) %d"
