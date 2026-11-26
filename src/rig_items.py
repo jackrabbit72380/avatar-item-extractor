@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v138"
-BUILD = "arms hang, feet stand, and it is checked by rendering it"
+VERSION = "v139"
+BUILD = "the painted face"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -1244,6 +1244,55 @@ def name_remaining_materials(object_data, bitmap, stem):
     return named
 
 
+# Where the avatar's own face sits on its face sheet, measured from the image:
+# chin at the bottom of the painted face, forehead at the top.
+FACE_BAND = (0.08, 0.95)
+
+
+def project_face_uvs(mesh):
+    """Lay the painted face onto the sheet from where the head actually is.
+
+    The item's own face coordinates were laid out for the item's own sheet: on
+    this armour they sit inside one texel of it, which is why the game showed a
+    blank mask. Pointing them at the avatar's sheet without moving them put skin
+    under every triangle but the features in the wrong places - eyes out on a
+    cheek, nose across the middle.
+
+    So the face is projected: u across the head, v up it from the chin, into the band of the sheet the
+    avatar's own face occupies. It runs again at export because the join with
+    the ported head merges UV layers, and the coordinates written before that
+    are not the ones the .jms gets.
+    """
+    slots = [slot for slot, material in enumerate(mesh.materials)
+             if material is not None and (material.name or "").lower().endswith(" face")]
+    if not slots:
+        return 0
+    wanted = set(slots)
+    face = [polygon for polygon in mesh.polygons if polygon.material_index in wanted]
+    if not face:
+        return 0
+    corners = [mesh.vertices[mesh.loops[index].vertex_index].co
+               for polygon in face for index in polygon.loop_indices]
+    # The head looks along +x, so the face runs across y and up z. Using x for
+    # the across direction left every triangle on one texel column.
+    left = min(point.y for point in corners); right = max(point.y for point in corners)
+    chin = min(point.z for point in corners); crown = max(point.z for point in corners)
+    if mesh.uv_layers.active is None:
+        mesh.uv_layers.new(name="UVMap")
+    layers = list(mesh.uv_layers)
+    across = max(right - left, 1e-6)
+    tall = max(crown - chin, 1e-6)
+    for polygon in face:
+        for index in polygon.loop_indices:
+            point = mesh.vertices[mesh.loops[index].vertex_index].co
+            u = 0.5 + (point.y - (left + right) / 2.0) / (across * 1.10)
+            v = FACE_BAND[0] + (point.z - chin) / tall * (FACE_BAND[1] - FACE_BAND[0])
+            placed = (min(max(u, 0.02), 0.98), min(max(v, 0.02), 0.98))
+            for layer in layers:
+                layer.data[index].uv = placed
+    return len(face)
+
+
 def bind_face_sheet(object_data, sheet, path, stem):
     """Paint a costume's own face with the avatar's own face sheet.
 
@@ -1295,10 +1344,13 @@ def bind_face_sheet(object_data, sheet, path, stem):
     mesh.materials.append(material)
     target = len(mesh.materials) - 1
     moved = 0
+    was_face = set()
     for polygon in mesh.polygons:
         if polygon.material_index in wanted:
             polygon.material_index = target
+            was_face.add(polygon.index)
             moved += 1
+    project_face_uvs(mesh)
     for index in range(len(mesh.materials) - 1, -1, -1):
         if any(polygon.material_index == index for polygon in mesh.polygons):
             continue
@@ -5638,6 +5690,7 @@ def export_jms(object_data, armature, path, arms=False):
     world = object_data.matrix_world
     inverse = armature.matrix_world.inverted()
     rotate = inverse.to_3x3()
+    project_face_uvs(mesh_data)
     uv_layer = mesh_data.uv_layers.active
     group_names = {group.index: group.name for group in object_data.vertex_groups}
 
