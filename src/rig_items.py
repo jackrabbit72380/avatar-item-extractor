@@ -30,7 +30,7 @@ import sys
 
 import bmesh
 import bpy
-from mathutils import Quaternion, Vector
+from mathutils import Quaternion, Vector, kdtree
 
 # The .jms is positional and carries no section markers, so one wrong count shifts
 # everything after it and the file still reads as text. It is checked as it is
@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v117"
-BUILD = "2026-11-26 body-fit-not-skipped"
+VERSION = "v118"
+BUILD = "2026-11-26 armour-rides-the-body-under-it"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4220,6 +4220,68 @@ def smooth_weights(weights, mesh, passes=SMOOTH_PASSES, keep=2):
     return trimmed
 
 
+# The group the ported body's own vertices are tagged with before the join.
+# It is read once, at the first skinning, and removed again: it is not a bone
+# and must never reach a .jms, where every vertex group above the node count
+# would be a node the file does not declare.
+PORT_GROUP = "ported_body"
+
+# How many times the transferred weights are averaged along each shell's own
+# edges. A plate converges to one blend - a solid plate cannot tear itself -
+# while the suit is long enough that its gradient survives.
+PLATE_SMOOTH_PASSES = 100
+
+
+def take_port_tag(object_data, mesh):
+    """Which vertices came from the avatar's own body, then drop the tag.
+
+    The tag survives the join (Blender merges vertex groups by name) and is kept
+    on the object as a plain list, because rebind() deletes every vertex group
+    before it skins again and the fit runs between the two skinning passes.
+    """
+    kept = object_data.get(PORT_GROUP)
+    if kept is not None:
+        return [int(index) for index in kept]
+    group = object_data.vertex_groups.get(PORT_GROUP)
+    if group is None:
+        return []
+    kept = [vertex.index for vertex in mesh.vertices
+            if any(entry.group == group.index for entry in vertex.groups)]
+    object_data[PORT_GROUP] = kept
+    object_data.vertex_groups.remove(group)
+    return kept
+
+
+def transfer_from_body(weights, mesh, ported, world):
+    """Give every vertex the weights of the nearest point on the avatar's body.
+
+    The armour is sculpted to sit on that body, so the skin under it is the
+    only thing that can say which bones a plate belongs to. Distance weighting
+    cannot: a pauldron vertex 40 mm from the forearm's bone and 50 mm from the
+    clavicle's gets both, and those two bones turn about axes a metre apart, so
+    the plate is drawn as a spike. Whatever the flesh underneath does, the plate
+    over it must do exactly - and where the armour has no body under it, the
+    nearest point on the body is still the surface it was built to cover.
+    """
+    if not ported:
+        return weights, 0
+    tree = kdtree.KDTree(len(ported))
+    for slot, index in enumerate(ported):
+        tree.insert(world @ mesh.vertices[index].co, slot)
+    tree.balance()
+    covered = set(ported)
+    copied = 0
+    for vertex in mesh.vertices:
+        if vertex.index in covered:
+            continue
+        _point, slot, _away = tree.find(world @ vertex.co)
+        if slot is None:
+            continue
+        weights[vertex.index] = dict(weights[ported[slot]])
+        copied += 1
+    return weights, copied
+
+
 def skin(object_data, armature, influences=2, rigid=False):
     """Distance weighting against the biped, so shells and open meshes work.
 
@@ -4262,6 +4324,19 @@ def skin(object_data, armature, influences=2, rigid=False):
             nearest.append({name: 1.0 / max(distance, 1e-4) ** 2
                             for distance, name in scored})
         weights = smooth_weights(nearest, mesh)
+        ported = take_port_tag(object_data, mesh)
+        weights, copied = transfer_from_body(weights, mesh, ported, world)
+        if copied:
+            # A plate is one solid piece, so every vertex of it has to ride the
+            # same blend: the average of what the body under the whole plate
+            # rides. Smoothing along the shell's own edges is what makes that
+            # happen - a pauldron reaches its own average in a few passes, while
+            # the suit, spanning the waist and both hips, keeps its gradient.
+            # Nothing is thresholded: the shell's size decides by itself.
+            weights = smooth_weights(weights, mesh, passes=PLATE_SMOOTH_PASSES)
+            log("%s: bound %d vertex/vertices to the weights of the avatar body "
+                "under them, then smoothed each shell along its own edges (%d passes)"
+                % (object_data.name, copied, PLATE_SMOOTH_PASSES))
         groups = {name: object_data.vertex_groups.new(name=name) for name in names}
         tally = {}
         for index, own in enumerate(weights):
@@ -5273,6 +5348,12 @@ def main():
                                      eyes_forward=options["eyes_forward"],
                                      item_box=item_box)
                 if ported["objects"]:
+                    # Tag the avatar's own vertices before the join, so the
+                    # armour beside them can copy the bones the flesh rides.
+                    for part in ported["objects"]:
+                        tag = part.vertex_groups.new(name=PORT_GROUP)
+                        tag.add([vertex.index for vertex in part.data.vertices],
+                                1.0, "REPLACE")
                     meshes = meshes + ported["objects"]
                     record["port"] = ported["lines"]
                     if ported.get("join"):

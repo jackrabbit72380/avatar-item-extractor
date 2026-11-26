@@ -272,6 +272,49 @@ def rigid_control(path, shoulder=45.0, elbow=60.0, floor=0.2):
     return worst, seen
 
 
+def follow_control(path, shoulder=45.0, elbow=60.0):
+    """Do the arm's vertices actually travel with the arm?
+
+    A weight field smoothed until it is the same everywhere cannot tear - and
+    cannot bend either. This checks the other half of the story: vertices whose
+    dominant node is an arm bone must move a good part of the way that bone
+    moves. A model whose every vertex moves alike fails here.
+    """
+    names, first, sib, turns, spots, points, weights, triangles = parse(path)
+    worlds, parent = bind_worlds(first, sib, turns, spots)
+    global first_of, sibling_of
+    first_of, sibling_of = first, sib
+    posed = posed_worlds(worlds, parent, turns, spots, names, shoulder, elbow)
+    head = []
+    for index in range(len(names)):
+        rotation, spot = posed[index]
+        moved = carried(rotation, spots[index])
+        moved = tuple(moved[a] + spot[a] for a in range(3))
+        head.append(math.dist(moved, worlds[index][1]))
+    total = [0.0] * len(names)
+    count = [0] * len(names)
+    for vertex, ride in zip(points, weights):
+        node = max(ride, key=ride.get)
+        rotation, spot = posed[node]
+        back = inverse(worlds[node])
+        turned = carried(product(rotation, back[0]), vertex)
+        moved = tuple(turned[a] + (spot[a] + carried(rotation, back[1])[a])
+                      for a in range(3))
+        total[node] += math.dist(moved, vertex)
+        count[node] += 1
+    worst = None
+    tested = 0
+    for index, name in enumerate(names):
+        if not (name.endswith("upperarm") or name.endswith("forearm")):
+            continue
+        if count[index] < 20 or head[index] < 0.5:
+            continue
+        tested += 1
+        ratio = (total[index] / count[index]) / head[index]
+        worst = ratio if worst is None else min(worst, ratio)
+    return worst, tested
+
+
 def controls(path, tolerance=1e-3):
     """Both checks, each one answering pass or fail - never "no data, so fine"."""
     found = []
@@ -279,6 +322,14 @@ def controls(path, tolerance=1e-3):
     found.append(("no pose moves nothing", abs(still - 1.0) <= tolerance and torn == 0,
                   "worst x%.7f, %d torn (tolerance %.0e for the file's float32 quaternions)"
                   % (still, torn, tolerance)))
+    follow, tested = follow_control(path)
+    if follow is None or tested == 0:
+        found.append(("the arm's vertices follow the arm", False,
+                      "0 bones tested - the control could not run"))
+    else:
+        found.append(("the arm's vertices follow the arm", follow >= 0.5,
+                      "worst bone carries x%.2f of its own travel over %d bones "
+                      "(must be at least x0.50)" % (follow, tested)))
     worst, seen = rigid_control(path)
     if seen == 0:
         found.append(("rigid edges keep their length", False,
