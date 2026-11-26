@@ -229,7 +229,23 @@ def measure(path, shoulder, elbow, limit=0.2):
             worst_squash = was / max(now, 1e-9)
         if was / max(now, 1e-9) > 3.0:
             squashed += 1
-    return worst_stretch, torn, worst_squash, squashed, len(edges)
+    seam = {}
+    for index, point in enumerate(points):
+        seam.setdefault((round(point[0], 4), round(point[1], 4),
+                         round(point[2], 4)), []).append(index)
+    gaps = 0
+    widest = 0.0
+    for group in seam.values():
+        if len(group) < 2:
+            continue
+        for x in range(len(group)):
+            for y in range(x + 1, len(group)):
+                apart = math.dist(moved[group[x]], moved[group[y]])
+                widest = max(widest, apart)
+                if apart > 1e-4:
+                    gaps += 1
+    return (worst_stretch, torn, worst_squash, squashed, len(edges),
+            gaps, widest)
 
 
 def rigid_control(path, shoulder=45.0, elbow=60.0, floor=0.2):
@@ -318,7 +334,7 @@ def follow_control(path, shoulder=45.0, elbow=60.0):
 def controls(path, tolerance=1e-3):
     """Both checks, each one answering pass or fail - never "no data, so fine"."""
     found = []
-    still, torn = measure(path, 0.0, 0.0)[0], measure(path, 0.0, 0.0)[1]
+    still, torn, _sq, _cs, _seen, open_at_rest, widest = measure(path, 0.0, 0.0)
     found.append(("no pose moves nothing", abs(still - 1.0) <= tolerance and torn == 0,
                   "worst x%.7f, %d torn (tolerance %.0e for the file's float32 quaternions)"
                   % (still, torn, tolerance)))
@@ -351,7 +367,9 @@ if __name__ == "__main__":
         print("  the deformer is not trustworthy: %d control(s) failed" % failed)
         raise SystemExit(1)
     for shoulder, elbow in POSES:
-        stretch, torn, squash, squashed, count = measure(path, shoulder, elbow)
+        stretch, torn, squash, squashed, count, gaps, widest = measure(path, shoulder, elbow)
         print("  shoulder %3d elbow %3d -> stretch worst x%.2f, %d torn; "
-              "squash worst x%.2f, %d collapsed  (of %d edges)"
-              % (shoulder, elbow, stretch, torn, squash, squashed, count))
+              "squash worst x%.2f, %d collapsed  (of %d edges); "
+              "%d seams open, widest %.4f"
+              % (shoulder, elbow, stretch, torn, squash, squashed, count,
+                 gaps, widest))

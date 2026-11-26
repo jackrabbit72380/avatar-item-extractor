@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v118"
-BUILD = "2026-11-26 armour-rides-the-body-under-it"
+VERSION = "v119"
+BUILD = "2026-11-26 one-blend-per-point"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4220,6 +4220,60 @@ def smooth_weights(weights, mesh, passes=SMOOTH_PASSES, keep=2):
     return trimmed
 
 
+def smooth_by_position(weights, mesh, passes=SMOOTH_PASSES, keep=2):
+    """Average bone weights over positions, not over vertex indices.
+
+    The export splits every face off its neighbours - 5,756 triangles carry
+    17,268 vertices, three each - so there is no edge between one triangle and
+    the next. An edge-based pass therefore sees every triangle as an island and
+    lets neighbours drift apart: that is the crack in the armour you can see
+    straight through. Coincident vertices are one point of the real surface and
+    have to ride one blend, so the weights are averaged where the surface is,
+    not where the exporter split it.
+    """
+    spots = {}
+    where = []
+    for vertex in mesh.vertices:
+        co = vertex.co
+        where.append(spots.setdefault((round(co.x, 5), round(co.y, 5),
+                                       round(co.z, 5)), len(spots)))
+    ring = [set() for _ in range(len(spots))]
+    for edge in mesh.edges:
+        a, b = where[edge.vertices[0]], where[edge.vertices[1]]
+        if a != b:
+            ring[a].add(b)
+            ring[b].add(a)
+    field = [{} for _ in range(len(spots))]
+    count = [0] * len(spots)
+    for slot, own in zip(where, weights):
+        for name, value in own.items():
+            field[slot][name] = field[slot].get(name, 0.0) + value
+        count[slot] += 1
+    for slot in range(len(spots)):
+        total = count[slot] or 1
+        field[slot] = {name: value / total for name, value in field[slot].items()}
+    for _ in range(passes):
+        blended = []
+        for slot, own in enumerate(field):
+            shared = {name: value * SMOOTH_OWN for name, value in own.items()}
+            near = ring[slot]
+            if near:
+                share = (1.0 - SMOOTH_OWN) / len(near)
+                for other in near:
+                    for name, value in field[other].items():
+                        shared[name] = shared.get(name, 0.0) + value * share
+            blended.append(shared)
+        field = blended
+    # One entry per vertex, not one per position: several vertices share a
+    # position, and every one of them must come back with that position's blend.
+    out = []
+    for slot in where:
+        top = sorted(field[slot].items(), key=lambda pair: -pair[1])[:keep]
+        total = sum(value for _, value in top) or 1.0
+        out.append({name: value / total for name, value in top})
+    return out
+
+
 # The group the ported body's own vertices are tagged with before the join.
 # It is read once, at the first skinning, and removed again: it is not a bone
 # and must never reach a .jms, where every vertex group above the node count
@@ -4323,7 +4377,7 @@ def skin(object_data, armature, influences=2, rigid=False):
                 key=lambda pair: pair[0])[:influences]
             nearest.append({name: 1.0 / max(distance, 1e-4) ** 2
                             for distance, name in scored})
-        weights = smooth_weights(nearest, mesh)
+        weights = smooth_by_position(nearest, mesh)
         ported = take_port_tag(object_data, mesh)
         weights, copied = transfer_from_body(weights, mesh, ported, world)
         if copied:
@@ -4333,7 +4387,8 @@ def skin(object_data, armature, influences=2, rigid=False):
             # happen - a pauldron reaches its own average in a few passes, while
             # the suit, spanning the waist and both hips, keeps its gradient.
             # Nothing is thresholded: the shell's size decides by itself.
-            weights = smooth_weights(weights, mesh, passes=PLATE_SMOOTH_PASSES)
+            weights = smooth_by_position(weights, mesh,
+                                         passes=PLATE_SMOOTH_PASSES)
             log("%s: bound %d vertex/vertices to the weights of the avatar body "
                 "under them, then smoothed each shell along its own edges (%d passes)"
                 % (object_data.name, copied, PLATE_SMOOTH_PASSES))
