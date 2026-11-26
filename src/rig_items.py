@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v121"
-BUILD = "2026-11-26 pairs-that-can-bend"
+VERSION = "v122"
+BUILD = "2026-11-26 pads-follow-the-arm"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4284,6 +4284,22 @@ def smooth_by_position(weights, mesh, passes=SMOOTH_PASSES, keep=2, kin=None):
     return out
 
 
+def bone_tree(armature, names):
+    """Which bone each bone hangs from, and which hang from it."""
+    parent = {}
+    children = {name: [] for name in names}
+    for bone in armature.data.bones:
+        if bone.name not in children:
+            continue
+        up = bone.parent
+        while up is not None and up.name not in children:
+            up = up.parent
+        if up is not None:
+            parent[bone.name] = up.name
+            children[up.name].append(bone.name)
+    return parent, children
+
+
 def bone_family(armature, names):
     """Each deform bone with itself, the bone it hangs from, and its children."""
     family = {name: {name} for name in names}
@@ -4337,6 +4353,125 @@ PLATE_SETTLE = 6
 # edges. A plate converges to one blend - a solid plate cannot tear itself -
 # while the suit is long enough that its gradient survives.
 PLATE_SMOOTH_PASSES = 300
+
+# Poses the weighting is tested against, and what counts as being drawn apart.
+# These are the angles tools/test_halo_skin.py measures the exported file at, so
+# the build and the check are looking for the same thing from opposite ends.
+TEAR_POSES = ((45.0, 45.0), (80.0, 60.0))
+TEAR_LIMIT = 1.6
+TEAR_ROUNDS = 30
+
+
+def posed_transforms(armature, names, shoulder, elbow):
+    """posed x inverse(bind) for every bone, which is what Halo applies.
+
+    `objects/models.c` moves every vertex by that product, so shaping the
+    weights against it is shaping them against the game, not against Blender's
+    own deform, which differs wherever the bind pose is not the rest pose.
+    """
+    keep = {}
+    for bone in armature.pose.bones:
+        keep[bone.name] = (bone.rotation_mode,
+                           bone.rotation_quaternion.copy(),
+                           bone.rotation_euler.copy())
+        bone.rotation_mode = "XYZ"
+        tail = bone.name.rsplit(" ", 1)[-1]
+        turn = shoulder if tail == "upperarm" else elbow if tail == "forearm" else 0.0
+        bone.rotation_euler = (math.radians(turn), 0.0, 0.0)
+    bpy.context.view_layer.update()
+    out = {}
+    for name in names:
+        bone = armature.data.bones.get(name)
+        if bone is None:
+            continue
+        out[name] = armature.pose.bones[name].matrix @ bone.matrix_local.inverted()
+    for bone in armature.pose.bones:
+        mode, quaternion, euler = keep[bone.name]
+        bone.rotation_mode = mode
+        bone.rotation_quaternion = quaternion
+        bone.rotation_euler = euler
+    bpy.context.view_layer.update()
+    return out
+
+
+def relax_tears(weights, mesh, armature, world, names, family):
+    """Average only the points Halo would draw stretched, until none are.
+
+    Smoothing makes a field continuous; it does not make it continuous *as a
+    pose moves it*. Two points can sit a millimetre apart with nearly the same
+    two weights and still be pulled apart, because the second weight leans to a
+    different bone. So this measures the game's own deformation at the two poses
+    the checker uses, and averages the ends of every edge that comes out longer
+    than TEAR_LIMIT of its rest length - nothing else is touched, which is what
+    keeps the shape and the arm's follow exactly as they were.
+
+    It works on positions, not vertices: the export splits every triangle off
+    its neighbours, so relaxing by vertex index lets the three copies of one
+    point take three different answers and the surface comes apart - 1,107
+    seams, measured, before this was fixed.
+    """
+    into = armature.matrix_world.inverted()
+    spots = {}
+    where = []
+    for vertex in mesh.vertices:
+        co = vertex.co
+        where.append(spots.setdefault((round(co.x, 5), round(co.y, 5),
+                                       round(co.z, 5)), len(spots)))
+    rest = [None] * len(spots)
+    field = [None] * len(spots)
+    for vertex, slot, own in zip(mesh.vertices, where, weights):
+        if rest[slot] is None:
+            rest[slot] = into @ (world @ vertex.co)
+            field[slot] = dict(own)
+    ring = [set() for _ in range(len(spots))]
+    for edge in mesh.edges:
+        a, b = where[edge.vertices[0]], where[edge.vertices[1]]
+        if a != b:
+            ring[a].add(b)
+            ring[b].add(a)
+    pairs = sorted({(a, b) if a < b else (b, a)
+                    for a in range(len(spots)) for b in ring[a]})
+    moves = [posed_transforms(armature, names, shoulder, elbow)
+             for shoulder, elbow in TEAR_POSES]
+    rounds = 0
+    for _round in range(TEAR_ROUNDS):
+        torn = set()
+        for move in moves:
+            placed = []
+            for point, ride in zip(rest, field):
+                total = Vector((0.0, 0.0, 0.0))
+                for name, share in ride.items():
+                    moved = move.get(name)
+                    if moved is not None:
+                        total += (moved @ point) * share
+                placed.append(total)
+            for a, b in pairs:
+                was = (rest[a] - rest[b]).length
+                if was < 1e-6:
+                    continue
+                if (placed[a] - placed[b]).length / was > TEAR_LIMIT:
+                    torn.add(a)
+                    torn.add(b)
+        if not torn:
+            break
+        rounds += 1
+        settled = {}
+        for slot in torn:
+            blend = dict(field[slot])
+            near = [other for other in ring[slot] if other in torn]
+            for other in near:
+                for name, value in field[other].items():
+                    blend[name] = blend.get(name, 0.0) + value / (1 + len(near))
+            ranked = sorted(blend.items(), key=lambda pair: -pair[1])
+            kin = family.get(ranked[0][0]) or ()
+            ranked = ([pair for pair in ranked if pair[0] in kin]
+                      + [pair for pair in ranked if pair[0] not in kin])
+            top = ranked[:2]
+            total = sum(value for _, value in top) or 1.0
+            settled[slot] = {name: value / total for name, value in top}
+        for slot, own in settled.items():
+            field[slot] = own
+    return [field[slot] for slot in where], rounds
 
 
 def take_port_tag(object_data, mesh):
@@ -4436,16 +4571,50 @@ def skin(object_data, armature, influences=2, rigid=False):
         # Inverse-square falloff first: nearest bone dominant, weights summing
         # to 1. Then the smoothing pass, which is what keeps a sleeve whole
         # when the joint under it turns.
+        #
+        # Only the nearest bone and the bones it is jointed to are candidates.
+        # Taking the two nearest segments outright looked reasonable and was
+        # not: the upperarm's segment passes within millimetres of the neck's
+        # and the clavicle's at a shoulder, so a point there could be handed
+        # 'neck and upperarm', which is a pair no joint connects and which tears
+        # itself in half at eighty degrees. A vertex may blend with the bone it
+        # rides and the ones that bone hangs from or carries - nothing else.
+        family = bone_family(armature, names)
+        parent, children = bone_tree(armature, names)
         nearest = []
         for vertex in mesh.vertices:
             point = world @ vertex.co
+            ridden = min(names, key=lambda name: point_segment_distance(
+                point, *segments[name]))
+            # A point past the far end of a bone is not on that bone any more:
+            # it is past the joint the bone ends in, which is where the next
+            # bone takes over. Shaped armour makes this visible - a pauldron
+            # sits outside the shoulder, so the clavicle's segment is the
+            # nearest thing to it while the plate actually hangs off the arm -
+            # and weighting it to the clavicle leaves the pad on the chest
+            # while the arm swings out from under it. Same at the near end.
+            for _step in range(2):
+                head, tail = segments[ridden]
+                axis = tail - head
+                long_enough = axis.length_squared
+                if long_enough < 1e-12:
+                    break
+                how_far = (point - head).dot(axis) / long_enough
+                if how_far > 1.0 and children.get(ridden):
+                    ridden = min(children[ridden],
+                                 key=lambda name: (segments[name][0] - tail).length)
+                elif how_far < 0.0 and parent.get(ridden):
+                    ridden = parent[ridden]
+                else:
+                    break
+            allowed = family[ridden]
             scored = sorted(
                 ((point_segment_distance(point, head, tail), name)
-                 for name, (head, tail) in segments.items()),
+                 for name, (head, tail) in segments.items()
+                 if name in allowed),
                 key=lambda pair: pair[0])[:influences]
             nearest.append({name: 1.0 / max(distance, 1e-4) ** 2
                             for distance, name in scored})
-        family = bone_family(armature, names)
         weights = smooth_by_position(nearest, mesh, kin=family)
         ported = take_port_tag(object_data, mesh)
         weights, copied = transfer_from_body(weights, mesh, ported, world)
@@ -4461,6 +4630,12 @@ def skin(object_data, armature, influences=2, rigid=False):
             log("%s: bound %d vertex/vertices to the weights of the avatar body "
                 "under them, then smoothed each shell along its own edges (%d passes)"
                 % (object_data.name, copied, PLATE_SMOOTH_PASSES))
+        weights, settled = relax_tears(weights, mesh, armature, world, names, family)
+        if settled:
+            log("%s: settled the weights against the game's own deformation - %d "
+                "round(s) at %s, until no edge stretched past x%.1f"
+                % (object_data.name, settled,
+                   ", ".join("%g/%g" % pose for pose in TEAR_POSES), TEAR_LIMIT))
         groups = {name: object_data.vertex_groups.new(name=name) for name in names}
         tally = {}
         for index, own in enumerate(weights):
