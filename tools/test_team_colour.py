@@ -86,17 +86,35 @@ check("red and alpha are untouched by them",
       (list(packed_all[0::4][:2]), list(packed_all[3::4][:2])),
       ([255, 255], [0, 64]))
 
-print("the derived specular mask shines on plate, never on black parts or skin")
-plate = {"rgba": bytes([74, 73, 49, 255] * 4), "width": 2, "height": 2}
-cloth = {"rgba": bytes([123, 109, 88, 255] * 4), "width": 2, "height": 2}
-black = {"rgba": bytes([20, 20, 20, 255] * 4), "width": 2, "height": 2}
-skin = {"rgba": bytes([215, 170, 113, 255] * 4), "width": 2, "height": 2}
-bright = {"rgba": bytes([235, 235, 235, 255] * 4), "width": 2, "height": 2}
-check("plate reflects", min(items.derived_shine(plate, 2)), 255)
-check("black under-suit does not", max(items.derived_shine(black, 2)), 0)
-check("skin does not", max(items.derived_shine(skin, 2)), 0)
-check("cloth does not", max(items.derived_shine(cloth, 2)), 0)
-check("bright paint does not", max(items.derived_shine(bright, 2)), 0)
+print("the derived specular mask reflects on the armour and nowhere else")
+
+def paint(rows):
+    texels = [colour for row in rows for colour in row]
+    return {"rgba": b"".join(bytes(colour + (255,)) for colour in texels),
+            "width": len(rows[0]), "height": len(rows)}
+
+plate = (74, 73, 49)
+chief_green = (74, 90, 60)
+skin = (215, 170, 113)
+cloth = (123, 109, 88)
+black = (20, 20, 20)
+
+# A varied map is decided texel by texel: plate over skin, then plate over cloth.
+mask = list(items.derived_shine(paint([[plate] * 4, [plate] * 4, [skin] * 4, [skin] * 4]), 4))
+check("plate reflects", mask[:8], [255] * 8)
+check("skin never reflects", set(mask[8:]), {0})
+mask = list(items.derived_shine(paint([[chief_green] * 4, [chief_green] * 4, [cloth] * 4, [cloth] * 4]), 4))
+check("the Chief's green reflects", set(mask[:8]), {255})
+check("cloth never reflects", set(mask[8:]), {0})
+
+# A flat map is one material - the armour item case - so it all reflects,
+# and a flat black map stays black.
+check("a flat armour map all reflects",
+      set(items.derived_shine(paint([[skin] * 4, [skin] * 4]), 2)), {255})
+check("a flat black map does not",
+      set(items.derived_shine(paint([[black] * 4, [black] * 4]), 2)), {0})
+check("flat_map sees a flat map", items.flat_map(paint([[plate] * 4, [plate] * 4])), True)
+check("flat_map sees a varied one", items.flat_map(paint([[plate] * 4, [skin] * 4])), False)
 
 print("the team-colour base map is whitened by the mask, not recoloured")
 rgba = bytes([0, 128, 255, 200] * 4)

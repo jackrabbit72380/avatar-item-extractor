@@ -1324,25 +1324,48 @@ def derived_detail(picture, size):
     return bytes(art), bytes(mask)
 
 
+def flat_map(texture):
+    """True when a base map is one colour all over, give or take a shade.
+
+    An armour item's paint is usually exactly that - the UNSC Marine Armor body
+    map is 256x256 of one flat colour - because the multiplayer version whitens
+    it so the team colour shows. A rule that only looks at colour therefore has
+    nothing to separate, and the whole map is one material.
+    """
+    rgba = texture["rgba"]
+    lums = [(rgba[at] * 299 + rgba[at + 1] * 587 + rgba[at + 2] * 114) / 255000.0
+            for at in range(0, len(rgba), 4)]
+    return bool(lums) and (max(lums) - min(lums)) < 0.02
+
+
 def derived_shine(texture, size):
-    """A specular mask from the base map: plate reflects, skin and black do not.
+    """A specular mask from the base map: the green metal plate reflects.
 
     Halo's armour reflects a cube map through the multipurpose map's blue
-    channel, and the Chief's own shader does the same thing - cubemapped
-    specularity - so this is the mask that decides where. Three things are
-    deliberately excluded, because a reflection on them is wrong:
+    channel, and the Chief's own shader does the same - cubemapped specularity -
+    so this is the mask that decides where the reflection sits. On his armour
+    that is the green metal: the plates. Three things are refused because a
+    reflection on them is wrong:
 
       * the black parts (luma under about 0.10) - under-suit and joints, which
         are meant to stay black;
-      * skin (warm and light: red well above blue), which the face and hands are;
-      * cloth, which is warm too, and the same armour/cloth split --tint derived
-        uses for the team colour.
+      * skin, which is light and warm with red well above green;
+      * cloth, which is warm in the same way.
 
-    What is left is the dark, near-neutral plate - the part of a Halo suit that
-    is metal. A rule read off the paint, not a mask the item shipped, and
-    report.txt says so.
+    The split is red against green: the plate is green or olive, so green sits
+    at or above red (74, 73, 49 is olive; 74, 90, 60 is the Chief's green),
+    while skin (215, 170, 113) and tan cloth (123, 109, 88) have red 14 or more
+    above green. The second test is luminance, so bright paint stays matte and
+    the black under-suit stays black. A rule read off the paint, not a mask the
+    item shipped, and report.txt says so.
     """
     rgba, width, height = texture["rgba"], texture["width"], texture["height"]
+    if flat_map(texture):
+        # One flat colour is one material: the whole body is plate, so it all
+        # reflects - unless that colour is black, which stays black.
+        at = 0
+        lit = (rgba[0] * 299 + rgba[1] * 587 + rgba[2] * 114) / 255000.0
+        return bytes([255 if lit >= 0.10 else 0]) * (size * size)
     out = bytearray(size * size)
     for y in range(size):
         source_y = min(height - 1, y * height // size)
@@ -1351,14 +1374,15 @@ def derived_shine(texture, size):
             at = (row + min(width - 1, x * width // size)) * 4
             red, green, blue = rgba[at], rgba[at + 1], rgba[at + 2]
             lit = (red * 299 + green * 587 + blue * 114) / 255000.0
-            # Nothing below 0.10 (black under-suit), full from 0.16 to 0.32,
-            # gone by 0.42 (bright paint and light cloth).
+            # Nothing below 0.10 (black under-suit), full from 0.16 to 0.34,
+            # gone by 0.46 (bright paint and light green). The Chief's own
+            # plate sits at 0.32, so the top of the range cannot start there.
             low = min(1.0, max(0.0, (lit - 0.10) / 0.06))
-            high = min(1.0, max(0.0, (0.42 - lit) / 0.10))
-            # Warmth is red minus blue: plate sits under about 26, cloth around
-            # 35, skin over 100. 36 or more takes the shine to nothing.
-            warm = min(1.0, max(0.0, (36 - (red - blue)) / 10.0))
-            out[y * size + x] = int(round(255 * low * high * warm))
+            high = min(1.0, max(0.0, (0.46 - lit) / 0.12))
+            # Green against red: plate is at or above red, everything warm is
+            # 14 or more below it, so 10-4 takes the shine to nothing.
+            green_metal = min(1.0, max(0.0, (10 - (red - green)) / 6.0))
+            out[y * size + x] = int(round(255 * low * high * green_metal))
     return bytes(out)
 
 
@@ -2275,7 +2299,7 @@ def main(argv=None):
                              " masked by the multipurpose map's red channel")
     parser.add_argument("--shine", default=None, metavar="MODE",
                         help="the specular/reflection mask (multipurpose blue):"
-                             " 'derived' from the base map, or a .png")
+                             " 'derived' from the base map, a .png, or 'off'")
     parser.add_argument("--glow", default=None, metavar="PNG",
                         help="the self-illumination mask (multipurpose green):"
                              " a .png, white = lights up")
@@ -2292,7 +2316,7 @@ def main(argv=None):
     if args.detail_mask is not None:
         DETAIL_MASK = args.detail_mask
     if args.shine is not None:
-        SHINE_MODE = args.shine
+        SHINE_MODE = None if args.shine.strip().lower() in ("off", "none") else args.shine
     if args.glow is not None:
         GLOW_MASK = args.glow
 
@@ -2887,10 +2911,18 @@ def main(argv=None):
             glow_note = None
             if SHINE_MODE:
                 if SHINE_MODE == "derived" and picture:
+                    items_flat = flat_map(picture)
                     shine_small = derived_shine(picture, small_size)
-                    shine_note = ("derived from the base map: dark near-neutral"
-                                  " plate shines, warm cloth does not - a rule,"
-                                  " not the item's own data")
+                    if items_flat:
+                        shine_note = ("derived from the base map: it is one flat"
+                                      " colour, so the whole body is plate and"
+                                      " reflects - a rule, not the item's own"
+                                      " data")
+                    else:
+                        shine_note = ("derived from the base map: the green metal"
+                                      " plate reflects - the black parts, skin"
+                                      " and cloth do not - a rule, not the"
+                                      " item's own data")
                 else:
                     shine_small = mask_from_image(SHINE_MODE, small_size)
                     shine_note = ("authored from %s" % os.path.basename(SHINE_MODE)

@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v142.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v144.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -752,11 +752,21 @@ Elite uses `cubemap blue tone`. Nothing needs authoring: the armour reflects the
 level through the game's own cube map, exactly as his does, and both versions
 should reference the same one so SP and MP match.
 
-Painting blue is what switches it on, and the mask covers **armoured plate
-only**. The derived rule refuses the black parts (luma under about 0.10 — the
-under-suit and joints, which are meant to stay black) and anything warm: skin is
-red well above blue, so the face and hands never reflect, and neither does the
-tan cloth. Leaving blue zero is a matte surface, not a claim Halo has no shine.
+Painting blue is what switches it on, and the mask is where the reflection
+sits: the **green metal plate**. The derived rule tests red against green —
+plate is green or olive, so green is level with or above red, while skin and tan
+cloth have red 14 or more above green — and tests luminance, so bright paint
+stays matte and the black under-suit (luma under about 0.10) stays black. Face,
+hands and cloth therefore never reflect, exactly as on his armour.
+
+It is **on by default** in the carrier build (`--shine derived`), so the suit
+reflects the level like his does without any file to supply. A flat base map —
+the usual case for an armour item, whose paint the multiplayer version whitens so
+the team colour shows — is one material, so the whole body counts as plate and
+reflects; a flat black map stays black. A varied map is decided texel by texel.
+
+`shine_mask.png` hand-paints where the reflection sits instead, and
+`shine_mode.txt` holding `off` leaves it matte.
 
 None of this is measured in game: there is no `tool.exe` here, so the tag
 settings above are from the documented channel behaviour, not from a compiled
@@ -1264,7 +1274,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v142.bat` and
+`Extract UNSC Marine Armor Avatar-v144.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1279,7 +1289,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v142.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v144.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1329,9 +1339,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v142.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v144.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v142.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v144.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
