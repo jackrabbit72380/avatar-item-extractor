@@ -18,6 +18,15 @@ a Halo CE gbxmodel does. The pose is applied as a rotation about a bone's head,
 in its parent's frame, which is what an animation's node rotation is.
 """
 
+# NOT TRUSTWORTHY YET. This deformer fails its own identity control: with the
+# pose set to zero it must report exactly 1.000 on every edge, because the
+# relative matrix node x inverse(bind) is then the identity for every node. It
+# reports x44.96, so the posed frames are not equal to the bind frames for some
+# node and every number it prints today (torn-edge counts included) is void.
+# The controls are: (1) no pose -> 1.000; (2) a model whose vertices all ride
+# one bone -> 1.000 at any pose. Until both pass, no weight change may be
+# judged with it.
+
 import math
 import sys
 
@@ -27,10 +36,14 @@ POSES = ((45.0, 45.0), (80.0, 60.0), (10.0, 10.0), (20.0, 20.0))
 def parse(path):
     lines = [line.rstrip("\r\n") for line in open(path, encoding="latin-1")]
     head = lines[0].split("\t")
+    if len(head) < 3:
+        head = lines[0].split()
     count = int(head[2])
     first, sib, turns, spots, names = [], [], [], [], []
     for k in range(count):
         field = lines[1 + k].split("\t")
+        if len(field) < 10:
+            field = lines[1 + k].split()
         names.append(field[0])
         first.append(int(field[1]))
         sib.append(int(field[2]))
@@ -45,6 +58,8 @@ def parse(path):
     points, weights = [], []
     for k in range(verts):
         field = lines[at + k].split("\t")
+        if len(field) < 9:
+            field = lines[at + k].split()
         points.append((float(field[1]), float(field[2]), float(field[3])))
         second = int(field[7])
         share = float(field[8])
@@ -58,6 +73,8 @@ def parse(path):
     triangles = []
     for k in range(faces):
         field = lines[at + k].split("\t")
+        if len(field) < 5:
+            field = lines[at + k].split()
         triangles.append((int(field[2]), int(field[3]), int(field[4])))
     return names, first, sib, turns, spots, points, weights, triangles
 
@@ -132,7 +149,7 @@ def bind_worlds(first, sib, turns, spots):
     return worlds, parent
 
 
-def posed_worlds(worlds, parent, names, shoulder, elbow):
+def posed_worlds(worlds, parent, spots, names, shoulder, elbow):
     """The same frames, with the arms turned, as an animation turns them."""
     bent = {}
     for index, name in enumerate(names):
@@ -142,7 +159,7 @@ def posed_worlds(worlds, parent, names, shoulder, elbow):
             bent[index] = elbow
     posed = {}
     for index in levels(parent, len(names)):
-        base_r, base_t = worlds[index]
+        base_r, base_t = worlds[index][0], spots[index]
         if index in bent:
             base_r = product(axis_rotation((1, 0, 0), bent[index]), base_r)
         up = parent.get(index)
@@ -168,7 +185,7 @@ def measure(path, shoulder, elbow, limit=0.2):
     worlds, parent = bind_worlds(first, sib, turns, spots)
     global first_of, sibling_of
     first_of, sibling_of = first, sib
-    posed = posed_worlds(worlds, parent, names, shoulder, elbow)
+    posed = posed_worlds(worlds, parent, spots, names, shoulder, elbow)
     relative = [product(posed[i][0], inverse(worlds[i])[0]) for i in range(len(names))]
     shift = []
     for index in range(len(names)):
