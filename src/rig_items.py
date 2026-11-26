@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v125"
-BUILD = "2026-11-26 a body is scaled, never fitted"
+VERSION = "v126"
+BUILD = "2026-11-26 the whole body is shaped, not one arm"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4472,7 +4472,7 @@ POLISH_SQUASH = 3.0
 TEAR_FLOOR = 0.2
 
 
-def posed_transforms(armature, shoulder, elbow):
+def posed_transforms(armature, shoulder, elbow, more=None):
     """posed x inverse(bind) for every node, which is what Halo applies.
 
     `objects/models.c` moves every vertex by that product, so shaping the
@@ -4487,7 +4487,7 @@ def posed_transforms(armature, shoulder, elbow):
     labels = [row[0] for row in rows]
     frames = halo_pose.shifts([row[1] for row in rows], [row[2] for row in rows],
                               [row[3] for row in rows], [row[4] for row in rows],
-                              labels, shoulder, elbow)
+                              labels, shoulder, elbow, more)
     out = {}
     for index, (rotation, shift) in frames.items():
         out[labels[index]] = Matrix((
@@ -4536,8 +4536,14 @@ def skin_point_graph(weights, mesh, armature, world, names):
                 if first != second and second not in ring[first]:
                     ring[first].append(second)
                     ring[second].append(first)
-    moves = [posed_transforms(armature, shoulder, elbow)
-             for shoulder, elbow in TEAR_POSES]
+    # The whole body, not just the arms: the shapes the run, walk, crouch and
+    # turn animations put a model through are hips, knees, ankles, spine and
+    # neck, and none of those was ever measured before.
+    _order, _index_of, rows, _checksum = jms_node_rows(armature)
+    labels = [row[0] for row in rows]
+    moves = [posed_transforms(armature, 0.0, 0.0,
+                              more=halo_pose.pose_nodes(labels, pose))
+             for pose in halo_pose.BODY_POSES]
     return where, rest, field, ring, moves
 
 
@@ -4892,13 +4898,13 @@ def skin(object_data, armature, influences=2, rigid=False):
             log("%s: settled the torn strip against the game's own deformation "
                 "- %d round(s) at %s"
                 % (object_data.name, settled,
-                   ", ".join("%g/%g" % pose for pose in TEAR_POSES)))
+                   "%d poses over the whole body" % len(halo_pose.BODY_POSES)))
         weights, chosen = relax_tears(weights, mesh, armature, world, names)
         if chosen:
             log("%s: chose each torn point's bones against the game's own "
-                "deformation - %d round(s) at %s, until no edge stretched past x%.1f"
-                % (object_data.name, chosen,
-                   ", ".join("%g/%g" % pose for pose in TEAR_POSES), TEAR_LIMIT))
+                "deformation - %d round(s) over %d body poses, until no edge "
+                "stretched past x%.1f"
+                % (object_data.name, chosen, len(halo_pose.BODY_POSES), TEAR_LIMIT))
         groups = {name: object_data.vertex_groups.new(name=name) for name in names}
         tally = {}
         for index, own in enumerate(weights):

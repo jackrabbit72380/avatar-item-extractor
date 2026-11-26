@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v125.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v126.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1185,7 +1185,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v125.bat` and
+`Extract UNSC Marine Armor Avatar-v126.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1200,7 +1200,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v125.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v126.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1250,9 +1250,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v125.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v126.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v125.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v126.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
@@ -1390,10 +1390,31 @@ point's better pair can pull its neighbour past the limit, and the best-scoring
 round is what comes out: an earlier version returned whatever the last round
 happened to leave.
 
-Measured on the shipped model: worst edge at 45 and 80 degrees x1.45 and x2.05,
-none past x3 at any pose and none torn, worst fold x2.13 with none collapsed,
-split seams 0 at every pose, and the arm's vertices carry 0.87 of the arm's own
-travel.
+Measured on the shipped model: worst edge at 45 and 80 degrees x2.10 and x3.13,
+worst fold x3.96 with two points collapsed, split seams 0 at every pose, and the
+arm's vertices carry 0.87 of the arm's own travel.
+
+## The joints an animation actually bends
+
+The checks used to bend one arm pair and nothing else, so a body could pass every
+test and still come apart the moment it walked. Measured on the last build, one
+joint at a time: a 60 degree spine turn stretched an edge **x21.5**, a hip x16.4,
+an ankle x13.7 and a neck x11.2. That is exactly what an in-game view of the
+biped's own animations showed - squashing, ripping, tearing across the whole body
+- and the shoulder-only checks could not see it.
+
+Both the shaping and the check now run one battery, `BODY_POSES` in
+`src/halo_pose.py`: 13 poses bending the hips, knees, ankles, spine, spine1,
+neck, head, clavicles and arms. Shaped against all of them, the worst edge over
+the whole body fell from **x12.74 with 248 edges past x3 to x3.22 with 6**.
+
+The residue is geometric, not a weighting failure. Halo's hip bone sits at the
+same height as its pelvis, and its knee is 0.15 m from this avatar's at every
+uniform scale the model can take - so a 90 degree knee bend must stretch the band
+between hip and knee by that offset. The check records the achievable bar (x3.5,
+at most 12 edges) and fails if the build slips back toward the joint-by-joint
+behaviour. The trade shows in the arm poses: shaping over thirteen poses instead
+of one arm pair costs about half an edge at 45 degrees.
 
 ## A body is scaled, never fitted
 
