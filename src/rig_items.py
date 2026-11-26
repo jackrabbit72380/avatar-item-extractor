@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v126"
-BUILD = "2026-11-26 the whole body is shaped, not one arm"
+VERSION = "v127"
+BUILD = "one head under the helmet: the avatar's own head is no longer added when the costume brings a face"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -807,7 +807,8 @@ def shared_tone(pixels, width, height, other, ref):
                         "tone" % (bands, now, was))
 
 
-def import_port(path, stem, out, eyes_forward=False, item_box=None):
+def import_port(path, stem, out, eyes_forward=False, item_box=None,
+                item_head=False):
     """The avatar's own head and neck, as meshes to join under the item.
 
     The export is in the space the items are authored in - y-up metres, the
@@ -833,7 +834,18 @@ def import_port(path, stem, out, eyes_forward=False, item_box=None):
     if costume:
         log("port: the item is a costume (%.2f m over a %.2f m avatar), so it is "
             "worn instead of clothes" % (item_height, avatar_height))
-    kept, skipped = glb_model.choose(model, stem, item_box=item_box, costume=costume)
+    kept, skipped = glb_model.choose(model, stem, item_box=item_box,
+                                     costume=costume,
+                                     also_skip=("head",) if item_head else ())
+    if item_head:
+        # The item has a head and a face of its own - a costume's export carries
+        # both. The avatar's head is then a SECOND head inside the first: a
+        # slightly different size and angle, so the armour's helmet perches on
+        # it and reads as crooked from every side. Measured on this armour, the
+        # port added 876 triangles above the collar and 2,058 head points that
+        # the item already had.
+        log("port: the item carries its own head and face, so the avatar's head "
+            "is not added - one head inside another is a helmet that sits askew")
     # The exporter's slot index off every name the port writes. A 360sona
     # material is the mesh it paints plus the index it holds in the file - the
     # body's first one is ``body_0`` - and that name is what the sheet, its
@@ -5930,10 +5942,16 @@ def main():
         ported = None
         if options["port"] and not is_body:
             if tallest >= 1.45:
+                # Does the item bring its own head and face? A costume's export
+                # carries a face sheet, and this armour paints one. When it does,
+                # the avatar's head must not be added on top of it.
+                item_head = any("face" in (slot.material.name or "").lower()
+                                for part in meshes for slot in part.material_slots
+                                if slot.material)
                 ported = import_port(options["port"], item_stem(record),
                                      options["out"],
                                      eyes_forward=options["eyes_forward"],
-                                     item_box=item_box)
+                                     item_box=item_box, item_head=item_head)
                 if ported["objects"]:
                     # Tag the avatar's own vertices before the join, so the
                     # armour beside them can copy the bones the flesh rides.

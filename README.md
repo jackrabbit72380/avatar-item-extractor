@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v126.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v127.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -719,6 +719,17 @@ an armour leaves bare. Those are taken. The copy of the item the export carries
 the item being rigged is in the run already, and it is the one that keeps its
 textures, UVs, masks and decal.
 
+One exception decides itself. A costume whose export carries a face sheet has a
+head of its own, and that head is the one its helmet was modelled round. Adding
+the avatar's head there put two heads in the same place - 876 triangles and
+2,058 head points inside the armour's own, a slightly different size and angle -
+and the helmet perched on the second one, which reads as a crooked helmet from
+every side. It was not: measured against the item's own head render, the armour
+was unchanged and the intruder was the avatar's. So the avatar's head is added
+only when the item brings no face of its own, and the test is that sheet rather
+than a guess at height. Above the collar the model then holds 4,260 points
+instead of 7,036, and 5,758 triangles against the armour's own 5,756.
+
 Two things are deliberately not carried across:
 
 - **Vertex colour.** Every vertex in the export has one, but it is baked
@@ -1185,7 +1196,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v126.bat` and
+`Extract UNSC Marine Armor Avatar-v127.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1200,7 +1211,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v126.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v127.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1250,9 +1261,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v126.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v127.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v126.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v127.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
