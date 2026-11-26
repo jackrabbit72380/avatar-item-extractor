@@ -21,8 +21,10 @@ in its parent's frame, which is what an animation's node rotation is.
 # Checked before use, by two controls that are arithmetic, not judgement:
 #   1. no pose at all - node x inverse(bind) is then the identity for every
 #      node, so every edge must measure exactly 1.000. It does.
-#   2. an edge whose two ends ride the same single node at 100% must keep its
-#      length exactly, however the pose turns. It does.
+#   2. bind every vertex to one node, then every edge whose two ends ride that
+#      same node must keep its length exactly, however the pose turns. It does,
+#      over 19,132 edges. A control that tests 0 edges is a FAILURE, not a
+#      pass - that is written into controls().
 # The bug this caught: the posed frames were composed from each node's WORLD
 # rotation instead of its own local turn, so the parent's rotation was applied
 # twice and the deformer invented motion from nothing (x44.96 at zero pose).
@@ -230,8 +232,15 @@ def measure(path, shoulder, elbow, limit=0.2):
     return worst_stretch, torn, worst_squash, squashed, len(edges)
 
 
-def same_node_control(path, shoulder=45.0, elbow=60.0):
-    """Edges that ride one node at both ends must not change length at all."""
+def rigid_control(path, shoulder=45.0, elbow=60.0, floor=0.2):
+    """Bind each vertex to one node, then hold that node's edges to their length.
+
+    A vertex riding one node at 100% is moved by a single rigid transform, so
+    any edge whose two ends ride the same node keeps its length to the last bit.
+    This checks the matrices, the order they are composed in, and the vertex
+    transform together, on the model's own numbers. It reports how many edges
+    it actually tested, because a control that tests nothing has proved nothing.
+    """
     names, first, sib, turns, spots, points, weights, triangles = parse(path)
     worlds, parent = bind_worlds(first, sib, turns, spots)
     global first_of, sibling_of
@@ -243,33 +252,53 @@ def same_node_control(path, shoulder=45.0, elbow=60.0):
         back = inverse(worlds[index])
         shift.append((product(posed_r, back[0]),
                       tuple(posed_t[a] + carried(posed_r, back[1])[a] for a in range(3))))
+    ride = [next(iter(entry)) for entry in weights]
     moved = []
-    for point, ride in zip(points, weights):
-        if len(ride) != 1 or abs(sum(ride.values()) - 1.0) > 1e-9:
-            moved.append(None)
-            continue
-        rotation, spot = shift[next(iter(ride))]
+    for point, node in zip(points, ride):
+        rotation, spot = shift[node]
         turned = carried(rotation, point)
         moved.append(tuple(turned[a] + spot[a] for a in range(3)))
     worst = 0.0
     seen = 0
     for a, b, c in triangles:
         for x, y in ((a, b), (b, c), (c, a)):
-            if moved[x] is None or moved[y] is None:
-                continue
-            if next(iter(weights[x])) != next(iter(weights[y])):
+            if ride[x] != ride[y]:
                 continue
             was = math.dist(points[x], points[y])
-            if was < 0.2:
+            if was < floor:
                 continue
             seen += 1
             worst = max(worst, math.dist(moved[x], moved[y]) / was)
     return worst, seen
 
 
+def controls(path, tolerance=1e-3):
+    """Both checks, each one answering pass or fail - never "no data, so fine"."""
+    found = []
+    still, torn = measure(path, 0.0, 0.0)[0], measure(path, 0.0, 0.0)[1]
+    found.append(("no pose moves nothing", abs(still - 1.0) <= tolerance and torn == 0,
+                  "worst x%.7f, %d torn (tolerance %.0e for the file's float32 quaternions)"
+                  % (still, torn, tolerance)))
+    worst, seen = rigid_control(path)
+    if seen == 0:
+        found.append(("rigid edges keep their length", False,
+                      "0 edges tested - the control could not run, so it proves nothing"))
+    else:
+        found.append(("rigid edges keep their length", worst <= 1.0 + tolerance,
+                      "worst x%.7f over %d edges" % (worst, seen)))
+    return found
+
+
 if __name__ == "__main__":
     path = sys.argv[1]
     print("halo skinning: %s" % path.split("/")[-1])
+    failed = 0
+    for name, ok, detail in controls(path):
+        print("  %s %s - %s" % ("PASS" if ok else "FAIL", name, detail))
+        failed += 0 if ok else 1
+    if failed:
+        print("  the deformer is not trustworthy: %d control(s) failed" % failed)
+        raise SystemExit(1)
     for shoulder, elbow in POSES:
         stretch, torn, squash, squashed, count = measure(path, shoulder, elbow)
         print("  shoulder %3d elbow %3d -> stretch worst x%.2f, %d torn; "
