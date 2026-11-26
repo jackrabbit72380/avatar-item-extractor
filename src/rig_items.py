@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v130"
-BUILD = "the limb fit built and measured; the default keeps the armour's own shape"
+VERSION = "v131"
+BUILD = "the biped's collision model and physics, written and compiled by the build"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5553,6 +5553,230 @@ def export_jms(object_data, armature, path, arms=False):
     return errors
 
 
+def _jms_header(armature):
+    """The node block and index, written the way tool.exe reads a .jms.
+
+    Shared by the collision and physics exports so both carry the session's own
+    node list - the same order, the same header checksum - and a biped whose
+    gbxmodel, collision model and physics all agree is one tool.exe will not
+    refuse with "node list checksum ... don't match".
+    """
+    order, index_of, rows, checksum = jms_node_rows(armature)
+    out = ["8200\t%d\t%d" % (checksum, len(order))]
+    for own, first, sibling, turn, head in rows:
+        out.append("%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f"
+                   % (own, first, sibling, turn[0], turn[1], turn[2], turn[3],
+                      head[0], head[1], head[2]))
+    return out, index_of, rows
+
+
+def _jms_write(path, lines):
+    with open(path, "w", encoding="ascii", errors="replace", newline="") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+
+# A plate is not a collision shape. A biped's collision model is a handful of
+# closed convex pieces, one per body part, and the rules tool.exe enforces are
+# strict: every face needs a material, every piece must be closed, and no two
+# pieces may overlap or even touch. So the boxes below are built from the
+# vertices that mostly ride each bone, then pulled apart until none of them
+# intersects anything - which is why the split is done here and not hoped for.
+COLLISION_SKIN = 0.05          # a hand's width of clearance, in Halo units
+COLLISION_MIN_SIDE = 0.5       # a piece thinner than this is not worth a box
+
+
+def collision_boxes(object_data, armature, index_of):
+    """One closed box per bone, in Halo's space, none of them touching.
+
+    Returns ``[(node, low, high), ...]``. The box a bone gets is the extent of
+    the vertices that ride it at weight 0.5 or more, so an arm box is the arm
+    and not part of the chest, and a joint's box stops where the plates it does
+    not own begin.
+    """
+    inverse = armature.matrix_world.inverted()
+    world = object_data.matrix_world
+    names = {group.index: group.name for group in object_data.vertex_groups}
+    spans = {}
+    for vertex in object_data.data.vertices:
+        riding = sorted(((group.weight, names.get(group.group))
+                         for group in vertex.groups if group.group in names),
+                        reverse=True)
+        if not riding or riding[0][1] not in index_of:
+            continue
+        if riding[0][0] < 0.5:
+            continue
+        point = inverse @ (world @ vertex.co)
+        node = index_of[riding[0][1]]
+        low, high = spans.setdefault(
+            node, ([point[axis] for axis in range(3)],
+                   [point[axis] for axis in range(3)]))
+        for axis in range(3):
+            low[axis] = min(low[axis], point[axis])
+            high[axis] = max(high[axis], point[axis])
+    boxes = []
+    for node in sorted(spans):
+        low, high = spans[node]
+        if min(high[axis] - low[axis] for axis in range(3)) < COLLISION_MIN_SIDE:
+            continue
+        boxes.append([node,
+                      [low[axis] - COLLISION_SKIN for axis in range(3)],
+                      [high[axis] + COLLISION_SKIN for axis in range(3)]])
+    # Two parts of a body share space at every joint - the chest box and the
+    # upper-arm box overlap at the shoulder - and overlapping collision pieces
+    # are the thing tool.exe warns produces "weird errors in game". Split each
+    # overlapping pair along the axis they overlap least, moving one face of
+    # each to either side of the middle: a gap, never a touch.
+    for _ in range(6):
+        apart = True
+        for first in range(len(boxes)):
+            for second in range(first + 1, len(boxes)):
+                one, two = boxes[first], boxes[second]
+                overlap = [min(one[2][axis], two[2][axis])
+                           - max(one[1][axis], two[1][axis])
+                           for axis in range(3)]
+                if min(overlap) <= 0.0:
+                    continue
+                apart = False
+                axis = overlap.index(min(overlap))
+                middle = (max(one[1][axis], two[1][axis])
+                          + min(one[2][axis], two[2][axis])) / 2.0
+                if (one[1][axis] + one[2][axis]) <= (two[1][axis] + two[2][axis]):
+                    one[2][axis] = middle - COLLISION_SKIN / 2.0
+                    two[1][axis] = middle + COLLISION_SKIN / 2.0
+                else:
+                    two[2][axis] = middle - COLLISION_SKIN / 2.0
+                    one[1][axis] = middle + COLLISION_SKIN / 2.0
+        if apart:
+            break
+    # A box that a split squeezed into nothing cannot be collision.
+    return [(node, low, high) for node, low, high in boxes
+            if min(high[axis] - low[axis] for axis in range(3)) >= COLLISION_MIN_SIDE]
+
+
+def _box_triangles(low, high):
+    """The twelve triangles of a closed box, wound outward."""
+    corners = [(x, y, z) for x in (low[0], high[0])
+               for y in (low[1], high[1]) for z in (low[2], high[2])]
+    index = {corner: number for number, corner in enumerate(corners)}
+    faces = []
+    for axis in range(3):
+        for side in (0, 1):
+            plane = high[axis] if side else low[axis]
+            ring = [corner for corner in corners if corner[axis] == plane]
+            ring.sort(key=lambda corner: (corner[(axis + 1) % 3],
+                                          corner[(axis + 2) % 3]))
+            quad = [ring[0], ring[1], ring[3], ring[2]]
+            if side:
+                quad.reverse()
+            faces.append((index[quad[0]], index[quad[1]], index[quad[2]]))
+            faces.append((index[quad[0]], index[quad[2]], index[quad[3]]))
+    # Wound outward, checked by arithmetic rather than by a convention this
+    # build would have to be right about: a triangle whose normal points back
+    # at the box's middle is inside out, so it is reversed. tool.exe reads a
+    # collision piece as closed only when every face agrees which way is out.
+    middle = [(low[axis] + high[axis]) / 2.0 for axis in range(3)]
+    fixed = []
+    for triangle in faces:
+        one, two, three = (corners[number] for number in triangle)
+        normal = ((two[1] - one[1]) * (three[2] - one[2])
+                  - (two[2] - one[2]) * (three[1] - one[1]),
+                  (two[2] - one[2]) * (three[0] - one[0])
+                  - (two[0] - one[0]) * (three[2] - one[2]),
+                  (two[0] - one[0]) * (three[1] - one[1])
+                  - (two[1] - one[1]) * (three[0] - one[0]))
+        outward = sum(normal[axis] * ((one[axis] + two[axis] + three[axis]) / 3.0
+                                      - middle[axis]) for axis in range(3))
+        fixed.append(triangle if outward >= 0.0 else (triangle[0], triangle[2], triangle[1]))
+    return corners, fixed
+
+
+def export_collision_jms(object_data, armature, path, material_name):
+    """A collision model as tool.exe reads one: closed boxes, no overlap.
+
+    ``tool collision-geometry <dir>`` looks for ``data\\<dir>\\physics\\<dir>.JMS``
+    and writes a model_collision_geometry tag, and it refuses a model whose
+    regions differ from the gbxmodel's - so this writes one region, named the
+    same as the render model writes it, with the same node block and checksum.
+    """
+    out, index_of, _rows = _jms_header(armature)
+    out.append("1")
+    out.append("%s\t<none>" % " ".join(str(material_name).split()))
+    out.append("0")                    # no markers: the engine's own is fine
+    out.append("1")
+    out.append("unnamed")              # the render model's own region
+    boxes = collision_boxes(object_data, armature, index_of)
+    corners = []
+    faces = []
+    for node, low, high in boxes:
+        piece, triangles = _box_triangles(low, high)
+        base = len(corners)
+        corners.extend((node, point) for point in piece)
+        faces.extend((node, tuple(vertex + base for vertex in triangle))
+                     for triangle in triangles)
+    out.append("%d" % (len(faces) * 3))
+    for _, triangle in faces:
+        for vertex in triangle:
+            node, point = corners[vertex]
+            out.append("%d\t%.6f\t%.6f\t%.6f\t0.000000\t1.000000\t0.000000"
+                       "\t-1\t0.000000\t0.000000\t0.000000\t0.000000"
+                       % (node, point[0], point[1], point[2]))
+    out.append("%d" % len(faces))
+    # Faces index the vertex block from its first entry, not from the line they
+    # sit on: tool.exe reads these as indices, and a line number walks past the
+    # end of the block. Every corner is its own vertex here, so the third face
+    # starts at 9.
+    for number in range(len(faces)):
+        out.append("0\t0\t%d\t%d\t%d"
+                   % (number * 3, number * 3 + 1, number * 3 + 2))
+    _jms_write(path, out)
+    log("collision: %d closed box(es), no two touching, one region named the "
+        "same as the model's - tool.exe's region check is why"
+        % len(boxes))
+    log("wrote %s (%d tris)" % (os.path.basename(path), len(faces) * 2))
+    return boxes
+
+
+def export_physics_jms(object_data, armature, path, material_name, boxes):
+    """A physics model as tool.exe reads one: spheres, linked to the pelvis.
+
+    ``tool physics <dir>`` reads the same ``physics\\<dir>.JMS`` and imports the
+    markers as collision spheres - a marker is a sphere to it and its radius is
+    the radius the sphere gets. Physics does not animate, so every sphere rides
+    the pelvis, and the pelvis sphere is the pill a biped stands on.
+    """
+    out, index_of, _rows = _jms_header(armature)
+    out.append("1")
+    out.append("%s\t<none>" % " ".join(str(material_name).split()))
+    spheres = []
+    pelvis = index_of.get("bip01 pelvis", 0)
+    for node, low, high in boxes:
+        if node != pelvis:
+            continue
+        # At the pelvis node's own origin, with no offset: a marker's
+        # translation is read in its node's frame, and the pelvis frame is
+        # turned 120 degrees - so the one translation that cannot be misplaced
+        # is zero. The radius is half the hips' larger horizontal side, which
+        # wraps the body without making the pill too wide for a doorway.
+        widest = max(high[0] - low[0], high[2] - low[2])
+        spheres.append((max(widest * 0.5, 1.0),))
+    if not spheres:
+        return []
+    out.append("%d" % len(spheres))
+    for number, (radius,) in enumerate(spheres):
+        out.append("physics%d\t-1\t%d\t0.000000\t0.000000\t0.000000"
+                   "\t1.000000\t0.000000\t0.000000\t0.000000\t%.6f"
+                   % (number, pelvis, radius))
+    out.append("1")
+    out.append("unnamed")
+    out.append("0")                    # no vertices
+    out.append("0")                    # no faces
+    _jms_write(path, out)
+    log("physics: %d sphere(s) on the pelvis, radius %.2f units"
+        % (len(spheres), spheres[0][0]))
+    log("wrote %s" % os.path.basename(path))
+    return spheres
+
+
 def save_blend(path, objects, note=None):
     """A .blend you can open: the scene, holding only these objects.
 
@@ -5964,6 +6188,7 @@ def hek_folders(out, stem):
                 "bitmaps": os.path.join(item_dir, "bitmaps"),
                 "models": os.path.join(item_dir, "models"),
                 "animations": os.path.join(item_dir, "animations"),
+                "physics": os.path.join(item_dir, "physics"),
                 "source": os.path.join(item_dir, "source"),
                 "fp": os.path.join(item_dir, "fp"),
                 "fp_models": os.path.join(item_dir, "fp", "models"),
@@ -6576,6 +6801,30 @@ def main():
                 # source\ folder is for.
                 record["jms_errors"] = export_jms(
                     merged, armature, os.path.join(source_dir, jms_name(stem)))
+                # A biped is not collidable without these two, and tool.exe
+                # reads both from physics\ in the same source folder its model
+                # came from. Only the pc tree is built here; the compile script
+                # copies the finished folder into the kit either way.
+                physics_dir = folders["pc"]["physics"]
+                material = (merged.material_slots[0].material.name
+                            if merged.material_slots
+                            and merged.material_slots[0].material
+                            else "material")
+                try:
+                    boxes = export_collision_jms(
+                        merged, armature,
+                        os.path.join(physics_dir, "%s collision.jms" % stem),
+                        material)
+                    export_physics_jms(
+                        merged, armature,
+                        os.path.join(physics_dir, "%s physics.jms" % stem),
+                        material, boxes)
+                    record["collision"] = len(boxes)
+                except Exception as problem:  # noqa: BLE001 - a biped can still render
+                    record["collision_errors"] = ("%s: %s"
+                                                  % (type(problem).__name__, problem))
+                    log("collision: could not be written - %s: %s"
+                        % (type(problem).__name__, problem))
             # The file is named for the game it is for, not for the program that
             # wrote it: "- halo" is the answer to "which of these do I open?"
             # when the folder also holds the NXE and unrigged copies.

@@ -3,10 +3,12 @@ setlocal EnableExtensions
 title %~n0
 
 rem ===========================================================================
-rem  Runs the two tool.exe verbs over each build folder the extractor wrote:
+rem  Runs the tool.exe verbs over each build folder the extractor wrote:
 rem
 rem    tool bitmaps "<build>\bitmaps"    .tif -> .bitmap tags
 rem    tool model   "<build>"            .jms -> .gbxmodel
+rem    tool collision-geometry "<build>" .jms -> .model_collision_geometry
+rem    tool physics "<build>"            .jms -> .physics
 rem
 rem  This file is written beside the builds as "Compile <item> Avatar.bat", named
 rem  after the item it compiles, and it runs from there. A kit already unpacked
@@ -159,6 +161,39 @@ rem  graph's 42. It is matched by name instead, so the arms' exporter refuses
 rem  any bone outside Halo's 37: a renamed rig fails the arms export and names
 rem  the nodes rather than writing a model no weapon graph can match. Leave the
 rem  arms on the globals reference and nowhere else.
+rem  A biped is not collidable without a collision model and a physics tag, and
+rem  tool.exe reads both from physics\ inside this same source folder:
+rem  collision-geometry and physics each look for <item>.JMS there. Both are
+rem  written by the extractor with this model's own node block, so all three
+rem  tags carry one node list checksum, and the collision model names the one
+rem  region the model names - the two checks tool.exe fails with "node list
+rem  checksum ... don't match" and "region counts don't match".
+rem
+rem  The two source files are parked as .keep while each verb runs, because
+rem  tool.exe reads the .JMS files it finds in physics\ and a second one sitting
+rem  there would be imported beside the real one. They are named back afterwards
+rem  so the folder still shows what the tags were built from.
+set "PHYS=%HEK%\data\%BUILD%\physics"
+if exist "%PHYS%\%BUILD% collision.jms" ren "%PHYS%\%BUILD% collision.jms" "%BUILD% collision.keep" >>"%LOG%" 2>&1
+if exist "%PHYS%\%BUILD% physics.jms" ren "%PHYS%\%BUILD% physics.jms" "%BUILD% physics.keep" >>"%LOG%" 2>&1
+if exist "%PHYS%\%BUILD%.jms" del /Q "%PHYS%\%BUILD%.jms" >>"%LOG%" 2>&1
+if exist "%PHYS%\%BUILD% collision.keep" (
+  copy /Y "%PHYS%\%BUILD% collision.keep" "%PHYS%\%BUILD%.jms" >>"%LOG%" 2>&1
+  echo -- collision geometry "%BUILD%" >>"%LOG%"
+  tool.exe collision-geometry "%BUILD%" >>"%LOG%" 2>&1
+  if errorlevel 1 echo   collision geometry reported an error for %BUILD% - see the log, and any .wrl beside it
+  del /Q "%PHYS%\%BUILD%.jms" >>"%LOG%" 2>&1
+)
+if exist "%PHYS%\%BUILD% physics.keep" (
+  copy /Y "%PHYS%\%BUILD% physics.keep" "%PHYS%\%BUILD%.jms" >>"%LOG%" 2>&1
+  echo -- physics "%BUILD%" >>"%LOG%"
+  tool.exe physics "%BUILD%" >>"%LOG%" 2>&1
+  if errorlevel 1 echo   physics reported an error for %BUILD% - see the log
+  del /Q "%PHYS%\%BUILD%.jms" >>"%LOG%" 2>&1
+)
+if exist "%PHYS%\%BUILD% collision.keep" ren "%PHYS%\%BUILD% collision.keep" "%BUILD% collision.jms" >>"%LOG%" 2>&1
+if exist "%PHYS%\%BUILD% physics.keep" ren "%PHYS%\%BUILD% physics.keep" "%BUILD% physics.jms" >>"%LOG%" 2>&1
+
 if exist "%HEK%\data\%BUILD%\fp\models\*.jms" (
   echo -- fp arms model "%BUILD%\fp" >>"%LOG%"
   tool.exe model "%BUILD%\fp" >>"%LOG%" 2>&1

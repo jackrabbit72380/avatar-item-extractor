@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v130.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v131.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1196,7 +1196,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v130.bat` and
+`Extract UNSC Marine Armor Avatar-v131.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1211,7 +1211,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v130.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v131.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1261,9 +1261,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v130.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v131.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v130.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v131.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
@@ -1595,4 +1595,36 @@ are the rules the toolchain enforces rather than choices this build makes:
   geometry is its own JMS compiled with `tool collision-geometry`, and physics
   is another (`tool physics`, spheres linked to the pelvis)
   ([thread](https://halomaps.haloman30.com/index.cfm?page=topic&topicID=48038)).
-  This build writes neither yet; the `.jms` it writes is the render model only.
+
+Both are written now. Each build folder carries them in `physics\` beside the
+model:
+
+| file | compiled by | becomes |
+|---|---|---|
+| `<item> collision.jms` | `tool collision-geometry "<item>"` | `tags\<item>\<item>.model_collision_geometry` |
+| `<item> physics.jms` | `tool physics "<item>"` | `tags\<item>\<item>.physics` |
+
+The collision model is **14 closed boxes**, one per body part, each from the
+vertices that ride that bone at weight 0.5 or more: no plate-sized pieces, no
+overlapping pieces (a pair that would overlap is pulled apart along the axis it
+overlaps least, so pieces come out with a gap rather than a shared face), every
+face wound outward and every face given a material, all twelve triangles of a
+box sharing their eight positions - the rules the collision compiler checks. It
+carries the model's own node block and its header checksum, and names the one
+region the model names, which is what stops "region counts don't match". The
+physics model is a sphere on the pelvis, radius half the hips' wider side, with
+no node offset - a marker's translation is read in its node's frame and the
+pelvis frame is turned 120 degrees, so zero is the one offset that cannot be
+misplaced.
+
+The compile script runs both verbs and parks the two source files as `.keep`
+while each runs, because `tool.exe` imports whatever `.JMS` it finds in
+`physics\`. Then, in Guerilla on your biped tag:
+
+1. **collision model** - point it at `<item>\<item>.model_collision_geometry`.
+2. **physics** - point it at `<item>\<item>.physics`.
+3. Leave **model** and **animation graph** as they are
+   (`<item>\<item>` and `characters\cyborg\cyborg.model_animations`).
+
+Nothing else changes: the three tags share one node list checksum, so the biped
+animates and is collidable from the same skeleton.
