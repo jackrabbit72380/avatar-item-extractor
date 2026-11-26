@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v150"
-BUILD = "Chief's size, one uniform factor"
+VERSION = "v151"
+BUILD = "Chest plates on the torso, not the legs"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5334,6 +5334,14 @@ def transfer_from_body(weights, mesh, ported, world):
     return weights, copied
 
 
+# The bones no plate over the chest can ride: Halo's biped is built tall in the
+# legs, so the top of a thigh is at 39 units and a hand hangs beside the hip at
+# 35, while this armour's shoulders are at 45 - thirteen units under the
+# biped's clavicles.
+LEG_BONES = ("bip01 l thigh", "bip01 l calf", "bip01 l foot",
+             "bip01 r thigh", "bip01 r calf", "bip01 r foot")
+
+
 def skin(object_data, armature, influences=2, rigid=False, given=None):
     """Distance weighting against the biped, so shells and open meshes work.
 
@@ -5350,6 +5358,11 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
     names = list(segments)
     mesh = object_data.data
     world = object_data.matrix_world
+    # The chest and collar band: from the top of the pelvis, because nothing
+    # above it is leg, up to the neck, which is as high as a collar goes.
+    chest = None
+    if "bip01 pelvis" in segments and "bip01 neck" in segments:
+        chest = (segments["bip01 pelvis"][0].z, segments["bip01 neck"][0].z)
 
     if rigid:
         votes = {}
@@ -5452,6 +5465,85 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
                 "deformation - %d round(s) over %d body poses, until no edge "
                 "stretched past x%.1f"
                 % (object_data.name, chosen, len(halo_pose.BODY_POSES), TEAR_LIMIT))
+        # A plate that is a shell of its own cannot be placed by distance on this
+        # rig. Halo's biped is built tall in the legs - the top of a thigh is at
+        # 39 units and a hand hangs beside the hip at 35 - while this armour's
+        # shoulders are at 45, thirteen units under the biped's clavicles, so a
+        # plate over the chest is nearer a thigh than any bone it could ride;
+        # in game the collar and shoulder plates hung in the air every time the
+        # legs moved.
+        #
+        # Above the pelvis no arm or leg bone can carry a plate, so a shell that
+        # lies wholly inside the chest and collar band loses them as candidates
+        # and rides the torso alone - whole, one bone to one plate. Which torso
+        # bone is the column the plate sits in, because height cannot answer it
+        # (Halo's clavicles are at 57 units and this armour's shoulders at 45):
+        # the collar, on the centre line, rides the spine, and a plate out at the
+        # shoulder's width rides that side's clavicle.
+        #
+        # Per shell, never per vertex: a cut at a height across a continuous
+        # sleeve tears it, and the repair for that tear runs away over the whole
+        # body - tried per vertex, nineteen rounds later the arms and the head
+        # had no weights left at all. A shell that ends on its own edge cannot
+        # tear away from anything.
+        if chest:
+            root = list(range(len(mesh.vertices)))
+
+            def shell_of(index):
+                while root[index] != index:
+                    root[index] = root[root[index]]
+                    index = root[index]
+                return index
+
+            for edge in mesh.edges:
+                first, second = edge.vertices
+                one, two = shell_of(first), shell_of(second)
+                if one != two:
+                    root[one] = two
+            shells = {}
+            for vertex in mesh.vertices:
+                shells.setdefault(shell_of(vertex.index), []).append(vertex.index)
+            across = None
+            if "bip01 l clavicle" in segments and "bip01 r clavicle" in segments:
+                across = abs(segments["bip01 l clavicle"][0].y)
+            column = [name for name in ("bip01 pelvis", "bip01 spine",
+                                        "bip01 spine1", "bip01 neck")
+                      if name in segments]
+            for indices in shells.values():
+                spots = [world @ mesh.vertices[index].co for index in indices]
+                low = min(spot.z for spot in spots)
+                high = max(spot.z for spot in spots)
+                if len(indices) > 1000 or low < chest[0] or high > chest[1]:
+                    continue
+                # Only a shell a leg bone is holding is wrong. A plate already on
+                # the torso is left with the field it has - the collar's, blended
+                # with the pelvis, reads the spine as it should - and a plate on
+                # an arm bone is the sleeve, which has to keep it.
+                if not any(name in LEG_BONES
+                           for index in indices for name in weights[index]):
+                    continue
+                centre = sum(spots, Vector()) / len(spots)
+                chosen = None
+                if across and abs(centre.y) >= across:
+                    chosen = ("bip01 l clavicle" if centre.y > 0
+                              else "bip01 r clavicle")
+                if chosen is None:
+                    spans = [(name, min(segments[name][0].z, segments[name][1].z),
+                              max(segments[name][0].z, segments[name][1].z))
+                             for name in column]
+                    here = [entry for entry in spans
+                            if entry[1] <= centre.z <= entry[2]] or spans
+                    if not here:
+                        continue
+                    chosen = min(here, key=lambda entry: point_segment_distance(
+                        centre, *segments[entry[0]]))[0]
+                for index in indices:
+                    weights[index] = {chosen: 1.0}
+                log("%s: the %d-vertex plate at z %.1f, %.1f units out from the "
+                    "centre line, is a shell of its own - no arm or leg bone can "
+                    "carry a plate over the chest, so it rides %s whole"
+                    % (object_data.name, len(indices), centre.z, abs(centre.y),
+                       chosen))
         groups = {name: object_data.vertex_groups.new(name=name) for name in names}
         tally = {}
         for index, own in enumerate(weights):
