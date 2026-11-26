@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v156"
-BUILD = "Shoulder pads on the arm, crotch in one piece"
+VERSION = "v157"
+BUILD = "v147's rigging, put back exactly"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2362,12 +2362,7 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         # only if the item's joints say so - this one's arms are modelled down
         # while its joints are not, so where the plate's own axis can be
         # measured, that axis is what is turned onto the bone.
-        # Only the limbs are turned. The torso, head and legs are authored
-        # standing straight already, so turning them by their bone's rest
-        # rotation folded the chest forward one spine plate at a time and
-        # crossed the arms - the hunch. A plate with no turn stays exactly
-        # where the file put it, and only the arms are swung onto Halo's line.
-        turn = None
+        turn = entry["turn"]
         centre = source
         # The arms are turned as ONE unit, about the shoulder, and only the
         # plates lying along the arm are turned at all. A plate near a shoulder
@@ -2411,8 +2406,6 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         #
         # Without it the body is only turned into the pose, keeps its own limb
         # lengths, and the hand bone reaches past the glove.
-        if turn is None:
-            continue
         axial = 1.0
         target = source
         if limbs:
@@ -5334,15 +5327,6 @@ def transfer_from_body(weights, mesh, ported, world):
     return weights, copied
 
 
-# The bones no plate over the chest can ride: Halo's biped is built tall in the
-# legs, so the top of a thigh is at 39 units and a hand hangs beside the hip at
-# 35, while this armour's shoulders are at 45 - thirteen units under the
-# biped's clavicles.
-CROTCH_HALF = 3.0             # how far off the centre line the groin is, in units
-LEG_BONES = ("bip01 l thigh", "bip01 l calf", "bip01 l foot",
-             "bip01 r thigh", "bip01 r calf", "bip01 r foot")
-
-
 def skin(object_data, armature, influences=2, rigid=False, given=None):
     """Distance weighting against the biped, so shells and open meshes work.
 
@@ -5359,15 +5343,6 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
     names = list(segments)
     mesh = object_data.data
     world = object_data.matrix_world
-    # The chest and collar band: from the top of the pelvis, because nothing
-    # above it is leg, up to the neck, which is as high as a collar goes.
-    chest = None
-    if "bip01 pelvis" in segments and "bip01 neck" in segments:
-        chest = (segments["bip01 pelvis"][0].z, segments["bip01 neck"][0].z)
-    # The band the crotch sits in, and the bone that carries it.
-    crotch = None
-    if "bip01 pelvis" in segments:
-        crotch = (segments["bip01 pelvis"][0].z + 2.0, "bip01 pelvis")
 
     if rigid:
         votes = {}
@@ -5434,25 +5409,8 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
                  for name, (head, tail) in segments.items()
                  if name in allowed),
                 key=lambda pair: pair[0])[:influences]
-            own = {name: 1.0 / max(distance, 1e-4) ** 2
-                   for distance, name in scored}
-            # The crotch is the body's centre line and Halo's cyborg carries it on
-            # the pelvis. Left to distance, the strip between the thighs is handed
-            # to both of them - measured on this armour, 18 triangles had a corner
-            # on each leg - and the suit is drawn torn in half the moment they
-            # part, which is the spike under the belt. A vertex on the centre line
-            # gives its leg weight to the pelvis, ramped by how central it is, so
-            # the field stays continuous and the groin is one piece.
-            if crotch and point.z < crotch[0] and abs(point.y) < CROTCH_HALF:
-                share = (CROTCH_HALF - abs(point.y)) / CROTCH_HALF
-                moved = sum(weight for name, weight in own.items()
-                            if name in LEG_BONES)
-                if moved > 0.0:
-                    for name in list(own):
-                        if name in LEG_BONES:
-                            own[name] *= 1.0 - share
-                    own[crotch[1]] = own.get(crotch[1], 0.0) + moved * share
-            nearest.append(own)
+            nearest.append({name: 1.0 / max(distance, 1e-4) ** 2
+                            for distance, name in scored})
         weights = smooth_by_position(nearest, mesh, kin=family)
         ported = take_port_tag(object_data, mesh)
         weights, copied = transfer_from_body(weights, mesh, ported, world)
@@ -5487,115 +5445,6 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
                 "deformation - %d round(s) over %d body poses, until no edge "
                 "stretched past x%.1f"
                 % (object_data.name, chosen, len(halo_pose.BODY_POSES), TEAR_LIMIT))
-        # A plate that is a shell of its own cannot be placed by distance on this
-        # rig. Halo's biped is built tall in the legs - the top of a thigh is at
-        # 39 units and a hand hangs beside the hip at 35 - while this armour's
-        # shoulders are at 45, thirteen units under the biped's clavicles, so a
-        # plate over the chest is nearer a thigh than any bone it could ride;
-        # in game the collar and shoulder plates hung in the air every time the
-        # legs moved.
-        #
-        # Above the pelvis no arm or leg bone can carry a plate, so a shell that
-        # lies wholly inside the chest and collar band loses them as candidates
-        # and rides the torso alone - whole, one bone to one plate, the one the
-        # plate's own height stands in: the collar at 50 units is the spine, a
-        # plate at 42 to 45 is the spine too, and anything up at the neck is
-        # spine1.
-        #
-        # Not the clavicle. It is the shoulder joint, and the game swings it
-        # with the arm: a shoulder plate bound to it is drawn a hand's length
-        # out from the chest, as a stretched band bridged back to the suit -
-        # measured in game, that is what the plates out at the shoulder's width
-        # did when they were put there.
-        #
-        # Per shell, never per vertex: a cut at a height across a continuous
-        # sleeve tears it, and the repair for that tear runs away over the whole
-        # body - tried per vertex, nineteen rounds later the arms and the head
-        # had no weights left at all. A shell that ends on its own edge cannot
-        # tear away from anything.
-        if chest:
-            root = list(range(len(mesh.vertices)))
-
-            def shell_of(index):
-                while root[index] != index:
-                    root[index] = root[root[index]]
-                    index = root[index]
-                return index
-
-            for edge in mesh.edges:
-                first, second = edge.vertices
-                one, two = shell_of(first), shell_of(second)
-                if one != two:
-                    root[one] = two
-            shells = {}
-            for vertex in mesh.vertices:
-                shells.setdefault(shell_of(vertex.index), []).append(vertex.index)
-            column = [name for name in ("bip01 pelvis", "bip01 spine",
-                                        "bip01 spine1", "bip01 neck")
-                      if name in segments]
-            for indices in shells.values():
-                spots = [world @ mesh.vertices[index].co for index in indices]
-                low = min(spot.z for spot in spots)
-                high = max(spot.z for spot in spots)
-                if len(indices) > 1000 or low < chest[0] or high > chest[1]:
-                    continue
-                # Only a shell a leg bone is holding is wrong. A plate already on
-                # the torso is left with the field it has - the collar's, blended
-                # with the pelvis, reads the spine as it should - and a plate on
-                # an arm bone is the sleeve, which has to keep it.
-                if not any(name in LEG_BONES
-                           for index in indices for name in weights[index]):
-                    continue
-                centre = sum(spots, Vector()) / len(spots)
-                # A shoulder pad is a plate on the arm: it sits over the deltoid,
-                # so at this armour's height it is the one chest-band shell that
-                # is nearer an upper arm than the spine - and the sleeve it sits
-                # in rides that same upper arm, so it has to ride it too, or the
-                # pad and its sleeve are drawn apart the moment the arm swings.
-                # The whole shell, rigid: a pauldron does not bend.
-                arm = None
-                reach = [name for name in ("bip01 l upperarm", "bip01 r upperarm")
-                         if name in segments]
-                if reach:
-                    near = min(reach, key=lambda name: point_segment_distance(
-                        centre, *segments[name]))
-                    trunk = min(point_segment_distance(centre, *segments[name])
-                                for name in column) if column else None
-                    if trunk is None or point_segment_distance(
-                            centre, *segments[near]) < trunk:
-                        arm = near
-                if arm is not None:
-                    for index in indices:
-                        weights[index] = {arm: 1.0}
-                    log("%s: the %d-vertex pad at z %.1f, %.1f units out from the "
-                        "centre line, is nearer the arm than the spine, so it "
-                        "rides %s whole - the sleeve under it rides the same arm"
-                        % (object_data.name, len(indices), centre.z, abs(centre.y),
-                           arm))
-                    continue
-                spans = [(name, min(segments[name][0].z, segments[name][1].z),
-                          max(segments[name][0].z, segments[name][1].z))
-                         for name in column]
-                if not spans:
-                    continue
-                here = [entry for entry in spans if entry[1] <= centre.z <= entry[2]]
-                above = [entry for entry in spans if entry[1] > centre.z]
-                if here:
-                    chosen = here[0][0]
-                elif above:
-                    # Above the pelvis but under the spine's own head: the plate
-                    # still belongs to the chest, so it takes the bone whose
-                    # segment starts just above it - the spine, not the pelvis.
-                    chosen = min(above, key=lambda entry: entry[1])[0]
-                else:
-                    chosen = spans[-1][0]
-                for index in indices:
-                    weights[index] = {chosen: 1.0}
-                log("%s: the %d-vertex plate at z %.1f, %.1f units out from the "
-                    "centre line, is a shell of its own - no arm or leg bone can "
-                    "carry a plate over the chest, so it rides %s whole"
-                    % (object_data.name, len(indices), centre.z, abs(centre.y),
-                       chosen))
         groups = {name: object_data.vertex_groups.new(name=name) for name in names}
         tally = {}
         for index, own in enumerate(weights):
@@ -7034,23 +6883,11 @@ def main():
                                       for vertex in merged.data.vertices]
                             spans.append((max(values) - min(values)) if values else 0.0)
                         tall = max(spans)
-                        # Match the model's own height to the skeleton's head
-                        # top, one factor for every vertex. Putting the avatar's
-                        # head JOINT on Halo's head bone is what inflated him: a
-                        # 360 avatar's head is a third of its height, so its neck
-                        # joint sits far lower than a Spartan's, and reaching the
-                        # bone with it stretched a 1.61 m body to 2.63 m. Height
-                        # for height keeps the suit the size of Chief's.
-                        # The mesh is in metres here and the skeleton in Halo
-                        # units, so the bone height is converted before it is
-                        # compared with the model's.
                         head_bone = armature.data.bones.get("bip01 head")
-                        top = None
-                        if head_bone is not None:
-                            top = ((armature.matrix_world @ head_bone.tail_local).z
-                                   / HALO_UNITS_PER_METRE)
-                        if top and tall > 1e-6:
-                            grow = top / tall
+                        head_joint = NXE_JOINTS[19]
+                        if head_bone is not None and abs(head_joint[2]) > 1e-6:
+                            grow = ((armature.matrix_world @ head_bone.head_local).z
+                                    / (head_joint[2] * HALO_UNITS_PER_METRE))
                         else:
                             grow = (fit * AUTHORED_BODY_HEIGHT / tall) if tall > 1e-6 else fit
                         body_grow = grow
@@ -7062,8 +6899,8 @@ def main():
                             "avatar is wearing the suit, so the armour IS the "
                             "body and only the head sits above it. The whole "
                             "model takes ONE uniform factor x%.3f, so its head "
-                            "stands %.3f m, the biped's own height - one factor on "
-                            "every vertex, so nothing is stretched"
+                            "joint lands on Halo's head bone and it stands %.3f m "
+                            "- the avatar's own proportions scaled, never bent"
                             % (merged.name, grow, tall * grow))
                     if placed is not None:
                         # Each part's own height, not the model's: reporting the
