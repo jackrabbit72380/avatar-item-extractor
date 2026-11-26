@@ -87,8 +87,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v119"
-BUILD = "2026-11-26 one-blend-per-point"
+VERSION = "v120"
+BUILD = "2026-11-26 no-cliff-transfer"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4280,10 +4280,16 @@ def smooth_by_position(weights, mesh, passes=SMOOTH_PASSES, keep=2):
 # would be a node the file does not declare.
 PORT_GROUP = "ported_body"
 
+# How many points of the avatar's body each armour vertex reads its weights
+# from. One is a cliff: the blend jumps when the nearest body point changes,
+# and that jump is a stretched plate. A few, weighted by distance, is the same
+# rule with no cliff in it.
+BODY_BLEND = 4
+
 # How many times the transferred weights are averaged along each shell's own
 # edges. A plate converges to one blend - a solid plate cannot tear itself -
 # while the suit is long enough that its gradient survives.
-PLATE_SMOOTH_PASSES = 100
+PLATE_SMOOTH_PASSES = 300
 
 
 def take_port_tag(object_data, mesh):
@@ -4328,10 +4334,25 @@ def transfer_from_body(weights, mesh, ported, world):
     for vertex in mesh.vertices:
         if vertex.index in covered:
             continue
-        _point, slot, _away = tree.find(world @ vertex.co)
-        if slot is None:
+        point = world @ vertex.co
+        # Snap to the single nearest body vertex and the blend changes the
+        # moment the nearest one changes, which on a coarse proxy is a cliff -
+        # two armour points a millimetre apart end up on different bones and
+        # the plate between them stretches. Taking the few nearest and letting
+        # distance decide between them is the same rule, continuous.
+        near = tree.find_n(point, BODY_BLEND)
+        total = 0.0
+        blend = {}
+        for _spot, slot, away in near:
+            if slot is None:
+                continue
+            share = 1.0 / max(away, 1e-4) ** 2
+            total += share
+            for name, value in weights[ported[slot]].items():
+                blend[name] = blend.get(name, 0.0) + value * share
+        if not total:
             continue
-        weights[vertex.index] = dict(weights[ported[slot]])
+        weights[vertex.index] = {name: value / total for name, value in blend.items()}
         copied += 1
     return weights, copied
 
