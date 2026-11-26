@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v154"
-BUILD = "Chest plates on the torso, never a limb"
+VERSION = "v155"
+BUILD = "The crotch is one piece, on the pelvis"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5338,6 +5338,7 @@ def transfer_from_body(weights, mesh, ported, world):
 # legs, so the top of a thigh is at 39 units and a hand hangs beside the hip at
 # 35, while this armour's shoulders are at 45 - thirteen units under the
 # biped's clavicles.
+CROTCH_HALF = 3.0             # how far off the centre line the groin is, in units
 LEG_BONES = ("bip01 l thigh", "bip01 l calf", "bip01 l foot",
              "bip01 r thigh", "bip01 r calf", "bip01 r foot")
 
@@ -5363,6 +5364,10 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
     chest = None
     if "bip01 pelvis" in segments and "bip01 neck" in segments:
         chest = (segments["bip01 pelvis"][0].z, segments["bip01 neck"][0].z)
+    # The band the crotch sits in, and the bone that carries it.
+    crotch = None
+    if "bip01 pelvis" in segments:
+        crotch = (segments["bip01 pelvis"][0].z + 2.0, "bip01 pelvis")
 
     if rigid:
         votes = {}
@@ -5429,8 +5434,25 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
                  for name, (head, tail) in segments.items()
                  if name in allowed),
                 key=lambda pair: pair[0])[:influences]
-            nearest.append({name: 1.0 / max(distance, 1e-4) ** 2
-                            for distance, name in scored})
+            own = {name: 1.0 / max(distance, 1e-4) ** 2
+                   for distance, name in scored}
+            # The crotch is the body's centre line and Halo's cyborg carries it on
+            # the pelvis. Left to distance, the strip between the thighs is handed
+            # to both of them - measured on this armour, 18 triangles had a corner
+            # on each leg - and the suit is drawn torn in half the moment they
+            # part, which is the spike under the belt. A vertex on the centre line
+            # gives its leg weight to the pelvis, ramped by how central it is, so
+            # the field stays continuous and the groin is one piece.
+            if crotch and point.z < crotch[0] and abs(point.y) < CROTCH_HALF:
+                share = (CROTCH_HALF - abs(point.y)) / CROTCH_HALF
+                moved = sum(weight for name, weight in own.items()
+                            if name in LEG_BONES)
+                if moved > 0.0:
+                    for name in list(own):
+                        if name in LEG_BONES:
+                            own[name] *= 1.0 - share
+                    own[crotch[1]] = own.get(crotch[1], 0.0) + moved * share
+            nearest.append(own)
         weights = smooth_by_position(nearest, mesh, kin=family)
         ported = take_port_tag(object_data, mesh)
         weights, copied = transfer_from_body(weights, mesh, ported, world)
