@@ -24,6 +24,12 @@ transforms so the arithmetic is checkable by hand.
 
     python3 tools/test_jms.py
 """
+try:
+    import bmesh  # noqa: F401 - Blender's own module, present only inside Blender
+except ImportError:
+    print("needs Blender's own python (bmesh): skipping here")
+    raise SystemExit(2)
+
 
 import importlib.util
 import os

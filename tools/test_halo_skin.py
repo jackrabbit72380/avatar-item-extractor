@@ -398,6 +398,11 @@ def worst_edges(path, shoulder, elbow, count=8):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print(__doc__)
+        print("needs a compiled .jms to measure: without one there is nothing to "
+              "say about a file, so this is a skip (exit 2), not a pass.")
+        raise SystemExit(2)
     path = sys.argv[1]
     print("halo skinning: %s" % path.split("/")[-1])
     failed = 0

@@ -13,6 +13,12 @@ Two halves are checked:
 
     python3 tools/test_uvsets.py
 """
+try:
+    import bmesh  # noqa: F401 - Blender's own module, present only inside Blender
+except ImportError:
+    print("needs Blender's own python (bmesh): skipping here")
+    raise SystemExit(2)
+
 
 import base64
 import importlib.util

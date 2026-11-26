@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+try:
+    import bmesh  # noqa: F401 - Blender's own module, present only inside Blender
+except ImportError:
+    print("needs Blender's own python (bmesh): skipping here")
+    raise SystemExit(2)
+
 r"""Prove the HEK folder tree: data\<item>\ with an fp\ beside it, both orders.
 
 The layout is what a HEK user navigates by - tool.exe is pointed at

@@ -5,6 +5,12 @@ A tee's shoulders are weighted to the upper arms, so its binding line starts
 with "bip01 r upperarm" - and reading that line alone put a whole shirt on the
 first-person hand, rigidly, as if it were a ring. Only a prop rides one bone.
 """
+try:
+    import bmesh  # noqa: F401 - Blender's own module, present only inside Blender
+except ImportError:
+    print("needs Blender's own python (bmesh): skipping here")
+    raise SystemExit(2)
+
 
 import importlib.util
 import os

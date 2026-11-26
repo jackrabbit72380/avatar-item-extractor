@@ -83,23 +83,35 @@ def main():
         env["RIG_MODULES"] = work
         env["MESH_MODULES"] = work
         failed = []
+        skipped = []
         for name in tests:
             print("=" * 70)
             print(name)
             print("=" * 70)
             code = subprocess.call([sys.executable, os.path.join(HERE, name)],
                                    cwd=ROOT, env=env)
-            if code != 0:
+            if code == 2:
+                # Exit 2 is "I need a compiled model to look at", which this
+                # folder has not got. Named as a skip rather than counted as a
+                # pass, so it cannot quietly stop testing anything.
+                skipped.append(name)
+            elif code != 0:
                 failed.append((name, code))
             print("")
 
         print("=" * 70)
+        if skipped:
+            print("SKIPPED: %d need a compiled model, not shipped here:" % len(skipped))
+            for name in skipped:
+                print("  %s" % name)
         if failed:
             print("FAILED: %d of %d" % (len(failed), len(tests)))
             for name, code in failed:
                 print("  %s (exit %d)" % (name, code))
             return 1
-        print("PASSED: %d of %d" % (len(tests), len(tests)))
+        print("PASSED: %d of %d%s"
+              % (len(tests) - len(skipped), len(tests),
+                 " (%d skipped, named above)" % len(skipped) if skipped else ""))
         print("Not covered here: the Blender passes themselves. The rigging tests")
         print("use a stand-in blender.exe, so a real Blender run is still yours to do.")
         return 0
