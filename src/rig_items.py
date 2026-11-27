@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v179"
-BUILD = "the neck and face ask for the full names"
+VERSION = "v180"
+BUILD = "every material gets a name only it holds"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -6033,9 +6033,16 @@ def name_materials_by_bitmap(object_data, stem):
     tool.exe looks for, and a name no tag answers draws white in game. The item
     arrives with its own names (this one calls the armour "... colour"), and no
     texture or shader in the world is called that, so the model would be asking
-    for a tag that cannot exist. Every material is therefore named for its
-    picture: `<item> body` and `<item> face`, which are the two bitmaps this
-    program writes beside it.
+    for a tag that cannot exist.
+
+    So each material is named by the part of the body it covers, and the names
+    are held in one place by `tag_name`: the suit takes `<item> base map`, the
+    head `<item> face`, the neck `<item> body` - or `face`, `body` and the same
+    two under `--plain-tags`. An item can bring more parts than those three, and
+    two materials cannot share a name: Blender answers a taken name with `.001`,
+    and that suffix would go into the .jms and become a tag nobody could make.
+    The extras after the neck are therefore numbered - `body 2`, `body 3` - and
+    each keeps a name only it holds.
     """
     mesh = object_data.data
     slots = object_data.material_slots
@@ -6060,14 +6067,20 @@ def name_materials_by_bitmap(object_data, stem):
     face_slot = None
     if rest:
         face_slot = max(rest, key=lambda index: tall[index] / counts[index])
-    wanted = {}
-    for index in used:
-        if index == largest:
-            wanted[index] = "%s base map" % stem
-        elif index == face_slot:
-            wanted[index] = tag_name(stem, "face")
-        else:
-            wanted[index] = tag_name(stem, "body")
+    wanted = {largest: "%s base map" % stem}
+    if face_slot is not None:
+        wanted[face_slot] = tag_name(stem, "face")
+    # Every other material is a part of the body the item also brought - a strap,
+    # a second pair of gloves, a patch of cloth. They cannot all be the neck, and
+    # a repeated name would come back as `.001`, so they are numbered in the
+    # order they sit up the model: the neck first, then body 2, body 3.
+    neck = tag_name(stem, "body")
+    extra = 0
+    others = [index for index in rest if index != face_slot]
+    others.sort(key=lambda index: -(tall[index] / counts[index]))
+    for index in others:
+        extra += 1
+        wanted[index] = neck if extra == 1 else "%s %d" % (neck, extra)
     # Blender's material names are one namespace for the whole file, and a name
     # already in use comes back with ".001" on it - which would become a shader
     # tag that does not exist, so the model would draw white. Anything that is
