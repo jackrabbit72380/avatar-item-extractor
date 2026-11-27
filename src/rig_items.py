@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v169"
-BUILD = "the item's own shape kept exactly, measured edge by edge"
+VERSION = "v170"
+BUILD = "shoulder plates ride the arm, and the model asks for two shaders not three"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5547,6 +5547,39 @@ def hold_the_shoulders(object_data, armature):
 FLOATER_GAP = 4.0
 
 
+def merge_thin_materials(object_data, least=4):
+    """Fold a material that carries almost no faces into the armour's own.
+
+    Halo asks the game for one shader per material named in the model, and a
+    shader that is missing is not an error - it draws white. The item comes with
+    a second armour material on a couple of stray faces, which would mean a third
+    shader tag to make by hand for no visible difference; those faces are given
+    the armour material they belong on. The face keeps its own material.
+    """
+    mesh = object_data.data
+    slots = [slot.material for slot in object_data.material_slots]
+    if len(slots) < 3:
+        return 0
+    counts = [0] * len(slots)
+    for polygon in mesh.polygons:
+        counts[polygon.material_index] += 1
+    face_slots = {index for index, material in enumerate(slots)
+                  if material and "face" in material.name.lower()}
+    keep = max((index for index in range(len(slots)) if index not in face_slots),
+               key=lambda index: counts[index], default=None)
+    if keep is None:
+        return 0
+    folded = 0
+    for index in range(len(slots)):
+        if index == keep or index in face_slots or counts[index] >= least:
+            continue
+        for polygon in mesh.polygons:
+            if polygon.material_index == index:
+                polygon.material_index = keep
+        folded += 1
+    return folded
+
+
 def shape_audit(object_data, authored, scale=1.0):
     """How far the exported mesh's edges are from the ones it was imported with.
 
@@ -6078,8 +6111,19 @@ def export_jms(object_data, armature, path, arms=False):
                    % (own, first, sibling, turn[0], turn[1], turn[2], turn[3],
                       head[0], head[1], head[2]))
 
-    materials = [slot.material.name if slot.material else "material%d" % index
-                 for index, slot in enumerate(object_data.material_slots)] or ["material"]
+    # Only a material that carries faces is named: Halo makes one shader per name
+    # here, and a name with nothing on it is a shader tag to create by hand for a
+    # surface that is not in the model. The face keeps its own name, because it
+    # is a different picture.
+    used = {polygon.material_index for polygon in object_data.data.polygons}
+    order = [index for index in range(len(object_data.material_slots))
+             if index in used]
+    if not order:
+        order = [0]
+    renumber = {was: now for now, was in enumerate(order)}
+    materials = [object_data.material_slots[index].material.name
+                 if object_data.material_slots[index].material
+                 else "material%d" % index for index in order]
     out.append("%d" % len(materials))
     for name in materials:
         # Spaces stay: the material name is how tool.exe finds the shader, and
@@ -6120,7 +6164,7 @@ def export_jms(object_data, armature, path, arms=False):
             corner_one, corner_two, corner_three = (loops[0], loops[corner],
                                                     loops[corner + 1])
             corners.append((corner_one, corner_two, corner_three,
-                            polygon.material_index))
+                            renumber.get(polygon.material_index, 0)))
             # Every plate twice, wound the other way - a plate with two sides.
             # Halo culls a back face, and this armour is 2,165 separate plates
             # over nothing: at a plate's silhouette edge, and in every seam
@@ -6131,7 +6175,7 @@ def export_jms(object_data, armature, path, arms=False):
             # as solid from behind instead of vanishing. Halo has no
             # double-sided shader in CE; two windings is how a model gets one.
             corners.append((corner_one, corner_three, corner_two,
-                            polygon.material_index))
+                            renumber.get(polygon.material_index, 0)))
 
     out.append("%d" % (len(corners) * 3))
     first = len(out)
@@ -6802,6 +6846,14 @@ def report_text(options, records, stems, armature, nxe=None):
         # Left unsaid, the engine has nothing to draw it with and falls back to
         # its stock white shader: that white face is the missing tag, not the
         # model's texture, and it looks identical to a blank map.
+        lines.append("  shaders   : the model names %d material(s). tool.exe looks for"
+                     " one shader tag per name, and a name with no tag draws WHITE in"
+                     " game rather than an error - so make one for each name below."
+                     % len(record.get("materials") or []))
+        for material in record.get("materials") or []:
+            lines.append("              - \"%s\"  ->  shader_model, base map = %s"
+                         % (material, record.get("material_maps", {}).get(
+                             material, "%s base map.tif" % stem)))
         if os.path.exists(os.path.join(options["out"], "%s face.png" % stem)):
             lines.append("  face      : the head is material \"%s face\", bound to "
                          "%s face.tif" % (stem, stem))
@@ -7436,10 +7488,39 @@ def main():
                     record["stand"] = stood["lines"][0]
                     log("%s stood in Halo's pose: worst edge x%.2f over the "
                         "whole body" % (merged.name, stood["worst"]))
+            # Weights, not geometry: the plates over the shoulder joint are on the
+            # clavicle, which barely turns, so in game the arm swings out of its own
+            # sleeve and the pad is left standing where the T-pose put it - the
+            # shoulder reads as missing. Handing those plates to the upper arm moves
+            # no vertex; it only says which bone carries them when the game poses it.
+            held = hold_the_arms(merged, armature)
+            if held:
+                log("%s: %d plate(s) out along the arm were riding the clavicle "
+                    "and now ride the arm bone" % (merged.name, held))
+            shoulders = hold_the_shoulders(merged, armature)
+            if shoulders:
+                log("%s: %d plate(s) on a shoulder joint were riding the torso "
+                    "or a leg and now ride the upper arm of their side"
+                    % (merged.name, shoulders))
             shape = shape_audit(merged, authored)
             if shape:
                 record["shape"] = shape["line"]
                 log("%s: %s" % (merged.name, shape["line"]))
+            merged_materials = merge_thin_materials(merged)
+            if merged_materials:
+                log("%s: %d material(s) with almost no faces folded into the "
+                    "armour's own, so the model asks the game for two shaders "
+                    "instead of three" % (merged.name, merged_materials))
+            used_slots = sorted({polygon.material_index
+                                 for polygon in merged.data.polygons})
+            record["materials"] = [merged.material_slots[index].material.name
+                                   for index in used_slots
+                                   if merged.material_slots[index].material]
+            stem_now = item_stem(record)
+            record["material_maps"] = {
+                name: ("%s face.tif" % stem_now if "face" in name.lower()
+                       else "%s body.tif" % stem_now)
+                for name in record["materials"]}
             turned = face_the_world(merged)
             if turned:
                 record["faces"] = ("%d face(s) in shells the item wound inside "
