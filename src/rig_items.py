@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v172"
-BUILD = "the model names the three shaders the user has, with a tif beside each"
+VERSION = "v173"
+BUILD = "the seams are measured after the plates move, and by the gap the eye sees"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5541,6 +5541,129 @@ def hold_the_shoulders(object_data, armature):
     return settled
 
 
+# A gap the eye can see, in Halo units. The tear search scores edges by how far
+# they stretch as a RATIO, and a ratio hides a long edge's whole gap: an edge
+# 1.35 units long drawn to 2.8 times its length opens 3.8 units of hole, and
+# x2.8 reads as a pass. 1.0 unit is about 11 mm on a 1.83 m biped.
+GAP_LIMIT = 1.0
+GAP_ROUNDS = 10
+
+
+def settle_gaps(weights, mesh, armature, world, names, family):
+    """Average the weights across every edge whose pose opens a visible gap.
+
+    The same point graph, the same game poses, the same rule as settle_tears,
+    with the thing the eye measures in place of the ratio: the distance the two
+    ends of an edge come apart by. Measured on the shipped file, the waist edge
+    between a pelvis plate and the spine above it drew 3.8 units apart at a
+    twenty degree spine bend while its ratio was only x2.8 - a number the tear
+    search was content with. Blending that boundary turns a hole into a crease.
+    """
+    where, rest, field, ring, moves = skin_point_graph(
+        weights, mesh, armature, world, names)
+    rounds = 0
+    for _round in range(GAP_ROUNDS):
+        torn = set()
+        for move in moves:
+            placed = []
+            for point, ride in zip(rest, field):
+                total = Vector((0.0, 0.0, 0.0))
+                for name, share in ride.items():
+                    moved = move.get(name)
+                    if moved is not None:
+                        total += (moved @ point) * share
+                placed.append(total)
+            for slot in range(len(rest)):
+                for other in ring[slot]:
+                    if other <= slot:
+                        continue
+                    was = (rest[slot] - rest[other]).length
+                    if was < 1e-5:
+                        continue
+                    if abs((placed[slot] - placed[other]).length - was) > GAP_LIMIT:
+                        torn.add(slot)
+                        torn.add(other)
+        if not torn:
+            break
+        rounds += 1
+        settled = {}
+        for slot in torn:
+            blend = dict(field[slot])
+            near = [other for other in ring[slot] if other in torn] or ring[slot]
+            for other in near:
+                for name, value in field[other].items():
+                    blend[name] = blend.get(name, 0.0) + value / (1 + len(near))
+            ranked = sorted(blend.items(), key=lambda pair: -pair[1])
+            kin = family.get(ranked[0][0]) or ()
+            ranked = ([pair for pair in ranked if pair[0] in kin]
+                      + [pair for pair in ranked if pair[0] not in kin])
+            top = ranked[:2]
+            total = sum(value for _name, value in top) or 1.0
+            settled[slot] = {name: value / total for name, value in top}
+        for slot, own in settled.items():
+            field[slot] = own
+    return [field[slot] for slot in where], rounds
+
+
+def repair_tears(object_data, armature):
+    """Run the game-pose tear search again, after the plates were re-hung.
+
+    ``skin()`` shapes the weights against Halo's own poses, and then
+    ``hold_the_arms()`` and ``hold_the_shoulders()`` hand whole plates to the arm
+    bone. That is the right answer for the plate and a cliff for the surface
+    beside it: the plate now turns eighty degrees with the arm while the sleeve
+    it used to lie against stays on the clavicle, and the edge between them is
+    drawn apart. Nothing measured it, so it shipped.
+
+    Measured on this armour, the shipped .jms drew one edge x7.65 at the game's
+    own eighty degree arm pose - a 2.5 unit gap at the shoulder, which is what
+    the spikes in game are. So the same search that shaped the weights runs once
+    more on the weights as they now stand, and blends the cliff into a gradient
+    over the plates' own edges instead of leaving it at one edge.
+
+    Weights only: no vertex moves, so the shape and the rig are untouched. This
+    is the last thing done to the binding before the shape check.
+    """
+    segments = bone_segments(armature)
+    names = list(segments)
+    if not names:
+        return 0
+    family = bone_family(armature, names)
+    mesh = object_data.data
+    world = object_data.matrix_world
+    group_names = {group.index: group.name for group in object_data.vertex_groups}
+    weights = []
+    for vertex in mesh.vertices:
+        ride = {group_names[entry.group]: entry.weight for entry in vertex.groups
+                if entry.group in group_names and entry.weight > 1e-4}
+        weights.append(ride)
+    if not any(weights):
+        return 0
+    weights, settled = settle_tears(weights, mesh, armature, world, names, family)
+    weights, chosen = relax_tears(weights, mesh, armature, world, names)
+    weights, gapped = settle_gaps(weights, mesh, armature, world, names, family)
+    groups = {}
+    for name in names:
+        groups[name] = (object_data.vertex_groups.get(name)
+                        or object_data.vertex_groups.new(name=name))
+    for vertex, ride in zip(mesh.vertices, weights):
+        top = sorted(ride.items(), key=lambda pair: -pair[1])[:2]
+        total = sum(value for _name, value in top) or 1.0
+        keep = {name for name, _value in top}
+        if not keep:
+            continue
+        for group in object_data.vertex_groups:
+            if group.name not in keep:
+                group.remove([vertex.index])
+        for name, value in top:
+            groups[name].add([vertex.index], value / total, "REPLACE")
+    if gapped:
+        log("%s: %d round(s) of the game's poses over the edges whose gap is "
+            "over %.1f unit(s) - the waist seam was the last one"
+            % (object_data.name, gapped, GAP_LIMIT))
+    return settled + chosen
+
+
 # A fragment is a plate of a single triangle. The item has dozens of them - a
 # chipped edge, a rivet - and they are all of it that sits on the body. One that
 # has been thrown clear is debris, and it is left out of the export.
@@ -7553,6 +7676,17 @@ def main():
                 log("%s: %d plate(s) on a shoulder joint were riding the torso "
                     "or a leg and now ride the upper arm of their side"
                     % (merged.name, shoulders))
+            # The holds above leave a cliff where a re-hung plate meets the
+            # surface that stayed behind, and the search that shaped these
+            # weights ran before they existed. Re-run it on the weights as they
+            # now stand, so the cliff is drawn apart as a gradient instead of at
+            # one edge: weights only, no vertex moves.
+            if held or shoulders:
+                repaired = repair_tears(merged, armature)
+                if repaired:
+                    log("%s: repaired the seam the re-hung plates left - %d "
+                        "round(s) of the game's own poses, weights only"
+                        % (merged.name, repaired))
             shape = shape_audit(merged, authored)
             if shape:
                 record["shape"] = shape["line"]
