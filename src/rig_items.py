@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v166"
-BUILD = "v74's rig restored - one smooth body fit, no per-plate pose turning"
+VERSION = "v167"
+BUILD = "every face tested for winding and drawn, joints on their bones"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5515,6 +5515,83 @@ def hold_the_shoulders(object_data, armature):
 FLOATER_GAP = 4.0
 
 
+def face_the_world(object_data):
+    """Turn any shell that shows the world its back out the right way round.
+
+    Halo draws one side of a triangle. A face wound the wrong way is not dark
+    and not clipped - it is simply not there, and the model reads as a hole
+    exactly where the surface is complete. The item comes from a renderer that
+    draws both sides, so a shell can arrive inside out and look right until it
+    is in the game.
+
+    Each shell is judged as a whole, from its own middle: a shell whose faces
+    mostly point at that middle is inside out and is turned over. A flat plate
+    has no middle worth speaking of - its faces sit square to it, neither in nor
+    out - and is left exactly as the item wound it, so the side a person is
+    meant to see is never hidden on a guess.
+    """
+    mesh = object_data.data
+    if not mesh.polygons:
+        return 0
+    parent = list(range(len(mesh.vertices)))
+
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for polygon in mesh.polygons:
+        corners = list(polygon.vertices)
+        for other in corners[1:]:
+            first, second = find(corners[0]), find(other)
+            if first != second:
+                parent[second] = first
+    shells = {}
+    for polygon in mesh.polygons:
+        shells.setdefault(find(polygon.vertices[0]), []).append(polygon.index)
+    turn_over = []
+    for indices in shells.values():
+        if len(indices) < 6:
+            continue
+        middle = [0.0, 0.0, 0.0]
+        seen = 0
+        for index in indices:
+            for corner in mesh.polygons[index].vertices:
+                point = mesh.vertices[corner].co
+                for axis in range(3):
+                    middle[axis] += point[axis]
+                seen += 1
+        if not seen:
+            continue
+        middle = [value / seen for value in middle]
+        inward = counted = 0
+        for index in indices:
+            polygon = mesh.polygons[index]
+            normal, centre = polygon.normal, polygon.center
+            out = [centre[axis] - middle[axis] for axis in range(3)]
+            reach = math.sqrt(sum(value * value for value in out))
+            if reach < 1e-6:
+                continue
+            counted += 1
+            if sum(normal[axis] * out[axis] for axis in range(3)) < -0.3 * reach:
+                inward += 1
+        if counted >= 6 and inward >= 0.8 * counted:
+            turn_over.extend(indices)
+    if not turn_over:
+        return 0
+    room = bmesh.new()
+    room.from_mesh(mesh)
+    room.faces.ensure_lookup_table()
+    room.faces.index_update()
+    bmesh.ops.reverse_faces(room, faces=[room.faces[index] for index in turn_over
+                                        if index < len(room.faces)])
+    room.to_mesh(mesh)
+    room.free()
+    mesh.update()
+    return len(turn_over)
+
+
 def drop_floaters(object_data):
     """Leave out a one-triangle fragment that ended up floating off the body.
 
@@ -7273,6 +7350,14 @@ def main():
                 if fitted:
                     record["biped_fit"] = fitted
                     merged["biped_fit"] = fitted["lines"][0]
+            turned = face_the_world(merged)
+            if turned:
+                record["faces"] = ("%d face(s) in shells the item wound inside "
+                                   "out were turned over - Halo draws one side "
+                                   "only, so those were invisible faces" % turned)
+                log("%s: %d face(s) turned the right way round - a shell the item "
+                    "shipped inside out draws as nothing in game"
+                    % (merged.name, turned))
             drop_floaters(merged)
         rigged.append((record, merged, nxe, arms_item, arms_rig))
 
