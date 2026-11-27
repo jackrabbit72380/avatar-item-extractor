@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v176"
-BUILD = "the Blender files open ready to look at"
+VERSION = "v177"
+BUILD = "the first-person arms are left as they were"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -7013,48 +7013,6 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
     return spheres
 
 
-def paint_plain(objects, colour=(0.13, 0.14, 0.12, 1.0)):
-    """A material whose map was not shipped shows its own colour, not magenta.
-
-    Halo's reference arms name textures that travel with the game and not with
-    this tool, so those images are dropped when the file is saved - and a
-    material with a missing map renders bright magenta in Blender, which reads
-    as broken rather than as "this map is not here". The arms are shown for
-    their shape and their rig, so a plain dark colour is the honest look.
-    """
-    done = 0
-    for item in objects:
-        if getattr(item, "type", None) != "MESH":
-            continue
-        for material in [slot.material for slot in item.material_slots]:
-            if material is None:
-                continue
-            material.use_nodes = True
-            nodes = material.node_tree.nodes
-            links = material.node_tree.links
-            # An image the file could not find still sits in the node - Blender
-            # shows a missing map as magenta, not as nothing - so a node counts
-            # as having a map only when that map has pixels.
-            if any(node.type == "TEX_IMAGE" and node.image and node.image.size[0]
-                   for node in nodes):
-                continue
-            for node in [node for node in nodes
-                         if node.type == "TEX_IMAGE" and not (node.image
-                                                              and node.image.size[0])]:
-                nodes.remove(node)
-            surface = next((node for node in nodes if node.type == "BSDF_PRINCIPLED"), None)
-            if surface is None:
-                continue
-            socket = surface.inputs.get("Base Color")
-            if socket is None:
-                continue
-            for link in list(socket.links):
-                links.remove(link)
-            socket.default_value = colour
-            done += 1
-    return done
-
-
 def open_ready(objects):
     """Save the scene the way it should be seen: shaded, and facing you.
 
@@ -8320,45 +8278,14 @@ def main():
                         os.path.join(fp_source, jms_name(stem, " - fp arms")),
                         arms=True)
                 record["arms_file"] = "%s - halo fp arms.blend" % stem
-                # An item with no sleeves of its own still gets this file, and
-                # written with the empty mesh it was a rig with nothing on it -
-                # which reads as a broken export. So the set carries Halo's own
-                # first-person arms instead: the model the player actually sees,
-                # on the rig the game's animations drive.
-                carried = arms_item
-                borrowed = []
-                if not arms_item.data.vertices:
-                    borrowed = halo_arms(arms_rig)
-                    if borrowed:
-                        carried = borrowed[0]
-                        record["arms_binding"] = (
-                            "none - this item has no arm geometry of its own, so "
-                            "this file carries Halo's own first-person arms")
-                        plain = paint_plain(borrowed)
-                        log("%s: the fp arms file carries Halo's own arms (%d "
-                            "verts), because this item has no arm geometry to "
-                            "wear%s" % (merged.name, len(carried.data.vertices),
-                                        "" if not plain else
-                                        "; %d material(s) had maps that live "
-                                        "with the game, so they show a plain "
-                                        "colour" % plain))
-                if borrowed:
-                    save_blend(os.path.join(blend_dir, record["arms_file"]),
-                               borrowed + [arms_rig],
-                               halo_note(stem, carried, arms_rig, True))
-                    export_rigged(
-                        os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
-                        carried, arms_rig, "fbx")
-                else:
-                    # The arms are carried onto Halo's own first-person rig, so
-                    # that rig is the one in the file - the game's animations
-                    # drive it as they are, with nothing to retarget first.
-                    export_rigged(os.path.join(blend_dir, record["arms_file"]),
-                                  arms_item, arms_rig, "blend",
-                                  halo_note(stem, arms_item, arms_rig, True))
-                    export_rigged(
-                        os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
-                        arms_item, arms_rig, "fbx")
+                # The arms are carried onto Halo's own first-person rig, so
+                # that rig is the one in the file - the game's animations drive
+                # it as they are, with nothing to retarget first.
+                export_rigged(os.path.join(blend_dir, record["arms_file"]),
+                              arms_item, arms_rig, "blend",
+                              halo_note(stem, arms_item, arms_rig, True))
+                export_rigged(os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
+                              arms_item, arms_rig, "fbx")
                 share_files(blend_dir, fp_source, (" - halo fp arms.blend",
                                                   " - halo fp arms.fbx"))
                 log("wrote %s on the first-person arms" % stem)
