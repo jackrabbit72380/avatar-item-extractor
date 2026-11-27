@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v160"
-BUILD = "the arm weights move after the pose, not before"
+VERSION = "v161"
+BUILD = "the item's own face UVs, and shoulder plates on the shoulder"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -1350,7 +1350,13 @@ def bind_face_sheet(object_data, sheet, path, stem):
             polygon.material_index = target
             was_face.add(polygon.index)
             moved += 1
-    project_face_uvs(mesh)
+    # The item's own face coordinates are kept exactly as its container wrote
+    # them. They were laid out on the avatar's face sheet, which is the sheet
+    # bound over them here, so eyes, brows, nose and mouth land where the
+    # artist drew them. Re-projecting the face into a hand-tuned band of the
+    # sheet (which this pass used to do) threw that away: measured on the sheet
+    # the avatar is painted on, a band from v 0.08 to 0.95 lifts the mouth into
+    # the beard at the chin and drops the brows on to the eyes.
     for index in range(len(mesh.materials) - 1, -1, -1):
         if any(polygon.material_index == index for polygon in mesh.polygons):
             continue
@@ -5423,6 +5429,167 @@ def hold_the_arms(object_data, armature):
     return moved
 
 
+# How far from a shoulder joint, in Halo units, a plate can sit and still be
+# shoulder armour: the pad and the cap of the sleeve, not the collar or the
+# chest, whose plates reach the joint too but belong to the spine.
+SHOULDER_HOOD = 6.0
+
+
+def hold_the_shoulders(object_data, armature):
+    """Every plate sitting on a shoulder joint is given, whole, to its arm.
+
+    A pad wraps the outside of the joint, and the nearest bone to a point out
+    there is no guide: measured on this armour, the plates over BOTH shoulders
+    came out of the skin with ``bip01 l thigh`` and ``bip01 r thigh`` as the
+    bone most of their vertices rode, with the pelvis under that. Nothing near
+    a shoulder is a leg, so that is not a distance that can be tuned - the
+    weighting had no part map and the body it was copying from has none either,
+    because a costume's body is cut away before the pads are bound.
+
+    So the shells are looked at one at a time, after the pose and after
+    ``hold_the_arms``: a shell whose middle sits within SHOULDER_HOOD of a
+    shoulder joint, out past the clavicle's tail, and whose bone is neither the
+    clavicle nor an arm bone, is shoulder armour that was handed to the torso
+    or the leg by accident. It is given, whole, to the upper arm of that side -
+    the bone the shoulder turns with - and nothing else about it changes. Whole
+    shells only: a plate whose weights are split is a plate that tears.
+    """
+    segments = bone_segments(armature)
+    if not all(name in segments for name in CLAVICLES):
+        return 0
+    chains = {}
+    for side in ("l", "r"):
+        names = ["bip01 %s %s" % (side, part) for part in ARM_CHAIN]
+        if all(name in segments for name in names):
+            chains[side] = names
+    if not chains:
+        return 0
+    mesh = object_data.data
+    world = object_data.matrix_world
+    group_names = {group.index: group.name for group in object_data.vertex_groups}
+    root = list(range(len(mesh.vertices)))
+
+    def shell_of(index):
+        while root[index] != index:
+            root[index] = root[root[index]]
+            index = root[index]
+        return index
+
+    for edge in mesh.edges:
+        one, two = edge.vertices
+        first, second = shell_of(one), shell_of(two)
+        if first != second:
+            root[first] = second
+    shells = {}
+    for vertex in mesh.vertices:
+        shells.setdefault(shell_of(vertex.index), []).append(vertex.index)
+    settled = 0
+    for indices in shells.values():
+        if len(indices) > 2000:
+            continue
+        centre = sum((world @ mesh.vertices[index].co for index in indices),
+                     Vector()) / len(indices)
+        side = "l" if centre.y > 0 else "r"
+        chain = chains.get(side)
+        if not chain:
+            continue
+        joint = segments[chain[0]][0]
+        if (centre - joint).length > SHOULDER_HOOD:
+            continue
+        # Outboard of the clavicle's tail: the joint's own cap. Anything inboard
+        # of that is the chest and neck, which the spine already holds.
+        if abs(centre.y) < abs(segments[CLAVICLES[0 if side == "l" else 1]][1].y) - 1.5:
+            continue
+        owning = {}
+        for index in indices:
+            for entry in mesh.vertices[index].groups:
+                name = group_names.get(entry.group)
+                if name:
+                    owning[name] = owning.get(name, 0.0) + entry.weight
+        if not owning:
+            continue
+        shoulder = max(owning, key=owning.get)
+        if shoulder in chain or shoulder in CLAVICLES:
+            continue
+        arm = min(chain, key=lambda name: point_segment_distance(
+            centre, *segments[name]))
+        group = (object_data.vertex_groups.get(arm)
+                 or object_data.vertex_groups.new(name=arm))
+        for other in object_data.vertex_groups:
+            if other.name != arm:
+                other.remove(indices)
+        group.add(indices, 1.0, "REPLACE")
+        settled += 1
+    return settled
+
+
+# A fragment is a plate of a single triangle. The item has dozens of them - a
+# chipped edge, a rivet - and they are all of it that sits on the body. One that
+# has been thrown clear is debris, and it is left out of the export.
+FLOATER_GAP = 4.0
+
+
+def drop_floaters(object_data):
+    """Leave out a one-triangle fragment that ended up floating off the body.
+
+    A swing is measured for a whole shell, and a shell that is one triangle has
+    no shape for that measurement to read: on this armour one of them was
+    carried 0.63 m out from the shoulder and hung in the air beside the chest.
+    Measured against the rest of the mesh, the stray is the only fragment more
+    than FLOATER_GAP from everything else, so that is the test - a fragment
+    near the surface is a rivet and stays exactly where the item put it.
+    """
+    mesh = object_data.data
+    world = object_data.matrix_world
+    parent = list(range(len(mesh.vertices)))
+
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for polygon in mesh.polygons:
+        corners = list(polygon.vertices)
+        for other in corners[1:]:
+            first, second = find(corners[0]), find(other)
+            if first != second:
+                parent[second] = first
+    shells = {}
+    for polygon in mesh.polygons:
+        shells.setdefault(find(polygon.vertices[0]), []).append(polygon.index)
+    points = [world @ vertex.co for vertex in mesh.vertices]
+    drop = set()
+    for root, faces in shells.items():
+        if len(faces) > 1:
+            continue
+        corners = set(mesh.polygons[faces[0]].vertices)
+        if len(corners) > 3:
+            continue
+        centre = sum((points[index] for index in corners), Vector()) / len(corners)
+        near = min((points[index] - centre).length
+                   for index in range(len(points)) if index not in corners)
+        if near > FLOATER_GAP:
+            drop.add(faces[0])
+    if not drop:
+        return 0
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bm.faces.ensure_lookup_table()
+    bmesh.ops.delete(bm, geom=[bm.faces[index] for index in sorted(drop)],
+                     context="FACES")
+    bm.to_mesh(mesh)
+    bm.free()
+    for polygon in mesh.polygons:
+        polygon.use_smooth = True
+    mesh.update()
+    log("%s: left out %d one-triangle fragment(s) that a swing had thrown clear "
+        "of the body - a plate that small has no shape of its own, so it is "
+        "bound like its neighbours but not carried by a swing"
+        % (object_data.name, len(drop)))
+    return len(drop)
+
+
 def skin(object_data, armature, influences=2, rigid=False, given=None):
     """Distance weighting against the biped, so shells and open meshes work.
 
@@ -5800,7 +5967,10 @@ def export_jms(object_data, armature, path, arms=False):
     world = object_data.matrix_world
     inverse = armature.matrix_world.inverted()
     rotate = inverse.to_3x3()
-    project_face_uvs(mesh_data)
+    # No face re-projection here either: the .jms carries the item's own face
+    # coordinates, the ones the avatar's face sheet was painted for. They were
+    # already correct when the mesh came in, and the join with the ported head
+    # keeps them - every layer merged by name carries the same numbers.
     uv_layer = mesh_data.uv_layers.active
     group_names = {group.index: group.name for group in object_data.vertex_groups}
 
@@ -7091,6 +7261,14 @@ def main():
                     "clavicle - the shoulder bone barely turns, so they now "
                     "ride the arm bone nearest them, whole"
                     % (merged.name, held))
+            drop_floaters(merged)
+            shoulders = hold_the_shoulders(merged, armature)
+            if shoulders:
+                log("%s: %d plate(s) on a shoulder joint were riding a bone of "
+                    "the torso or the leg - the pad is given, whole, to the "
+                    "upper arm of its side, so the shoulder armour moves with "
+                    "the shoulder and nothing is left bare"
+                    % (merged.name, shoulders))
             progress(stage + 0.88 * 0.92,
                      "item %d of %d: %s skinned"
                      % (number, len(items), merged.name))
