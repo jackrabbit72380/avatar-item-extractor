@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v174"
-BUILD = "welded, watertight, and rigid away from the joints"
+VERSION = "v175"
+BUILD = "an arm that already hangs is left alone"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2286,6 +2286,12 @@ def shift_of(matrix, anchor, centre):
                                    for column in range(3)) for row in range(3))
 
 
+# How close an arm has to already lie to Halo's own line before the T-pose swing
+# is skipped: 20 degrees, the cosine of it. An item exported "as shown" hangs
+# within a few degrees; a T-pose is 79 away.
+ALREADY_HANGING = 0.94
+
+
 def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
     """Stand a whole body in the pose Halo's own skeleton holds - no scaling.
 
@@ -2391,6 +2397,17 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
             continue
         facing = sum(own[step] * halo[step] for step in range(3))
         if facing <= -0.999:
+            continue
+        # A mesh exported arms-down already stands the way Halo's bones do. The
+        # swing below exists to bring a T-pose in - measured on this armour it is
+        # 79 degrees - and applying it to arms that already hang turns them past
+        # the body: the sleeve twists about its own length, the pad leaves the
+        # sleeve it is worn on, and the figure reads hunched over. So an arm that
+        # already lies within ALREADY_HANGING of Halo's line is left where it is.
+        if facing >= ALREADY_HANGING:
+            log("%s: the %s arm already hangs the way Halo's bones do (%.0f "
+                "degrees off it) - no swing applied"
+                % (object_data.name, side, math.degrees(math.acos(min(1.0, facing)))))
             continue
         swing = fit_turn(own, halo)
         if swing is not None:
