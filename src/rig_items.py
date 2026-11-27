@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v175"
-BUILD = "an arm that already hangs is left alone"
+VERSION = "v176"
+BUILD = "the Blender files open ready to look at"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -1300,6 +1300,65 @@ def project_face_uvs(mesh):
             for layer in layers:
                 layer.data[index].uv = placed
     return len(face)
+
+
+def bind_item_map(object_data, folder):
+    """Give every material that arrived with no image the item's own map.
+
+    The .obj's .mtl names a map beside it, but the importer does not always
+    resolve that name, and a material with no image node draws one flat colour
+    in Blender whatever its UVs say. Measured on this armour, the surface that
+    covers 5,700 triangles was the one left without a map, so the suit opened
+    grey in Blender while its atlas sat unread beside it. The planes of that
+    atlas are what every other material here samples, so the largest image in
+    the item's own folder is the one to bind.
+    """
+    best = None
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    for name in names:
+        if not name.lower().endswith((".png", ".tif", ".tiff", ".tga", ".jpg")):
+            continue
+        path = os.path.join(folder, name)
+        size = os.path.getsize(path)
+        if best is None or size > best[1]:
+            best = (path, size)
+    if best is None or best[1] < 4096:
+        return 0
+    image = bpy.data.images.load(best[0], check_existing=True)
+    bound = 0
+    for material in object_data.data.materials:
+        if material is None or "face" in (material.name or "").lower():
+            continue
+        material.use_nodes = True
+        nodes = material.node_tree.nodes
+        links = material.node_tree.links
+        if any(node.type == "TEX_IMAGE" and node.image for node in nodes):
+            continue
+        nodes.clear()
+        texture = nodes.new("ShaderNodeTexImage")
+        texture.image = image
+        surface = nodes.new("ShaderNodeBsdfPrincipled")
+        for socket_name, value in (("Metallic", 0.0), ("Roughness", 0.8),
+                                   ("Specular IOR Level", 0.2)):
+            socket = surface.inputs.get(socket_name)
+            if socket is not None:
+                socket.default_value = value
+        out = nodes.new("ShaderNodeOutputMaterial")
+        links.new(texture.outputs["Color"], surface.inputs["Base Color"])
+        links.new(surface.outputs[0], out.inputs[0])
+        bound += 1
+    if bound:
+        try:
+            image.pack()
+        except RuntimeError:
+            pass
+        log("%s: bound %s into %d material(s) that had no image - the suit "
+            "shows its map in Blender instead of one flat colour"
+            % (object_data.name, os.path.basename(best[0]), bound))
+    return bound
 
 
 def bind_face_sheet(object_data, sheet, path, stem):
@@ -6954,6 +7013,91 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
     return spheres
 
 
+def paint_plain(objects, colour=(0.13, 0.14, 0.12, 1.0)):
+    """A material whose map was not shipped shows its own colour, not magenta.
+
+    Halo's reference arms name textures that travel with the game and not with
+    this tool, so those images are dropped when the file is saved - and a
+    material with a missing map renders bright magenta in Blender, which reads
+    as broken rather than as "this map is not here". The arms are shown for
+    their shape and their rig, so a plain dark colour is the honest look.
+    """
+    done = 0
+    for item in objects:
+        if getattr(item, "type", None) != "MESH":
+            continue
+        for material in [slot.material for slot in item.material_slots]:
+            if material is None:
+                continue
+            material.use_nodes = True
+            nodes = material.node_tree.nodes
+            links = material.node_tree.links
+            # An image the file could not find still sits in the node - Blender
+            # shows a missing map as magenta, not as nothing - so a node counts
+            # as having a map only when that map has pixels.
+            if any(node.type == "TEX_IMAGE" and node.image and node.image.size[0]
+                   for node in nodes):
+                continue
+            for node in [node for node in nodes
+                         if node.type == "TEX_IMAGE" and not (node.image
+                                                              and node.image.size[0])]:
+                nodes.remove(node)
+            surface = next((node for node in nodes if node.type == "BSDF_PRINCIPLED"), None)
+            if surface is None:
+                continue
+            socket = surface.inputs.get("Base Color")
+            if socket is None:
+                continue
+            for link in list(socket.links):
+                links.remove(link)
+            socket.default_value = colour
+            done += 1
+    return done
+
+
+def open_ready(objects):
+    """Save the scene the way it should be seen: shaded, and facing you.
+
+    A .blend opens in whatever the viewport was left in, and a fresh viewport is
+    Solid - one grey material, no maps at all. The point of this file is to look
+    at the model, so every 3D view is put in Material Preview and turned to the
+    side the character faces, which is +x in Halo's space. That is a view of the
+    model, not a change to it: no coordinate and no object transform moves, so
+    the file still holds the game's own axes.
+    """
+    from mathutils import Euler
+    meshes = [item for item in objects if item.type == "MESH"]
+    if not meshes:
+        return
+    low = [1e9] * 3
+    high = [-1e9] * 3
+    for item in meshes:
+        for vertex in item.data.vertices:
+            point = item.matrix_world @ vertex.co
+            for axis in range(3):
+                low[axis] = min(low[axis], point[axis])
+                high[axis] = max(high[axis], point[axis])
+    centre = [(low[axis] + high[axis]) / 2.0 for axis in range(3)]
+    tall = max(high[2] - low[2], high[0] - low[0], high[1] - low[1], 1.0)
+    # Looking from +x towards the model, level with its middle: the character
+    # faces +x, so this is his face, upright and framed.
+    look = Euler((math.radians(90.0), 0.0, math.radians(90.0)), "XYZ").to_quaternion()
+    for screen in bpy.data.screens:
+        for area in screen.areas:
+            for space in area.spaces:
+                if space.type != "VIEW_3D":
+                    continue
+                try:
+                    space.shading.type = "MATERIAL"
+                except TypeError:
+                    pass
+                view = space.region_3d
+                view.view_location = centre
+                view.view_rotation = look
+                view.view_distance = tall * 1.45
+                view.view_perspective = "ORTHO"
+
+
 def save_blend(path, objects, note=None):
     """A .blend you can open: the scene, holding only these objects.
 
@@ -6992,6 +7136,7 @@ def save_blend(path, objects, note=None):
         # users when the file is saved and reopened. The fake user is what keeps
         # the note inside the file.
         text.use_fake_user = True
+    open_ready(objects)
     keep = set(objects)
     aside = [item for item in list(scene.collection.objects) if item not in keep]
     for item in aside:
@@ -7719,6 +7864,10 @@ def main():
                     "head shades as one surface" % welded)
         prepare(merged)
         apply_uv_sets(merged, record)
+        # The maps the item shipped with, bound before anything is exported:
+        # a material with no image draws one flat colour in Blender, and this
+        # armour's largest surface arrived that way.
+        bind_item_map(merged, os.path.dirname(path))
         # Before anything is weighted: the item ships exact copies of its own
         # points, so a seam is two surfaces touching rather than one surface,
         # and every open rim is a hole the engine draws the background through.
@@ -8171,14 +8320,45 @@ def main():
                         os.path.join(fp_source, jms_name(stem, " - fp arms")),
                         arms=True)
                 record["arms_file"] = "%s - halo fp arms.blend" % stem
-                # The arms are carried onto Halo's own first-person rig, so
-                # that rig is the one in the file - the game's animations drive
-                # it as they are, with nothing to retarget first.
-                export_rigged(os.path.join(blend_dir, record["arms_file"]),
-                              arms_item, arms_rig, "blend",
-                              halo_note(stem, arms_item, arms_rig, True))
-                export_rigged(os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
-                              arms_item, arms_rig, "fbx")
+                # An item with no sleeves of its own still gets this file, and
+                # written with the empty mesh it was a rig with nothing on it -
+                # which reads as a broken export. So the set carries Halo's own
+                # first-person arms instead: the model the player actually sees,
+                # on the rig the game's animations drive.
+                carried = arms_item
+                borrowed = []
+                if not arms_item.data.vertices:
+                    borrowed = halo_arms(arms_rig)
+                    if borrowed:
+                        carried = borrowed[0]
+                        record["arms_binding"] = (
+                            "none - this item has no arm geometry of its own, so "
+                            "this file carries Halo's own first-person arms")
+                        plain = paint_plain(borrowed)
+                        log("%s: the fp arms file carries Halo's own arms (%d "
+                            "verts), because this item has no arm geometry to "
+                            "wear%s" % (merged.name, len(carried.data.vertices),
+                                        "" if not plain else
+                                        "; %d material(s) had maps that live "
+                                        "with the game, so they show a plain "
+                                        "colour" % plain))
+                if borrowed:
+                    save_blend(os.path.join(blend_dir, record["arms_file"]),
+                               borrowed + [arms_rig],
+                               halo_note(stem, carried, arms_rig, True))
+                    export_rigged(
+                        os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
+                        carried, arms_rig, "fbx")
+                else:
+                    # The arms are carried onto Halo's own first-person rig, so
+                    # that rig is the one in the file - the game's animations
+                    # drive it as they are, with nothing to retarget first.
+                    export_rigged(os.path.join(blend_dir, record["arms_file"]),
+                                  arms_item, arms_rig, "blend",
+                                  halo_note(stem, arms_item, arms_rig, True))
+                    export_rigged(
+                        os.path.join(blend_dir, "%s - halo fp arms.fbx" % stem),
+                        arms_item, arms_rig, "fbx")
                 share_files(blend_dir, fp_source, (" - halo fp arms.blend",
                                                   " - halo fp arms.fbx"))
                 log("wrote %s on the first-person arms" % stem)
