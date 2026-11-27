@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v177"
-BUILD = "the first-person arms are left as they were"
+VERSION = "v178"
+BUILD = "the neck and face ask for body and face"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -268,7 +268,7 @@ def args():
     parsed = {"items": "extracted", "rig": None, "fp": None, "out": "rigged",
               "fbx": True, "jms": True, "name": None, "port": None,
               "keep_shape": False, "eyes_forward": True, "stand": False,
-              "limbs": False}
+              "limbs": False, "tag_prefix": False}
     index = 0
     while index < len(argv):
         word = argv[index]
@@ -296,9 +296,29 @@ def args():
         elif word == "--eyes-forward":
             parsed["eyes_forward"] = True
             index += 1
+        elif word == "--tag-prefix":
+            parsed["tag_prefix"] = True
+            index += 1
         else:
             index += 1
     return parsed
+
+
+# Whether a shader tag is asked for by its bare name or with the item in front.
+# tool.exe matches the name character for character against a tag's own name, so
+# the two spellings are two different tags: an item that asks for
+# "<item> body" draws WHITE where a tag called "body" exists and nothing matches
+# it. The bare name is therefore the default - "body" and "face" are what a
+# modeller calls the two pictures they made - and --tag-prefix asks for the
+# item's name in front of them.
+TAG_PREFIX = [False]
+
+
+def tag_name(stem, part):
+    """The name this model asks tool.exe for: "face", or "<item> face"."""
+    if TAG_PREFIX[0]:
+        return "%s %s" % (stem, part)
+    return part
 
 
 # The carrier .bat streams every [rig] line as Blender writes it, so the
@@ -1235,7 +1255,7 @@ def name_remaining_materials(object_data, bitmap, stem):
         counts[polygon.material_index] = counts.get(polygon.material_index, 0) + 1
     if not counts:
         return []
-    taken = {bitmap, "%s face" % stem, "%s body" % stem}
+    taken = {bitmap, tag_name(stem, "face"), tag_name(stem, "body")}
     biggest = max(counts, key=counts.get)
     named = []
     spare = 2
@@ -1394,7 +1414,7 @@ def bind_face_sheet(object_data, sheet, path, stem):
     image = bpy.data.images.load(path, check_existing=False)
     image.reload()
     image.pack()
-    material = bpy.data.materials.new("%s face" % stem)
+    material = bpy.data.materials.new(tag_name(stem, "face"))
     material.use_nodes = True
     nodes = material.node_tree.nodes
     links = material.node_tree.links
@@ -6014,37 +6034,56 @@ def name_materials_by_bitmap(object_data, stem):
     picture: `<item> body` and `<item> face`, which are the two bitmaps this
     program writes beside it.
     """
-    used = {polygon.material_index for polygon in object_data.data.polygons}
-    counts = [0] * len(object_data.material_slots)
-    for polygon in object_data.data.polygons:
-        counts[polygon.material_index] += 1
-    largest = max(counts) if counts else 0
-    changed = 0
-    for index in sorted(used):
-        if index >= len(object_data.material_slots):
-            continue
-        material = object_data.material_slots[index].material
-        if material is None:
-            continue
-        # The three pictures this item uses have three names: the armour's base
-        # map, the neck's body map, and the head's face sheet. A .jms material
-        # name is the shader tag name, so each material is named for the shader
-        # that draws it - the head's sheet, the skin under the helmet, and the
-        # armour, which is the one with the faces on it.
-        if "face" in material.name.lower():
-            want = "%s face" % stem
-        elif "body" in material.name.lower() and counts[index] < largest:
-            want = "%s body" % stem
+    mesh = object_data.data
+    slots = object_data.material_slots
+    counts = {}
+    tall = {}
+    for polygon in mesh.polygons:
+        counts[polygon.material_index] = counts.get(polygon.material_index, 0) + 1
+        for loop in polygon.loop_indices:
+            point = mesh.vertices[mesh.loops[loop].vertex_index].co
+            tall[polygon.material_index] = tall.get(polygon.material_index, 0.0) + point.z
+    used = sorted(counts)
+    if not used:
+        return 0
+    # Which material is which, from the mesh rather than from the names it
+    # arrived with: the surface with the most faces is the suit, and of what is
+    # left the one sitting highest is the head - the head is under the helmet and
+    # the neck is below it. Reading this off the geometry matters because the
+    # names are exactly what cannot be trusted here (an export calls the armour
+    # "hair_6", and the ported head's own material is literally called "face").
+    largest = max(used, key=lambda index: counts[index])
+    rest = [index for index in used if index != largest]
+    face_slot = None
+    if rest:
+        face_slot = max(rest, key=lambda index: tall[index] / counts[index])
+    wanted = {}
+    for index in used:
+        if index == largest:
+            wanted[index] = "%s base map" % stem
+        elif index == face_slot:
+            wanted[index] = tag_name(stem, "face")
         else:
-            want = "%s base map" % stem
-        if material.name == want:
-            continue
-        # Blender appends .001 when another material already holds the name, and
-        # that suffix would go into the .jms and become a shader tag name that
-        # does not exist. The other material is moved off the name first.
+            wanted[index] = tag_name(stem, "body")
+    # Blender's material names are one namespace for the whole file, and a name
+    # already in use comes back with ".001" on it - which would become a shader
+    # tag that does not exist, so the model would draw white. Anything that is
+    # not one of ours is moved off the name first, and moved to a name that the
+    # .jms never sees.
+    mine = set()
+    for index in used:
+        material = slots[index].material if index < len(slots) else None
+        if material is not None:
+            mine.add(material.name)
+    for want in set(wanted.values()):
         holder = bpy.data.materials.get(want)
-        if holder is not None and holder is not material:
-            holder.name = "%s old" % want
+        if holder is not None and holder.name not in mine:
+            holder.name = "ported %s" % want
+    changed = 0
+    for index, want in wanted.items():
+        material = slots[index].material if index < len(slots) else None
+        if material is None or material.name == want:
+            continue
         material.name = want
         changed += 1
     return changed
@@ -7415,12 +7454,12 @@ def report_text(options, records, stems, armature, nxe=None):
                          % (material, record.get("material_maps", {}).get(
                              material, "%s base map.tif" % stem)))
         if os.path.exists(os.path.join(options["out"], "%s face.png" % stem)):
-            lines.append("  face      : the head is material \"%s face\", bound to "
-                         "%s face.tif" % (stem, stem))
+            lines.append("  face      : the head is material \"%s\", bound to "
+                         "%s face.tif" % (tag_name(stem, "face"), stem))
             lines.append("              Guerilla: a shader_model whose tag name is"
-                         " exactly \"%s face\", base map = %s face.tif,"
+                         " exactly \"%s\", base map = %s face.tif,"
                          " assigned to that material."
-                         % (stem, stem))
+                         % (tag_name(stem, "face"), stem))
             lines.append("              Without that tag the engine has nothing to draw"
                          " the head with and uses its stock white")
             lines.append("              shader - a white face here means a missing shader,"
@@ -7677,6 +7716,7 @@ def ship_source_rigs(out, options, armature):
 
 def main():
     options = args()
+    TAG_PREFIX[0] = bool(options.get("tag_prefix"))
     log("%s - build %s" % (VERSION, BUILD))
     reset_scene()
     # Halo's two rig files are optional: without them the item still gets its
