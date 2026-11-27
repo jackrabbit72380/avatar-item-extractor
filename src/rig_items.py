@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v173"
-BUILD = "the seams are measured after the plates move, and by the gap the eye sees"
+VERSION = "v174"
+BUILD = "welded, watertight, and rigid away from the joints"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -1632,6 +1632,116 @@ def weld_seam(object_data, materials, distance=SEAM_WELD):
     working.free()
     mesh.update()
     return merged
+
+
+# Two vertices closer than this are the same point. The exported item carries
+# exact copies - 5,023 vertices standing on 1,987 positions, 3,036 spare copies -
+# so a seam is two surfaces that happen to touch rather than one surface. The
+# copies are at the same coordinates, so merging them moves nothing.
+SURFACE_WELD = 1e-4
+
+
+def weld_surface(object_data, distance=SURFACE_WELD):
+    """Make the copies of a point one vertex, so the surface is joined up.
+
+    Skin weights are per vertex. Wherever two copies of a point sit on each other
+    they are weighted apart, and the game draws the seam as a split - the plates
+    read as detached, the shading breaks into facets at every join, and a tear
+    search cannot see the edge it should repair because the edge does not exist.
+    Measured on the item as it arrives: 5,023 vertices on 1,987 positions, all of
+    them exact copies. Merging them changes no coordinate; it makes one surface
+    out of two that were touching. Returns how many copies went away.
+    """
+    mesh = object_data.data
+    working = bmesh.new()
+    working.from_mesh(mesh)
+    working.verts.ensure_lookup_table()
+    before = len(working.verts)
+    bmesh.ops.remove_doubles(working, verts=list(working.verts), dist=distance)
+    merged = before - len(working.verts)
+    if merged:
+        working.to_mesh(mesh)
+        mesh.update()
+    working.free()
+    return merged
+
+
+def close_borders(object_data):
+    """Put a face across every open border, so no edge of the model is open.
+
+    The item is a costume of thin shells: sleeves and trouser legs are open
+    tubes, and every armour plate is a wafer whose rim has no face on it. Halo
+    draws one side of a triangle, so an open rim is something to see through -
+    the background shows at the edges of the armour, and looking down an arm
+    shows the inside of the sleeve. The mirrored copy of every triangle in the
+    .jms answers the single-sided triangles, but it cannot answer a hole: there
+    is nothing there to draw.
+
+    So each border loop is closed with one face of its own. Nothing moves and
+    nothing is added outside the outline the model already has - the cap lies
+    across the opening the rim already describes. Returns (loops closed, faces
+    added, borders left open).
+    """
+    mesh = object_data.data
+    working = bmesh.new()
+    working.from_mesh(mesh)
+    working.verts.ensure_lookup_table()
+    border = [edge for edge in working.edges if len(edge.link_faces) == 1]
+    if not border:
+        working.free()
+        return 0, 0, 0
+    around = {}
+    for edge in border:
+        one, two = edge.verts
+        around.setdefault(one, []).append(two)
+        around.setdefault(two, []).append(one)
+    walked = set()
+    closed = 0
+    added = 0
+    left = 0
+    for edge in border:
+        one, two = edge.verts
+        if (one, two) in walked or (two, one) in walked:
+            continue
+        ring = [one, two]
+        walked.add((one, two))
+        walked.add((two, one))
+        while True:
+            last = ring[-1]
+            step = None
+            for other in around.get(last, ()):
+                if (last, other) in walked:
+                    continue
+                step = other
+                break
+            if step is None:
+                break
+            walked.add((last, step))
+            walked.add((step, last))
+            ring.append(step)
+            if step is ring[0]:
+                break
+        if len(ring) < 4 or ring[-1] is not ring[0]:
+            # A border that does not come back to where it started is not a
+            # hole with an outline; there is no face to put across it.
+            left += 1
+            continue
+        corners = [vertex for vertex in ring[:-1]]
+        if len(corners) > 3 and len({vertex.index for vertex in corners}) != len(corners):
+            left += 1
+            continue
+        try:
+            working.faces.new(corners)
+        except ValueError:
+            left += 1
+            continue
+        closed += 1
+        added += 1
+    if added:
+        working.to_mesh(mesh)
+        mesh.update()
+    working.free()
+    return closed, added, left
 
 
 def body_fit(armature, authored=AUTHORED_BODY_HEIGHT):
@@ -4990,6 +5100,14 @@ PORT_GROUP = "ported_body"
 # rule with no cliff in it.
 BODY_BLEND = 4
 
+# How many points of the avatar's body are needed before it is a body at all.
+# A costume exports its body cut away before the plates are bound - this item
+# keeps 34 triangles of neck - and a patch that small is not a body to read
+# weights off: every armour point takes its share from the same handful of neck
+# points, and merged shares hand a thigh point a hand bone. Past this many points
+# the avatar really is under the armour and the transfer is worth doing.
+BODY_TRANSFER_MIN = 400
+
 # How many smoothing passes run between each trim to two bones. Short chunks
 # let the surface settle on one pair instead of flapping between three.
 PLATE_SETTLE = 6
@@ -5152,9 +5270,13 @@ def settle_tears(weights, mesh, armature, world, names, family):
                     blend[name] = blend.get(name, 0.0) + value / (1 + len(near))
             ranked = sorted(blend.items(), key=lambda pair: -pair[1])
             kin = family.get(ranked[0][0]) or ()
-            ranked = ([pair for pair in ranked if pair[0] in kin]
-                      + [pair for pair in ranked if pair[0] not in kin])
-            top = ranked[:2]
+            # Only bones this point is jointed to may carry it. Keeping the
+            # others behind the jointed ones still let a second bone through
+            # when only one was jointed, which is how a calf came to blend with
+            # a hand: two bones no joint connects move far apart and the edge
+            # between them is drawn as a blade.
+            jointed = [pair for pair in ranked if pair[0] in kin]
+            top = (jointed or ranked[:1])[:2]
             total = sum(value for _, value in top) or 1.0
             settled[slot] = {name: value / total for name, value in top}
         for slot, own in settled.items():
@@ -5595,14 +5717,137 @@ def settle_gaps(weights, mesh, armature, world, names, family):
                     blend[name] = blend.get(name, 0.0) + value / (1 + len(near))
             ranked = sorted(blend.items(), key=lambda pair: -pair[1])
             kin = family.get(ranked[0][0]) or ()
-            ranked = ([pair for pair in ranked if pair[0] in kin]
-                      + [pair for pair in ranked if pair[0] not in kin])
-            top = ranked[:2]
+            # Only bones this point is jointed to may carry it. Keeping the
+            # others behind the jointed ones still let a second bone through
+            # when only one was jointed, which is how a calf came to blend with
+            # a hand: two bones no joint connects move far apart and the edge
+            # between them is drawn as a blade.
+            jointed = [pair for pair in ranked if pair[0] in kin]
+            top = (jointed or ranked[:1])[:2]
             total = sum(value for _name, value in top) or 1.0
             settled[slot] = {name: value / total for name, value in top}
         for slot, own in settled.items():
             field[slot] = own
     return [field[slot] for slot in where], rounds
+
+
+# How near a joint a point has to be before it is allowed to blend two bones.
+# Everything further out is a plate riding one bone and nothing else: a pauldron
+# that is half upperarm and half clavicle is a pauldron that bends, and armour
+# does not bend. In Halo units, so 1.5 is about 3 cm on the biped.
+PLATE_BAND = 1.5
+
+
+def hold_the_plates(object_data, armature):
+    """Rigid away from the joints, blended only in the band across them.
+
+    The item is armour over a suit. The plates are metal and must not deform; the
+    fabric under and between them is what folds, and it only folds where a joint
+    is. So a point that blends two jointed bones and stands further than
+    PLATE_BAND from the joint they share is given its dominant bone outright,
+    and a point inside the band keeps its blend.
+
+    Measured, this is what stops the chest and shoulder plates being drawn bent:
+    a plate whose points spread 60/40 and 90/10 across the spine and the clavicle
+    is a plate that shears when the spine turns, and it is the fabric's job to
+    shear, not the plate's.
+
+    Weights only - no vertex moves, so the shape is untouched.
+    """
+    segments = bone_segments(armature)
+    names = list(segments)
+    if not names:
+        return 0
+    family = bone_family(armature, names)
+    mesh = object_data.data
+    world = object_data.matrix_world
+    group_names = {group.index: group.name for group in object_data.vertex_groups}
+    groups = {name: object_data.vertex_groups[name]
+              for name in names if object_data.vertex_groups.get(name)}
+    snapped = 0
+    for vertex in mesh.vertices:
+        rides = sorted(((entry.weight, group_names[entry.group])
+                        for entry in vertex.groups
+                        if entry.group in group_names and entry.weight > 1e-4),
+                       reverse=True)
+        if len(rides) < 2:
+            continue
+        one, two = rides[0][1], rides[1][1]
+        if two not in (family.get(one) or ()) or one not in groups:
+            continue
+        # The joint the two bones share: the closest pair of their ends.
+        gap, joint = min(((first - second).length, (first + second) / 2.0)
+                         for first in segments[one]
+                         for second in segments[two])
+        if gap > 1e-3:
+            continue
+        if ((world @ vertex.co) - joint).length <= PLATE_BAND:
+            continue
+        for other in object_data.vertex_groups:
+            if other.name != one:
+                other.remove([vertex.index])
+        groups[one].add([vertex.index], 1.0, "REPLACE")
+        snapped += 1
+    return snapped
+
+
+def settle_outliers(object_data, armature, rounds=4):
+    """A point whose neighbours all ride one bone rides that bone too.
+
+    Measured on this armour, ten edges joined a point the weights had put on
+    ``bip01 pelvis`` to a point on the clavicle - two bones no joint connects, on
+    the side of the chest. The edge between them is drawn 3.8 units apart at a
+    twenty degree spine bend: a hole in the chest, from ten stray points.
+
+    Where two thirds of a point's neighbours ride one bone and it rides another,
+    it is the odd one out and it takes its neighbours' bone. A point on a real
+    boundary has neighbours on both sides and is left alone, and so is every
+    point that already agrees with its surface. Weights only.
+    """
+    mesh = object_data.data
+    names = {group.index: group.name for group in object_data.vertex_groups}
+    around = [[] for _ in mesh.vertices]
+    for edge in mesh.edges:
+        one, two = edge.vertices
+        around[one].append(two)
+        around[two].append(one)
+    groups = {group.name: group for group in object_data.vertex_groups}
+    moved = 0
+    for _round in range(rounds):
+        rides = []
+        for vertex in mesh.vertices:
+            ranked = sorted(((entry.weight, names.get(entry.group))
+                             for entry in vertex.groups if entry.group in names),
+                            reverse=True)
+            rides.append(ranked)
+        changed = 0
+        for index, ranked in enumerate(rides):
+            if not ranked:
+                continue
+            mine = ranked[0][1]
+            votes = {}
+            for other in around[index]:
+                theirs = rides[other][0][1] if rides[other] else None
+                if theirs and theirs != mine:
+                    votes[theirs] = votes.get(theirs, 0) + 1
+            if not votes:
+                continue
+            best = max(votes, key=votes.get)
+            if votes[best] < max(2, (2 * len(around[index])) // 3):
+                continue
+            group = groups.get(best)
+            if group is None:
+                continue
+            for other in object_data.vertex_groups:
+                if other.name != best:
+                    other.remove([index])
+            group.add([index], 1.0, "REPLACE")
+            rides[index] = [(1.0, best)]
+            changed += 1
+        moved += changed
+        if not changed:
+            break
+    return moved
 
 
 def repair_tears(object_data, armature):
@@ -5641,7 +5886,19 @@ def repair_tears(object_data, armature):
         return 0
     weights, settled = settle_tears(weights, mesh, armature, world, names, family)
     weights, chosen = relax_tears(weights, mesh, armature, world, names)
-    weights, gapped = settle_gaps(weights, mesh, armature, world, names, family)
+    # The waist jumps from the pelvis to spine1 across three units of surface,
+    # because no geometry there rides the spine in between. A blend of one joint
+    # cannot close that - it may only lean on a directly jointed bone, and
+    # spine1 is two joints from the pelvis - so the gap pass is allowed two.
+    wide = {}
+    parent, children = bone_tree(armature, names)
+    for name in names:
+        near = {name}
+        for _step in range(2):
+            near |= {parent.get(other) for other in near if parent.get(other)}
+            near |= {kid for other in list(near) for kid in children.get(other, ())}
+        wide[name] = near
+    weights, gapped = settle_gaps(weights, mesh, armature, world, names, wide)
     groups = {}
     for name in names:
         groups[name] = (object_data.vertex_groups.get(name)
@@ -6018,7 +6275,16 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
                             for distance, name in scored})
         weights = smooth_by_position(nearest, mesh, kin=family)
         ported = take_port_tag(object_data, mesh)
-        weights, copied = transfer_from_body(weights, mesh, ported, world)
+        if len(ported) >= BODY_TRANSFER_MIN:
+            weights, copied = transfer_from_body(weights, mesh, ported, world)
+        else:
+            copied = 0
+            if ported:
+                log("%s: the avatar under this item is %d point(s) - the rest of "
+                    "its body was cut away for the costume - so there is no body "
+                    "to copy weights from and the item keeps the bones its own "
+                    "distance to the skeleton gave it"
+                    % (object_data.name, len(ported)))
         if copied:
             # A plate is one solid piece, so every vertex of it has to ride the
             # same blend: the average of what the body under the whole plate
@@ -7436,6 +7702,20 @@ def main():
                     "head shades as one surface" % welded)
         prepare(merged)
         apply_uv_sets(merged, record)
+        # Before anything is weighted: the item ships exact copies of its own
+        # points, so a seam is two surfaces touching rather than one surface,
+        # and every open rim is a hole the engine draws the background through.
+        welded = weld_surface(merged)
+        if welded:
+            log("%s: welded %d duplicate vertex/vertices - points the item ships "
+                "twice, which read as detached faces and could not hold a seam"
+                % (merged.name, welded))
+        closed, added, left = close_borders(merged)
+        if closed or left:
+            log("%s: closed %d open border(s) with %d face(s) so no edge of the "
+                "model is open%s"
+                % (merged.name, closed, added,
+                   " - %d border(s) did not close" % left if left else ""))
         # The costume's own face, painted by the avatar's sheet it was laid out
         # for. Before the copies are taken, so the .blend, the .fbx and the .jms
         # all carry one face.
@@ -7676,12 +7956,23 @@ def main():
                 log("%s: %d plate(s) on a shoulder joint were riding the torso "
                     "or a leg and now ride the upper arm of their side"
                     % (merged.name, shoulders))
+            plates = hold_the_plates(merged, armature)
+            if plates:
+                log("%s: %d point(s) away from a joint where they blend two "
+                    "bones were given the one bone they ride - a plate does not "
+                    "bend, only the fabric in the band across a joint does"
+                    % (merged.name, plates))
             # The holds above leave a cliff where a re-hung plate meets the
             # surface that stayed behind, and the search that shaped these
             # weights ran before they existed. Re-run it on the weights as they
             # now stand, so the cliff is drawn apart as a gradient instead of at
             # one edge: weights only, no vertex moves.
-            if held or shoulders:
+            outliers = settle_outliers(merged, armature)
+            if outliers:
+                log("%s: %d stray point(s) rode a bone none of their neighbours "
+                    "ride and were given theirs - ten of them were enough to "
+                    "open the side of the chest" % (merged.name, outliers))
+            if held or shoulders or plates or outliers:
                 repaired = repair_tears(merged, armature)
                 if repaired:
                     log("%s: repaired the seam the re-hung plates left - %d "
