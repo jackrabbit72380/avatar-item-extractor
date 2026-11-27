@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v170"
-BUILD = "shoulder plates ride the arm, and the model asks for two shaders not three"
+VERSION = "v171"
+BUILD = "materials named after their bitmaps, so the shader names exist"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5547,6 +5547,40 @@ def hold_the_shoulders(object_data, armature):
 FLOATER_GAP = 4.0
 
 
+def name_materials_by_bitmap(object_data, stem):
+    """Name every material after the bitmap it draws with.
+
+    A .jms material name is not a label - it is the exact shader tag name
+    tool.exe looks for, and a name no tag answers draws white in game. The item
+    arrives with its own names (this one calls the armour "... colour"), and no
+    texture or shader in the world is called that, so the model would be asking
+    for a tag that cannot exist. Every material is therefore named for its
+    picture: `<item> body` and `<item> face`, which are the two bitmaps this
+    program writes beside it.
+    """
+    used = {polygon.material_index for polygon in object_data.data.polygons}
+    changed = 0
+    for index in sorted(used):
+        if index >= len(object_data.material_slots):
+            continue
+        material = object_data.material_slots[index].material
+        if material is None:
+            continue
+        want = ("%s face" % stem if "face" in material.name.lower()
+                else "%s body" % stem)
+        if material.name == want:
+            continue
+        # Blender appends .001 when another material already holds the name, and
+        # that suffix would go into the .jms and become a shader tag name that
+        # does not exist. The other material is moved off the name first.
+        holder = bpy.data.materials.get(want)
+        if holder is not None and holder is not material:
+            holder.name = "%s old" % want
+        material.name = want
+        changed += 1
+    return changed
+
+
 def merge_thin_materials(object_data, least=4):
     """Fold a material that carries almost no faces into the armour's own.
 
@@ -6129,7 +6163,11 @@ def export_jms(object_data, armature, path, arms=False):
         # Spaces stay: the material name is how tool.exe finds the shader, and
         # the name it looks for is the name of the bitmap (`<item> base map`).
         # A tab would end the field early, so that is the one thing collapsed.
-        out.append("%s\t<none>" % " ".join(str(name).split()))
+        clean = " ".join(str(name).split())
+        stem_part, _, tail = clean.rpartition(".")
+        if tail.isdigit() and len(tail) == 3 and stem_part:
+            clean = stem_part
+        out.append("%s\t<none>" % clean)
 
     # Halo's biped markers, on the bones the engine looks for them on. A model
     # without them is refused outright. Any skeleton that has those bones gets
@@ -7511,6 +7549,13 @@ def main():
                 log("%s: %d material(s) with almost no faces folded into the "
                     "armour's own, so the model asks the game for two shaders "
                     "instead of three" % (merged.name, merged_materials))
+            renamed = name_materials_by_bitmap(merged, item_stem(record))
+            if renamed:
+                log("%s: %d material(s) named after the bitmap they draw with, "
+                    "because the .jms name is the shader tag name"
+                    % (merged.name, renamed))
+            if arms_item is not None and arms_item.data.polygons:
+                name_materials_by_bitmap(arms_item, item_stem(record))
             used_slots = sorted({polygon.material_index
                                  for polygon in merged.data.polygons})
             record["materials"] = [merged.material_slots[index].material.name
