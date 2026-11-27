@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v180"
-BUILD = "every material gets a name only it holds"
+VERSION = "v181"
+BUILD = "the front view is in the scene, not only the workspace"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -7068,6 +7068,42 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
     return spheres
 
 
+def face_camera(centre, tall):
+    """A camera on the same front view, as scene data rather than workspace data.
+
+    The saved viewport only survives if Blender loads the workspace saved with
+    the file. A Blender set not to load one - or one a little older than the
+    Blender that wrote the file - keeps its own default angle instead, and from
+    there a standing biped looks tilted, seen from above, with one arm long and
+    one short. Nothing on screen then says the model is straight, so the model
+    gets blamed for the view. A camera is part of the scene: it cannot be left
+    behind, and numpad 0 or F12 puts the model on its feet, upright and facing
+    you, in any Blender.
+    """
+    from mathutils import Euler
+    item = bpy.data.objects.get("front view")
+    if item is None or item.type != "CAMERA":
+        item = bpy.data.objects.new("front view", bpy.data.cameras.new("front view"))
+        bpy.context.scene.collection.objects.link(item)
+    data = item.data
+    data.type = "ORTHO"
+    # Portrait, so a standing character fills the frame without its arms being
+    # cut off at the sides: ortho_scale is the frame's longer side.
+    data.ortho_scale = tall * 1.35
+    data.clip_start = max(tall * 0.01, 0.001)
+    data.clip_end = tall * 10.0
+    item.location = (centre[0] + tall * 2.5, centre[1], centre[2])
+    item.rotation_mode = "QUATERNION"
+    item.rotation_quaternion = Euler(
+        (math.radians(90.0), 0.0, math.radians(90.0)), "XYZ").to_quaternion()
+    scene = bpy.context.scene
+    scene.camera = item
+    scene.render.resolution_x = 1000
+    scene.render.resolution_y = 1250
+    scene.render.resolution_percentage = 100
+    return item
+
+
 def open_ready(objects):
     """Save the scene the way it should be seen: shaded, and facing you.
 
@@ -7077,11 +7113,16 @@ def open_ready(objects):
     side the character faces, which is +x in Halo's space. That is a view of the
     model, not a change to it: no coordinate and no object transform moves, so
     the file still holds the game's own axes.
+
+    A viewport is also only half the job, because it is workspace and not every
+    Blender loads the workspace in the file, so the same front view is left in
+    the scene as a camera too - see face_camera. Returns that camera, so the
+    caller can keep it in the file.
     """
     from mathutils import Euler
     meshes = [item for item in objects if item.type == "MESH"]
     if not meshes:
-        return
+        return None
     low = [1e9] * 3
     high = [-1e9] * 3
     for item in meshes:
@@ -7092,6 +7133,7 @@ def open_ready(objects):
                 high[axis] = max(high[axis], point[axis])
     centre = [(low[axis] + high[axis]) / 2.0 for axis in range(3)]
     tall = max(high[2] - low[2], high[0] - low[0], high[1] - low[1], 1.0)
+    empty = low[0] > 1e8
     # Looking from +x towards the model, level with its middle: the character
     # faces +x, so this is his face, upright and framed.
     look = Euler((math.radians(90.0), 0.0, math.radians(90.0)), "XYZ").to_quaternion()
@@ -7109,6 +7151,9 @@ def open_ready(objects):
                 view.view_rotation = look
                 view.view_distance = tall * 1.45
                 view.view_perspective = "ORTHO"
+    if empty:
+        return None
+    return face_camera(centre, tall)
 
 
 def save_blend(path, objects, note=None):
@@ -7149,8 +7194,10 @@ def save_blend(path, objects, note=None):
         # users when the file is saved and reopened. The fake user is what keeps
         # the note inside the file.
         text.use_fake_user = True
-    open_ready(objects)
+    camera = open_ready(objects)
     keep = set(objects)
+    if camera is not None:
+        keep.add(camera)
     aside = [item for item in list(scene.collection.objects) if item not in keep]
     for item in aside:
         scene.collection.objects.unlink(item)
@@ -7336,6 +7383,9 @@ def halo_note(stem, mesh, armature, arms=False):
         "mesh      : %s, %d vert(s), %d material(s)"
         % (mesh.name, len(mesh.data.vertices), len(mesh.data.materials)),
         "textures  : packed into this file, so it opens with its colours",
+        "view      : straight on, from the side the character faces; the",
+        "            'front view' camera looks along it - numpad 0 shows it",
+        "            upright even if this Blender did not load the saved viewport",
         "export    : BlueStreak 1.0.4 .jms exporter on the mesh",
         "merge     : append another item's - halo.blend and join the meshes;",
         "            every item is skinned to the same biped",
