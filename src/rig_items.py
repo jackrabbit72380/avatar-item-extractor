@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v178"
-BUILD = "the neck and face ask for body and face"
+VERSION = "v179"
+BUILD = "the neck and face ask for the full names"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -268,7 +268,7 @@ def args():
     parsed = {"items": "extracted", "rig": None, "fp": None, "out": "rigged",
               "fbx": True, "jms": True, "name": None, "port": None,
               "keep_shape": False, "eyes_forward": True, "stand": False,
-              "limbs": False, "tag_prefix": False}
+              "limbs": False, "tag_prefix": True}
     index = 0
     while index < len(argv):
         word = argv[index]
@@ -299,6 +299,9 @@ def args():
         elif word == "--tag-prefix":
             parsed["tag_prefix"] = True
             index += 1
+        elif word == "--plain-tags":
+            parsed["tag_prefix"] = False
+            index += 1
         else:
             index += 1
     return parsed
@@ -306,12 +309,12 @@ def args():
 
 # Whether a shader tag is asked for by its bare name or with the item in front.
 # tool.exe matches the name character for character against a tag's own name, so
-# the two spellings are two different tags: an item that asks for
-# "<item> body" draws WHITE where a tag called "body" exists and nothing matches
-# it. The bare name is therefore the default - "body" and "face" are what a
-# modeller calls the two pictures they made - and --tag-prefix asks for the
-# item's name in front of them.
-TAG_PREFIX = [False]
+# the two spellings are two different tags: an item that asks for "<item> body"
+# draws WHITE where only a tag called "body" exists, and the other way round.
+# The item's name in front is the default, because it is unique across a tags
+# folder that may hold several items; --plain-tags asks for "body" and "face"
+# alone, for a set of tags already named that way.
+TAG_PREFIX = [True]
 
 
 def tag_name(stem, part):
