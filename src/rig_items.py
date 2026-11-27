@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v171"
-BUILD = "materials named after their bitmaps, so the shader names exist"
+VERSION = "v172"
+BUILD = "the model names the three shaders the user has, with a tif beside each"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -5559,6 +5559,10 @@ def name_materials_by_bitmap(object_data, stem):
     program writes beside it.
     """
     used = {polygon.material_index for polygon in object_data.data.polygons}
+    counts = [0] * len(object_data.material_slots)
+    for polygon in object_data.data.polygons:
+        counts[polygon.material_index] += 1
+    largest = max(counts) if counts else 0
     changed = 0
     for index in sorted(used):
         if index >= len(object_data.material_slots):
@@ -5566,8 +5570,17 @@ def name_materials_by_bitmap(object_data, stem):
         material = object_data.material_slots[index].material
         if material is None:
             continue
-        want = ("%s face" % stem if "face" in material.name.lower()
-                else "%s body" % stem)
+        # The three pictures this item uses have three names: the armour's base
+        # map, the neck's body map, and the head's face sheet. A .jms material
+        # name is the shader tag name, so each material is named for the shader
+        # that draws it - the head's sheet, the skin under the helmet, and the
+        # armour, which is the one with the faces on it.
+        if "face" in material.name.lower():
+            want = "%s face" % stem
+        elif "body" in material.name.lower() and counts[index] < largest:
+            want = "%s body" % stem
+        else:
+            want = "%s base map" % stem
         if material.name == want:
             continue
         # Blender appends .001 when another material already holds the name, and
@@ -7544,7 +7557,7 @@ def main():
             if shape:
                 record["shape"] = shape["line"]
                 log("%s: %s" % (merged.name, shape["line"]))
-            merged_materials = merge_thin_materials(merged)
+            merged_materials = 0
             if merged_materials:
                 log("%s: %d material(s) with almost no faces folded into the "
                     "armour's own, so the model asks the game for two shaders "
@@ -7608,6 +7621,18 @@ def main():
         # shader and bitmap tags for them, and fp\ holds no maps of its own.
         for texture, pixels, width, height in port_textures.get(stem, []):
             name = "%s %s.tif" % (stem, texture)
+            # The item's own key for a picture ("body") is not the name of the
+            # shader that draws it ("base map"), so each map is written under the
+            # name of every material that uses it as well. The three names the
+            # model asks for and the three files beside it then match exactly.
+            extra = ["%s %s.tif" % (stem, suffix) for suffix in
+                     ("base map", "body", "face")
+                     if any(slot.material and slot.material.use_nodes
+                            and any(node.type == "TEX_IMAGE" and node.image
+                                    and node.image.name.startswith("%s %s." % (stem, texture))
+                                    for node in slot.material.node_tree.nodes)
+                            and slot.material.name == "%s %s" % (stem, suffix)
+                            for slot in merged.material_slots)]
             # tool.exe takes a power of two a side and the export is not built
             # to that rule - a 360sona face is 765x930 - so the HEK copy is
             # resampled up to one. UVs are normalised, so the face stays on the
@@ -7620,9 +7645,21 @@ def main():
                     "HEK copy is written %dx%d" % (texture, width, height,
                                                    hek_width, hek_height))
             for tree in folders.values():
-                with open(os.path.join(tree["bitmaps"], name), "wb") as handle:
-                    handle.write(tiff_bytes(hek_pixels, hek_width, hek_height))
+                for write_name in [name] + extra:
+                    with open(os.path.join(tree["bitmaps"], write_name), "wb") as handle:
+                        handle.write(tiff_bytes(hek_pixels, hek_width, hek_height))
             log("wrote %s for both channel orders" % name)
+        # The armour's own picture is the base map - the sheet the base map
+        # shader draws - but it arrives under the item's key for it, so a copy is
+        # written under the name the model and the shader both use. tool.exe
+        # compiles it into the bitmap tag the base map shader points at.
+        for tree in folders.values():
+            source = os.path.join(tree["bitmaps"], "%s body.tif" % stem)
+            target = os.path.join(tree["bitmaps"], "%s base map.tif" % stem)
+            if os.path.exists(source) and not os.path.exists(target):
+                shutil.copyfile(source, target)
+                log("wrote %s base map.tif - the armour's map, under its shader's name"
+                    % stem)
         models_dir = folders["pc"]["models"]
         item_dir = folders["pc"]["item"]
         source_dir = folders["pc"]["source"]
