@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v161"
-BUILD = "the item's own face UVs, and shoulder plates on the shoulder"
+VERSION = "v162"
+BUILD = "every plate worn on the arm travels with the arm"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2190,6 +2190,10 @@ ARM_NEAR = 2.5        # and how far along it a sleeve starts, clear of the pad
 ARM_FAR = 6.0         # past the glove's reach, so the fingers are included
 ARM_CLEAR = 6.0       # out here a plate is arm even if it hangs wide of the line
 ARM_WIDE = 14.0
+# How far a plate may reach inboard of the shoulder joint, in Halo units, and
+# still travel with the arm. A shoulder pad reaches several units in over the
+# collar; a sleeve plate stops at the joint.
+PAD_OVERLAP = 1.5
 
 
 def shell_direction(points):
@@ -2353,6 +2357,14 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         if swing is not None:
             for name in arm_group:
                 arm_turn[name] = (shoulder, swing, own, reach)
+            # The clavicle's plates are the shoulder cap and the guard on the top
+            # of the arm, and distance hands them the clavicle because that short
+            # bone runs through the shoulder. They are worn on the arm and shaped
+            # for it, so a plate out along the arm swings with the arm whichever
+            # of those two bones it was given; the along-the-arm test below still
+            # keeps the collar and the chest, which sit inboard of the joint, on
+            # their own bone's turn.
+            arm_turn["bip01 %s clavicle" % side] = (shoulder, swing, own, reach)
     placed = list(points)
     turned_shells = 0
     arms_turned = 0
@@ -2390,19 +2402,34 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
             middle = [sum(points[index][step] for index in corners) / len(corners)
                       for step in range(3)]
             # Along the arm is the item's own arm line - shoulder towards its own
-            # hand - because that is the pose the plates were shaped in. Across
-            # it is how far off that line a plate sits. A sleeve and a glove are
-            # narrow and start a little way out from the joint; a shoulder pad is
-            # wide and sits right on it. The pad is also modelled for a T-pose,
-            # so swinging it down stands it up as a spike: pads stay on the body,
-            # and everything out along the arm travels with the arm.
+            # hand - because that is the pose the plates were shaped in.
+            #
+            # A plate the weighting put on an arm bone is worn on the arm, so it
+            # travels with it - sleeve, glove, elbow guard, and the guard on top
+            # of the bicep too. Every plate that was instead held back by a width
+            # or a distance test stayed in the T-pose the item was modelled in
+            # while the sleeve turned down out of it: on this armour that left
+            # the bicep guard hanging beside the shoulder and the top of the arm
+            # reading as a bare black tube.
+            #
+            # A plate the CLAVICLE holds is the only question. Its cap closes
+            # the collar over the joint and is partly inboard of it, so turning
+            # that about the joint lifts it off the collar and leaves it hanging
+            # in the air; its plates that lie wholly outboard of the joint are
+            # worn on the arm. Which it is, is read from the plate itself.
             offset = fit_between(shoulder, middle)
             along = sum(offset[axis] * own_axis[axis] for axis in range(3))
-            across = fit_length([offset[axis] - own_axis[axis] * along
-                                 for axis in range(3)])
-            sleeve = ARM_NEAR < along < own_length + ARM_FAR and across < ARM_ACROSS
-            far_out = along >= ARM_CLEAR and across < ARM_WIDE
-            if sleeve or far_out:
+            # The shoulder pad is the one plate near the joint that reaches
+            # INBOARD of it: it wraps over the collar, where the guard on the
+            # bicep and every sleeve plate stop at the joint. Turning a plate
+            # that reaches over the collar about the joint lifts that edge off
+            # the chest and stands the pad up as a fin, so those stay; all the
+            # rest of the arm travels with the arm.
+            inboard = min(
+                sum((points[index][axis] - shoulder[axis]) * own_axis[axis]
+                    for axis in range(3)) for index in corners)
+            take = inboard >= -PAD_OVERLAP
+            if take:
                 turn = swing
                 centre = shoulder
                 arms_turned += 1
@@ -2472,8 +2499,9 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         log("soles lifted %.2f units onto the floor after the pose" % -lowest)
         lowest = 0.0
     tallest = max(point[2] for point in placed)
-    log("arms: %d plate(s) swung with the arm - the sleeve and glove, not the "
-        "shoulder pads, which are shaped for the T-pose and stay put"
+    log("arms: %d plate(s) swung with the arm - every plate worn on an arm "
+        "bone, and the clavicle's plates that lie out past the joint; the cap "
+        "that closes the collar over the shoulder stays on the collar"
         % arms_turned)
     line = ("%d joints, %d shell(s) %s, worst edge x%.2f, %.2f m tall, "
             "soles at %.2f units"
