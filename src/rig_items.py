@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v168"
-BUILD = "posed as one continuous surface with a blend of the nearest plates' turns"
+VERSION = "v169"
+BUILD = "the item's own shape kept exactly, measured edge by edge"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -267,7 +267,7 @@ def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parsed = {"items": "extracted", "rig": None, "fp": None, "out": "rigged",
               "fbx": True, "jms": True, "name": None, "port": None,
-              "keep_shape": False, "eyes_forward": True, "stand": True,
+              "keep_shape": False, "eyes_forward": True, "stand": False,
               "limbs": False}
     index = 0
     while index < len(argv):
@@ -2402,7 +2402,9 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
                            for step in range(3)) for column in range(3)]
                       for row in range(3)]
             anchor = target
-            shell_fields.append((middle, matrix, shift_of(matrix, anchor, centre)))
+            shell_fields.append((middle, matrix,
+                                 shift_of(matrix, anchor, centre), corners,
+                                 turn is not entry["turn"]))
             for index in corners:
                 offset = fit_between(centre, points[index])
                 along = sum(offset[step] * axis[step] for step in range(3))
@@ -2416,7 +2418,8 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         # A plate turned about a point other than its own joint lands where that
         # point takes it, so the anchor moves with it.
         anchor = target if centre is source else centre
-        shell_fields.append((middle, turn, shift_of(turn, anchor, centre)))
+        shell_fields.append((middle, turn, shift_of(turn, anchor, centre), corners,
+                             turn is not entry["turn"]))
         for index in corners:
             turned = fit_turned(turn, fit_between(centre, points[index]))
             placed[index] = tuple(anchor[step] + turned[step] for step in range(3))
@@ -2429,24 +2432,37 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
     # plates. Neighbours move together, the pose and the limb proportions are
     # the standing fit's, and no seam between two plates is pulled open.
     if shell_fields:
-        for index, point in enumerate(points):
+        def field_at(point, on_arm):
+            # A plate on the arm is blended with other plates on the arm, and a
+            # plate on the body with the body. Mixing the two is what pulled the
+            # shoulder pad out sideways: half its neighbours stayed in the T-pose
+            # and half turned, so the pad went where neither of them went.
+            family = [entry for entry in shell_fields if entry[4] == on_arm]
+            if len(family) < 2:
+                family = shell_fields
             nearest = sorted(((fit_length(fit_between(entry[0], point)), order)
-                              for order, entry in enumerate(shell_fields)))[:4]
+                              for order, entry in enumerate(family)))[:4]
             matrix = [[0.0] * 3 for _ in range(3)]
             shift = [0.0, 0.0, 0.0]
             total = 0.0
             for distance, order in nearest:
                 weight = 1.0 / max(distance, 0.05) ** 2
                 total += weight
-                turn_here, shift_here = shell_fields[order][1], shell_fields[order][2]
+                turn_here, shift_here = family[order][1], family[order][2]
                 for row in range(3):
                     shift[row] += weight * shift_here[row]
                     for column in range(3):
                         matrix[row][column] += weight * turn_here[row][column]
-            placed[index] = tuple(
-                sum(matrix[row][column] / total * point[column]
-                    for column in range(3)) + shift[row] / total
-                for row in range(3))
+            return ([[value / total for value in row] for row in matrix],
+                    [value / total for value in shift])
+
+        for middle, _matrix, _shift, corners, on_arm in shell_fields:
+            matrix, shift = field_at(middle, on_arm)
+            for index in corners:
+                point = points[index]
+                placed[index] = tuple(
+                    sum(matrix[row][column] * point[column] for column in range(3))
+                    + shift[row] for row in range(3))
     worst = 1.0
     for edge in mesh.edges:
         first, second = edge.vertices
@@ -5531,6 +5547,50 @@ def hold_the_shoulders(object_data, armature):
 FLOATER_GAP = 4.0
 
 
+def shape_audit(object_data, authored, scale=1.0):
+    """How far the exported mesh's edges are from the ones it was imported with.
+
+    The conversion is allowed to resize the item - one uniform factor - and it is
+    not allowed to do anything else to it. This measures every edge of the file
+    that ships against the same edge as it was imported, so "the model looks
+    exactly like it did" is a number in the report and not a promise: after a
+    uniform resize every edge is that one factor longer, and an edge that is not
+    was stretched, turned by a pose, or squeezed by a fit.
+    """
+    mesh = object_data.data
+    if not authored or len(authored) != len(mesh.vertices):
+        return None
+    ratios = []
+    for edge in mesh.edges:
+        first, second = edge.vertices
+        was = fit_length(fit_between(authored[first], authored[second]))
+        if was <= 1e-9:
+            continue
+        now = fit_length(fit_between(tuple(mesh.vertices[first].co),
+                                     tuple(mesh.vertices[second].co)))
+        if now <= 1e-9:
+            continue
+        ratios.append(now / was)
+    if not ratios:
+        return None
+    # One uniform resize is the only change allowed, so the common factor is the
+    # resize, and every edge has to share it exactly. The middle ratio is that
+    # factor: a handful of stretched edges cannot move the middle of 11223.
+    ordered = sorted(ratios)
+    resize = ordered[len(ordered) // 2]
+    moved, worst = 0, 1.0
+    for ratio in ratios:
+        off = max(ratio / resize, resize / ratio) if ratio > 0.0 else 1e9
+        if off > 1.001:
+            moved += 1
+        worst = max(worst, off)
+    line = ("shape check: %d edge(s), resize x%.4f, worst edge x%.5f of that, "
+            "%d edge(s) stretched by more than 0.1%%"
+            % (len(ratios), resize, worst, moved))
+    return {"worst": worst, "moved": moved, "counted": len(ratios),
+            "resize": resize, "line": line}
+
+
 def face_the_world(object_data):
     """Turn any shell that shows the world its back out the right way round.
 
@@ -7296,6 +7356,7 @@ def main():
                     "own body is cut away (%d faces) - the armour is the body "
                     "from here, and the head, face, the neck under the chin and "
                     "the accessories stay" % cut)
+            authored = [tuple(vertex.co) for vertex in merged.data.vertices]
             to_halo_space(merged, scale, keep_position=prop, anchor=anchor)
             # A whole body is authored in the avatar's T-pose, and Halo's
             # skeleton is not: its arms hang and its legs stand under the hips.
@@ -7361,13 +7422,24 @@ def main():
                 else:
                     log("%s: the fp arms set holds the rig only, because the cut "
                         "failed" % merged.name)
-            if body and body_grow:
+            # The one thing the conversion may not do is change the shape. A
+            # uniform resize puts the item on the biped's scale; anything else -
+            # turning the arms down, stretching a limb onto a longer bone - moves
+            # vertices against each other, and that is what a model looks wrong
+            # from. So the mesh is only ever scaled and placed: the shape check
+            # below measures every edge against the one it had when it was
+            # imported, and reports it.
+            if body and body_grow and options.get("stand"):
                 stood = stand_in_halo_pose(merged, armature, body_grow,
                                            limbs=options.get("limbs", False))
                 if stood:
                     record["stand"] = stood["lines"][0]
                     log("%s stood in Halo's pose: worst edge x%.2f over the "
                         "whole body" % (merged.name, stood["worst"]))
+            shape = shape_audit(merged, authored)
+            if shape:
+                record["shape"] = shape["line"]
+                log("%s: %s" % (merged.name, shape["line"]))
             turned = face_the_world(merged)
             if turned:
                 record["faces"] = ("%d face(s) in shells the item wound inside "
