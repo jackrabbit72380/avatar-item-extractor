@@ -94,8 +94,8 @@ ARM_SHARE = 0.5
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v164"
-BUILD = "the arms of v161 again, restored after v162 and v163 broke them"
+VERSION = "v165"
+BUILD = "the shoulder cap and pad follow the arm, hinged where they meet the collar"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2190,6 +2190,9 @@ ARM_NEAR = 2.5        # and how far along it a sleeve starts, clear of the pad
 ARM_FAR = 6.0         # past the glove's reach, so the fingers are included
 ARM_CLEAR = 6.0       # out here a plate is arm even if it hangs wide of the line
 ARM_WIDE = 14.0
+# Inboard of this |y| a plate on the clavicle is the collar's own cap; outboard
+# of it the plate is the shoulder pad and the guard over the arm, which travel
+COLLAR_EDGE = 6.5
 
 
 def shell_direction(points):
@@ -2353,10 +2356,64 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         if swing is not None:
             for name in arm_group:
                 arm_turn[name] = (shoulder, swing, own, reach)
+            # The clavicle carries the shoulder cap and the pad over it. They take
+            # the arm's swing too; which of them actually turn, and about what, is
+            # decided per plate below - the cap stays on the collar.
+            arm_turn["bip01 %s clavicle" % side] = (shoulder, swing, own, reach)
+    # The shoulder cap and the pad over it are one piece of armour on each side:
+    # they ride the clavicle, and they have to move together or they come apart
+    # at their own seams - which is what per-plate turning did, leaving pieces of
+    # the pad hanging in the air beside the shoulder. So each side's pad plates
+    # turn about ONE hinge, the inboard-most point of the whole pad where it meets
+    # the collar: the pad keeps its shape, its edge on the collar stays on the
+    # collar, and the rest of it lies down the arm with the arm.
+    riders = {}
+    for key, corners in shells.items():
+        votes = {}
+        for index in corners:
+            for entry in mesh.vertices[index].groups:
+                name = groups.get(entry.group)
+                if name in by_bone:
+                    votes[name] = votes.get(name, 0.0) + entry.weight
+        if votes:
+            riders[key] = max(votes, key=votes.get)
+    pad_pivot = {}
+    for side in ("l", "r"):
+        bone_name = "bip01 %s clavicle" % side
+        # Where the collar ends: the outermost point of its own cap, which is the
+        # surface the pad rests on.
+        collar_reach = 0.0
+        for key, corners in shells.items():
+            if riders.get(key) != bone_name:
+                continue
+            middle = sum(points[index][1] for index in corners) / len(corners)
+            if abs(middle) > COLLAR_EDGE:
+                continue
+            for index in corners:
+                collar_reach = max(collar_reach, abs(points[index][1]))
+        if collar_reach <= 0.0:
+            continue
+        # The hinge is the pad's own point at that surface: the one vertex that
+        # touches the collar. It is held exactly where it is, so the pad cannot
+        # lift off the collar nor be pulled in over the chest, and the rest of
+        # the pad turns about it with the arm.
+        hinge = None
+        for key, corners in shells.items():
+            if riders.get(key) != bone_name:
+                continue
+            middle = sum(points[index][1] for index in corners) / len(corners)
+            if abs(middle) <= COLLAR_EDGE:
+                continue
+            for index in corners:
+                if hinge is None or (abs(abs(points[index][1]) - collar_reach)
+                                     < abs(abs(points[hinge][1]) - collar_reach)):
+                    hinge = index
+        if hinge is not None:
+            pad_pivot[bone_name] = tuple(points[hinge])
     placed = list(points)
     turned_shells = 0
     arms_turned = 0
-    for corners in shells.values():
+    for key, corners in shells.items():
         votes = {}
         for index in corners:
             for entry in mesh.vertices[index].groups:
@@ -2389,23 +2446,36 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
             shoulder, swing, own_axis, own_length = arm_turn[ridden]
             middle = [sum(points[index][step] for index in corners) / len(corners)
                       for step in range(3)]
-            # Along the arm is the item's own arm line - shoulder towards its own
-            # hand - because that is the pose the plates were shaped in. Across
-            # it is how far off that line a plate sits. A sleeve and a glove are
-            # narrow and start a little way out from the joint; a shoulder pad is
-            # wide and sits right on it. The pad is also modelled for a T-pose,
-            # so swinging it down stands it up as a spike: pads stay on the body,
-            # and everything out along the arm travels with the arm.
-            offset = fit_between(shoulder, middle)
-            along = sum(offset[axis] * own_axis[axis] for axis in range(3))
-            across = fit_length([offset[axis] - own_axis[axis] * along
-                                 for axis in range(3)])
-            sleeve = ARM_NEAR < along < own_length + ARM_FAR and across < ARM_ACROSS
-            far_out = along >= ARM_CLEAR and across < ARM_WIDE
-            if sleeve or far_out:
+            # A plate the weighting put on the CLAVICLE is the shoulder cap and
+            # the pad over it. They are worn on the arm - left behind, they stand
+            # in the air beside a bare arm - but their inboard edge lies on the
+            # collar, and turning them whole about the shoulder joint pulls that
+            # edge off the collar and opens a wedge there. So they hinge where
+            # they meet the collar: the plate turns about its own inboard-most
+            # vertex, which keeps the edge on the collar on the collar while the
+            # rest of the plate lies down the arm with everything else on it.
+            if ridden in pad_pivot:
                 turn = swing
-                centre = shoulder
+                centre = pad_pivot[ridden]
                 arms_turned += 1
+            else:
+                # Along the arm is the item's own arm line - shoulder towards
+                # its own hand - because that is the pose the plates were shaped
+                # in. Across it is how far off that line a plate sits. A sleeve
+                # and a glove are narrow and start a little way out from the
+                # joint; a plate left in the T-pose reads as a bare tube beside
+                # a shoulder, so everything out along the arm travels with it.
+                offset = fit_between(shoulder, middle)
+                along = sum(offset[axis] * own_axis[axis] for axis in range(3))
+                across = fit_length([offset[axis] - own_axis[axis] * along
+                                     for axis in range(3)])
+                sleeve = (ARM_NEAR < along < own_length + ARM_FAR
+                          and across < ARM_ACROSS)
+                far_out = along >= ARM_CLEAR and across < ARM_WIDE
+                if sleeve or far_out:
+                    turn = swing
+                    centre = shoulder
+                    arms_turned += 1
         # Two ways to place a plate, and they answer different questions.
         #
         # `limbs` also puts the JOINT on its bone and lengthens the limb to
@@ -2472,8 +2542,9 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         log("soles lifted %.2f units onto the floor after the pose" % -lowest)
         lowest = 0.0
     tallest = max(point[2] for point in placed)
-    log("arms: %d plate(s) swung with the arm - the sleeve and glove, not the "
-        "shoulder pads, which are shaped for the T-pose and stay put"
+    log("arms: %d plate(s) moved with the arm - the sleeve and glove turn, and "
+        "the shoulder cap and pad hinge at the collar so the top of the arm is "
+        "covered without the pad lifting off the collar"
         % arms_turned)
     line = ("%d joints, %d shell(s) %s, worst edge x%.2f, %.2f m tall, "
             "soles at %.2f units"
