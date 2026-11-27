@@ -103,8 +103,8 @@ ARM_WIDE = 14.0
 
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v181"
-BUILD = "the front view is in the scene, not only the workspace"
+VERSION = "v182"
+BUILD = "the .blend in models is this build's, and numpad 0 shows the front view"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -7726,6 +7726,20 @@ def hek_builds(out, stems):
                      tree["fp_models"], jms_name(stem, " - fp arms"))):
                 if os.path.exists(source):
                     copy_file(source, os.path.join(home, name))
+            # The model folder is the one people open the item from, so the
+            # .blend goes here as well as in source\. It is not a second file
+            # to maintain, and it is not a tidier layout: it is the difference
+            # between the .blend someone double-clicks being this build's and
+            # being one an earlier build left there. The name of an item's
+            # .blend is fixed, so a stale one never looks stale - it opens fine
+            # and shows a model from months ago, and every rebuild since has
+            # left it untouched because it was not a file this build wrote.
+            for source, home in ((tree["source"], tree["models"]),
+                                 (tree["fp_source"], tree["fp_models"])):
+                for name in sorted(os.listdir(source)):
+                    if name.lower().endswith(".blend"):
+                        copy_file(os.path.join(source, name),
+                                  os.path.join(home, name))
             made.append(tree["item"])
     return made
 
