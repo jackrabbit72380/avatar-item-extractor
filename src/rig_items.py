@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v201"
-BUILD = "plates are exact, so the report names what is not"
+VERSION = "v202"
+BUILD = "a shoulder vertex follows its own bone"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2110,6 +2110,12 @@ PLATE_TOUCH = 3.0
 # down. Two rounds inside each shell remove the cliff. Plates are not averaged:
 # a plate rides one bone, so its vertices have nothing to average.
 FABRIC_SMOOTHING = 4
+# How much of one bone a vertex needs before it follows that bone whole. A
+# vertex split 0.85 arm and 0.15 collar was being turned by the average of two
+# turns 64 degrees apart, and the average is a pose neither bone holds: the
+# sleeve shrinks toward the average pivot and the leftover shows as a fin at the
+# shoulder. A vertex that is overwhelmingly one bone's rides that bone.
+FABRIC_SNAP = 0.75
 
 # The joints whose geometry is a limb: an upper arm, a forearm, a hand, a
 # thigh, a calf, a foot. These are scaled by their own stretch so the limb keeps
@@ -2306,6 +2312,11 @@ def body_fit_plan(armature, fit=1.0, points=None):
                          (33, 25), (36, 28), (11, 6), (15, 8)):
         if below in by_joint and above in by_joint:
             by_joint[below]["pivot"] = by_joint[above]["source"]
+    # Following the turn chain all the way up (hand -> forearm -> upper arm)
+    # was tried and measured worse: tearing over a centimetre went from x4.13 to
+    # x9.65, because the hand then turns about the shoulder while the mesh beside
+    # it does not. Measured, rejected, and left here so it is not tried blind
+    # again.
     if 19 in by_joint:
         by_joint[19]["turn"] = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     for entry in plan:
@@ -2614,6 +2625,13 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
                            fit_between(entry["source"], point))) if where else None
             placed.append(turned_point(near, point) if near else point)
             continue
+        strong, weight = max(share.items(), key=lambda pair: pair[1])
+        if weight / total >= FABRIC_SNAP:
+            # Nearly all of this vertex is one bone's: it turns with that bone
+            # about that bone's pivot, which is a movement the surface beside
+            # the plates actually has.
+            share = {strong: 1.0}
+            total = 1.0
         # Blending the blended *positions* is what crushed the shoulder: two
         # turns 79 degrees apart average into a point pulled off the surface, and
         # a band of them tears x13. The turns are averaged instead - one real
