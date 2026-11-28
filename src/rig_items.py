@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v189"
-BUILD = "a tag is found by name, wherever the user keeps it"
+VERSION = "v190"
+BUILD = "the item's name is its title, never the container's number"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
