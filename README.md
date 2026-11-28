@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v185.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v186.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1271,6 +1271,15 @@ alone - no empty shader can be written. To get the face back:
    map built before the shaders existed keeps the white face however many times
    the model is compiled.
 
+Run **`Check the shaders.bat`**, beside this build, and it reads the tags that
+are actually on this computer: for each material it says whether a
+`shader_model` of that exact name answers it (and what similar names do exist),
+whether that tag holds a base map, whether the bitmap that map names is in
+`tags\`, and whether the model tag or the `.map` was built before those tags
+were made. That last pair is the one nobody thinks of: a model compiled before
+the shader existed keeps the empty reference it baked, and a map built then
+keeps those pixels. It writes nothing.
+
 The exact names and maps are in `report.txt`, in the compile window, and in
 `shaders to make.txt` beside the compile script.
 
@@ -1321,7 +1330,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v185.bat` and
+`Extract UNSC Marine Armor Avatar-v186.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1336,7 +1345,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v185.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v186.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1386,9 +1395,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v185.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v186.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v185.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v186.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it

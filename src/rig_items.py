@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v185"
-BUILD = "a missing shader tag stops the model, so the face cannot bake white"
+VERSION = "v186"
+BUILD = "a white surface is a shader tag, and the build now says which one"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -8304,6 +8304,23 @@ def main():
                     handle.write(data)
                 log("wrote %s beside the builds: run it to compile the .jms "
                     "and .tif files into tags with tool.exe" % name)
+        # The answer to "the shaders exist, why is the face still white?". It
+        # reads this computer's own tags - what answers each material name, what
+        # base map each one holds, and whether the model tag or the .map was
+        # built before them - and nothing else can know that.
+        for name, source in (("Check the shaders.bat", "check-shaders.bat"),
+                             ("check_shaders.py", "check_shaders.py")):
+            beside = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  source)
+            if not os.path.exists(beside):
+                continue
+            data = open(beside, "rb").read()
+            target = os.path.join(out, name)
+            if not os.path.exists(target) or open(target, "rb").read() != data:
+                with open(target, "wb") as handle:
+                    handle.write(data)
+                log("wrote %s beside the builds: it says which shader tag a "
+                    "white surface is missing" % name)
     if built:
         log("wrote %d HEK build(s), one per channel order" % len(built))
 
