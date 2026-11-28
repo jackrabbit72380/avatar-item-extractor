@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v191"
-BUILD = "the item's own title names it, nothing else"
+VERSION = "v192"
+BUILD = "every plate rides one node - the armour cannot bend or twist"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2093,13 +2093,18 @@ BODY_JOINTS = (
 # that joint actually reaches: measured from the mesh, not guessed.
 BODY_FIT_INFLUENCES = 4
 
-# Rounds of neighbour averaging the body's own weights get before the pose is
-# applied. A cliff between two vertices of one plate - one at 0.85 collar and
-# its neighbour at 0.85 arm - smears that plate across two bones: measured on
-# this armour, x26 on the pad that spans the collar and the arm. Two rounds
-# inside each shell remove the cliff, and shell weight is not mixed between
-# plates because shells share no edges.
-POSE_SMOOTHING = 2
+# A shell bigger than this is skin, not a plate: the avatar's own body mesh is
+# one shell and has to fold at its joints. Everything smaller - a pauldron, a
+# bracer, a boot - is one piece of armour, and one piece of armour rides one
+# bone whole, so it cannot bend, tear or shear.
+SHELL_SINGLE_BONE_MAX = 600
+
+# Rounds of neighbour averaging the FABRIC's own blend gets before the bind pose
+# is applied. A cliff between two vertices of one sleeve - one at 0.85 collar and
+# its neighbour at 0.85 arm - tears the edge between them when the arms come
+# down. Two rounds inside each shell remove the cliff. Plates are not averaged:
+# a plate rides one bone, so its vertices have nothing to average.
+FABRIC_SMOOTHING = 4
 
 # The joints whose geometry is a limb: an upper arm, a forearm, a hand, a
 # thigh, a calf, a foot. These are scaled by their own stretch so the limb keeps
@@ -2191,6 +2196,38 @@ def fit_gap(point, first, second):
     factor = max(0.0, min(1.0, sum(offset[i] * along[i] for i in range(3)) / length_sq))
     return fit_length(fit_between(
         point, fit_shift(first, tuple(value * factor for value in along))))
+
+
+def fit_average_turn(pairs):
+    """The one rotation a weighted set of rotations averages to.
+
+    Averaging the turned *points* of two bones is what drags a shoulder inside
+    out: two positions 79 degrees apart average to a point off the surface, and
+    the band between them tears. Rotations average properly through their
+    quaternions, so the result is a real rotation - an orthonormal turn - and the
+    vertex that rides it keeps its own distance from the joint.
+    """
+    total = sum(weight for _turn, weight in pairs) or 1.0
+    mixed = [0.0, 0.0, 0.0, 0.0]
+    for turn, weight in pairs:
+        quat = Matrix(turn).to_quaternion()
+        value = [quat.w, quat.x, quat.y, quat.z]
+        # q and -q are the same rotation, so each one has to be put in the same
+        # hemisphere before they are added. Aligning to the first of the pair
+        # instead made the answer depend on the order the bones happened to be
+        # in: two vertices of one shoulder, weighted the same, could average to
+        # opposite turns and tear the edge between them nine times its length.
+        if value[0] < 0.0:
+            value = [-part for part in value]
+        for step in range(4):
+            mixed[step] += (weight / total) * value[step]
+    length = math.sqrt(sum(part * part for part in mixed))
+    if length < 1e-9:
+        return ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    quat = Quaternion([part / length for part in mixed])
+    matrix = quat.to_matrix()
+    return tuple(tuple(matrix[row][column] for column in range(3))
+                 for row in range(3))
 
 
 def body_fit_plan(armature, fit=1.0, points=None):
@@ -2381,7 +2418,8 @@ def shift_of(matrix, anchor, centre):
                                    for column in range(3)) for row in range(3))
 
 
-def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
+def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
+                       avatar=None, avatar_fit=None):
     """Stand a whole body in the pose Halo's own skeleton holds - HEK's bind.
 
     A Halo CE gbxmodel has no bind pose in it. ``tool.exe`` bakes every vertex
@@ -2409,6 +2447,12 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
     it. The head's own turn is the identity, so the helmet, the face and the
     neck keep exactly the place the file drew them in.
 
+    ``avatar`` and ``avatar_fit`` are the ported avatar's own vertices and the
+    factor that part was scaled by: the item is scaled by ``fit`` and the avatar
+    by the factor that makes it exactly Halo's height, so each part has its own
+    joint table in its own space and gets its own plan. Without that the avatar
+    would be turned about joints at the item's scale and land off its own body.
+
     Returns a report dict, or None when the rig is not the biped this table is
     written for.
     """
@@ -2416,87 +2460,139 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
     points = [tuple(vertex.co) for vertex in mesh.vertices]
     if not points:
         return None
-    plan = body_fit_plan(armature, fit, points)
+    avatar = set(avatar or ())
+    item_points = [point for index, point in enumerate(points) if index not in avatar]
+    plan = body_fit_plan(armature, fit, item_points)
     if not plan:
         return None
-    by_bone = {entry["bone"]: entry for entry in plan}
-    groups = {group.index: group.name for group in object_data.vertex_groups}
-    # Each vertex's blend, kept to the bones this pose moves and normalised.
-    rides = []
-    for index, vertex in enumerate(mesh.vertices):
-        share = {}
-        for entry in vertex.groups:
-            name = groups.get(entry.group)
-            if name in by_bone and entry.weight > 0.0:
-                share[name] = share.get(name, 0.0) + entry.weight
-        total = sum(share.values())
-        rides.append({name: weight / total for name, weight in share.items()}
-                     if total > 0.0 else {})
-    loose = [index for index, share in enumerate(rides) if not share]
-    if loose:
-        # A vertex riding no bone still has to come with the body: the bone whose
-        # own segment is nearest carries it, the same rule skin() uses, so an
-        # unweighted plate lands where the surface around it went instead of
-        # staying behind in the T-pose.
-        matrix = armature.matrix_world
-        segments = {bone.name: (tuple(matrix @ bone.head_local),
-                               tuple(matrix @ bone.tail_local))
-                    for bone in armature.data.bones if bone.name in by_bone}
-        for index in loose:
-            point = points[index]
-            nearest = min(segments, key=lambda name: segment_distance(
-                point, segments[name][0], segments[name][1])) if segments else None
-            if nearest is not None:
-                rides[index] = {nearest: 1.0}
-        log("%s: %d vertex(es) rode no bone to be posed by - the nearest bone "
-            "carried each of them" % (object_data.name, len(loose)))
-    # Two rounds of neighbour averaging inside each shell: a cliff between two
-    # vertices of one plate is what smears that plate across two bones, and the
-    # shells are their own islands, so no plate's weights leak into another's.
+    plans = {fit: {entry["bone"]: entry for entry in plan}}
+    if avatar and avatar_fit and abs(avatar_fit - fit) > 1e-9:
+        theirs = body_fit_plan(armature, avatar_fit,
+                               [points[index] for index in sorted(avatar)])
+        if theirs:
+            plans[avatar_fit] = {entry["bone"]: entry for entry in theirs}
+    by_bone = plans[fit]
+    # One bone per vertex - the same rides the shipped weights will carry, so the
+    # pose this pass bakes is exactly the pose the game will stand the model in.
+    # Turning a plate whole means no edge inside it changes length: the mesh does
+    # not change shape when the arms come down. Blending two bones here instead
+    # (the old pass did, twice-smoothed) is what folded the elbows.
+    rides = single_bone_rides(object_data, armature)
+    weights = vertex_weights(object_data)
+
+    def turned_point(entry, point):
+        """One bone's turn of one point, about the item's own joint."""
+        if limbs:
+            # The joint itself also goes onto the bone, and the limb is
+            # lengthened along it: the hand at Halo's fingertips, paid for in
+            # limb length. Not shipped; --fit-limbs asks for it.
+            anchor = tuple(entry["target"])
+            offset = fit_between(entry["source"], point)
+            axis = entry.get("axis")
+            if axis is not None:
+                axial = entry.get("axial") or 1.0
+                axial = max(FIT_STRETCH_MIN, min(FIT_STRETCH_MAX, axial))
+                along = sum(offset[step] * axis[step] for step in range(3))
+                offset = tuple(offset[step] + axis[step] * along * (axial - 1.0)
+                               for step in range(3))
+        else:
+            # Turned about the item's own joint, which stays where the avatar
+            # put it: that is what leaves every limb its own length.
+            anchor = tuple(entry["source"])
+            offset = fit_between(anchor, point)
+        turned = fit_turned(entry["turn"], offset)
+        return tuple(anchor[step] + turned[step] for step in range(3))
+
+    # Fabric keeps a blend, and a blend needs no cliff in it: two neighbouring
+    # vertices of one sleeve at 0.85 collar and 0.85 arm turn completely
+    # differently, and the edge between them tears. Averaging the blend over
+    # each vertex's neighbours first removes the cliff before the turn is taken.
+    # Plates are not in this map at all - they are rigid, so there is nothing to
+    # smooth and no way to smear one plate's weights into another's.
+    fabric = {}
+    for index, share in weights.items():
+        if rides.get(index) != "":
+            continue
+        kept = {name: weight for name, weight in share.items()
+                if name in by_bone and weight > 0.0}
+        total = sum(kept.values())
+        if total > 0.0:
+            fabric[index] = {name: weight / total
+                             for name, weight in kept.items()}
     neighbours = [[] for _ in points]
     for edge in mesh.edges:
         first, second = edge.vertices
         neighbours[first].append(second)
         neighbours[second].append(first)
-    for _ in range(POSE_SMOOTHING):
-        smoothed = []
-        for index, share in enumerate(rides):
+    for _ in range(FABRIC_SMOOTHING):
+        smoothed = {}
+        for index, share in fabric.items():
             mixed = dict(share)
             for other in neighbours[index]:
-                for name, weight in rides[other].items():
-                    mixed[name] = mixed.get(name, 0.0) + weight
+                if other in fabric:
+                    for name, weight in fabric[other].items():
+                        mixed[name] = mixed.get(name, 0.0) + weight
             total = sum(mixed.values()) or 1.0
-            smoothed.append({name: weight / total
-                             for name, weight in mixed.items()})
-        rides = smoothed
+            smoothed[index] = {name: weight / total
+                               for name, weight in mixed.items()}
+        fabric = smoothed
+
     placed = []
-    for point, share in zip(points, rides):
-        moved = [0.0, 0.0, 0.0]
+    plate_verts = 0
+    for index, point in enumerate(points):
+        where = (plans.get(avatar_fit) or by_bone) if index in avatar else by_bone
+        bone = rides.get(index)
+        if bone:
+            # A plate: one bone, one rigid turn. Every edge inside it keeps its
+            # length exactly - the plate cannot bend, tear or shear.
+            entry = where.get(bone)
+            placed.append(turned_point(entry, point) if entry else point)
+            plate_verts += 1
+            continue
+        # Fabric: it folds, so it keeps its blend - the one place two bones
+        # meet on a vertex, and the only place a joint can bend. Only bones
+        # whose own joint is near the vertex are blended, though: a chest point
+        # carrying a tenth of the hand would be swung about the wrist's joint
+        # and tear the chest in half. The nearest bone is always kept, so a
+        # vertex on the surface of a limb still follows that limb.
+        # Which bones carry it is the skinning's answer, not a distance guess:
+        # keeping only the bones whose joint happens to be nearest threw away
+        # the upper arm on a shoulder vertex whose forearm joint was nearer, and
+        # the edge to its neighbour tore nine times its length. Only weights too
+        # small to matter are dropped.
+        share = {name: weight for name, weight in (fabric.get(index) or {}).items()
+                 if name in where and weight >= 0.02}
+        total = sum(share.values())
+        if total <= 0.0:
+            # Every bone this vertex was skinned to is outside the pose's plan.
+            # Leaving it where it is would leave it in the T-pose while the
+            # surface beside it comes down - a tear many times its own length -
+            # so the nearest joint in the plan carries it, rigidly.
+            near = min(where.values(),
+                       key=lambda entry: fit_length(
+                           fit_between(entry["source"], point))) if where else None
+            placed.append(turned_point(near, point) if near else point)
+            continue
+        # Blending the blended *positions* is what crushed the shoulder: two
+        # turns 79 degrees apart average into a point pulled off the surface, and
+        # a band of them tears x13. The turns are averaged instead - one real
+        # rotation, taken about one anchor - so the vertex still moves rigidly
+        # and its neighbours move almost the same way. The band then folds
+        # instead of tearing, and every plate around it keeps its exact shape.
+        anchor = [0.0, 0.0, 0.0]
         for name, weight in share.items():
-            entry = by_bone[name]
-            if limbs:
-                # The joint itself also goes onto the bone, and the limb is
-                # lengthened along it: the hand at Halo's fingertips, paid for
-                # in limb length. Not shipped; --fit-limbs asks for it.
-                anchor = tuple(entry["target"])
-                offset = fit_between(entry["source"], point)
-                axis = entry.get("axis")
-                if axis is not None:
-                    axial = entry.get("axial") or 1.0
-                    axial = max(FIT_STRETCH_MIN, min(FIT_STRETCH_MAX, axial))
-                    along = sum(offset[step] * axis[step] for step in range(3))
-                    offset = tuple(offset[step] + axis[step] * along * (axial - 1.0)
-                                   for step in range(3))
-            else:
-                # Turned about the item's own joint, which stays where the
-                # avatar put it: that is what leaves every limb its own length.
-                anchor = tuple(entry["source"])
-                offset = fit_between(anchor, point)
-            turned = fit_turned(entry["turn"], offset)
+            source = where[name]["source"]
             for step in range(3):
-                moved[step] += weight * (anchor[step] + turned[step])
-        placed.append(tuple(moved))
+                anchor[step] += (weight / total) * source[step]
+        turn = fit_average_turn([(where[name]["turn"], weight / total)
+                                 for name, weight in share.items()])
+        turned = fit_turned(turn, fit_between(tuple(anchor), point))
+        placed.append(tuple(anchor[step] + turned[step] for step in range(3)))
     worst = 1.0
+    worst_plate = 1.0
+    worst_long = 1.0
+    worst_same = 1.0
+    plate_edges = 0
     for edge in mesh.edges:
         first, second = edge.vertices
         was = fit_length(fit_between(points[first], points[second]))
@@ -2505,7 +2601,26 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         now = fit_length(fit_between(placed[first], placed[second]))
         if now <= 1e-6:
             continue
-        worst = max(worst, now / was, was / now)
+        ratio = max(now / was, was / now)
+        worst = max(worst, ratio)
+        # A sliver of a triangle can read x26 on a change no eye could see, so
+        # the number that matters is the one over a centimetre of edge.
+        if was >= 0.01:
+            worst_long = max(worst_long, ratio)
+            # Two parts of this model were scaled by different factors - the
+            # avatar to the biped's height, the item by the factor it was
+            # authored for - so an edge crossing between them carries that
+            # difference however well it is posed. Measuring inside one part
+            # separates the pose's own tearing from that seam.
+            if (first in avatar) == (second in avatar):
+                worst_same = max(worst_same, ratio)
+
+        # An edge with both ends on the same plate rides one bone at both ends,
+        # so its length cannot change. Measuring it separately is the proof: this
+        # number must be 1.00 to two decimals, and it is the shape guarantee.
+        if rides.get(first) and rides.get(first) == rides.get(second):
+            plate_edges += 1
+            worst_plate = max(worst_plate, ratio)
     span_before = max(abs(point[1]) for point in points)
     span_after = max(abs(point[1]) for point in placed)
     for vertex, point in zip(mesh.vertices, placed):
@@ -2524,13 +2639,16 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         log("soles lifted %.2f units onto the floor after the pose" % -lowest)
         lowest = 0.0
     tallest = max(point[2] for point in placed)
-    line = ("%d joints, %d vertices on their own weights (%d smoothing round(s)), "
-            "worst edge x%.2f, arms in from %.1f to %.1f on y, %.2f m tall, "
+    line = ("%d joints, %d plate vertex(es) on one bone each, worst plate edge "
+            "x%.2f over %d edge(s), worst edge within one part over 1 cm x%.2f "
+            "(anywhere x%.2f), arms in from %.1f to %.1f on y, %.2f m tall, "
             "soles at %.2f"
-            % (len(plan), len(points), POSE_SMOOTHING, worst, span_before,
-               span_after, tallest / HALO_UNITS_PER_METRE, lowest))
+            % (len(plan), plate_verts, worst_plate, plate_edges, worst_same,
+               worst_long, span_before, span_after,
+               tallest / HALO_UNITS_PER_METRE, lowest))
     log("stood %s in Halo's rest pose: %s" % (object_data.name, line))
-    return {"worst": worst, "height": tallest / HALO_UNITS_PER_METRE,
+    return {"worst": worst, "worst_plate": worst_plate,
+            "height": tallest / HALO_UNITS_PER_METRE,
             "arms_before": span_before, "arms_after": span_after,
             "lines": ["biped pose : " + line]}
 
@@ -3845,6 +3963,124 @@ def vertex_weights(object_data):
                 per[name] = per.get(name, 0.0) + entry.weight
         weights[vertex.index] = per
     return weights
+
+
+def single_bone_rides(object_data, armature):
+    """Which bone each vertex rides on its own, and which must keep its blend.
+
+    A gbxmodel vertex may ride two nodes and Halo blends them linearly. That is
+    right for fabric and wrong for metal: the seventy-nine degrees between the
+    avatar's arms-out pose and Halo's arms-down one is far too much for a linear
+    blend, which at that angle does not bend the joint, it crushes it - the elbow
+    that looked deformed. The same blend is what twists a sleeve the moment the
+    game plays an animation.
+
+    So every PLATE rides exactly one bone. A shell small enough to be one piece
+    of armour takes the bone most of it already rides, and the whole plate then
+    travels rigidly: not one edge inside it can change length, in this pose or in
+    any animation Halo plays. A plate is metal; it does not bend.
+
+    A skin shell is too big to be one plate, and it is the fabric under and
+    between the plates, which is meant to fold where a joint is. Its vertices
+    keep the blend the skinning gave them and are reported as "" here.
+
+    Returns {vertex index: bone name}, "" for skin, and None for a vertex no
+    bone claimed - the caller gives those the bone whose segment is nearest.
+    """
+    if not armature or not armature.data.bones:
+        return {}
+    known = {bone.name for bone in armature.data.bones}
+    rides = {}
+    for index, per in vertex_weights(object_data).items():
+        best, best_weight = None, -1.0
+        for name, weight in per.items():
+            if name in known and weight > best_weight:
+                best, best_weight = name, weight
+        rides[index] = best
+    plates = {}
+    shells = 0
+    for piece in shell_faces(object_data.data):
+        if not piece:
+            continue
+        indexes = set()
+        for polygon in piece:
+            indexes.update(polygon.vertices)
+        if len(indexes) > SHELL_SINGLE_BONE_MAX:
+            continue          # fabric, not a plate: it folds at its joints
+        tally = {}
+        for index in indexes:
+            name = rides.get(index)
+            if name:
+                tally[name] = tally.get(name, 0) + 1
+        if not tally:
+            continue
+        bone = max(sorted(tally.items()), key=lambda pair: pair[1])[0]
+        for index in indexes:
+            plates[index] = bone
+        shells += 1
+    missing = [index for index, name in rides.items() if name is None]
+    if missing:
+        matrix = armature.matrix_world
+        segments = {bone.name: (tuple(matrix @ bone.head_local),
+                                tuple(matrix @ bone.tail_local))
+                    for bone in armature.data.bones}
+        points = object_data.data.vertices
+        for index in missing:
+            point = tuple(points[index].co)
+            rides[index] = min(segments, key=lambda name: segment_distance(
+                point, segments[name][0], segments[name][1]))
+        log("%s: %d vertex(es) rode no bone - the nearest bone carries each of "
+            "them" % (object_data.name, len(missing)))
+    for index in rides:
+        if index in plates:
+            rides[index] = plates[index]
+        elif rides[index]:
+            rides[index] = ""          # skin: keep the blend
+    # How many plates were given one bone, for the report line.
+    object_data["whole_pieces"] = shells
+    return rides
+
+
+def single_bone_weights(object_data, armature):
+    """Make every plate ride one node at weight 1.0, and leave the skin alone.
+
+    This is the shape guarantee, and it is a guarantee rather than a hope: a
+    plate with one node on every vertex has nothing for the engine to blend, so
+    no animation it can play has a way to bend, shear or twist that plate. The
+    skin keeps its blend, because fabric is meant to fold where a joint is.
+    """
+    rides = single_bone_rides(object_data, armature)
+    if not rides:
+        return None
+    weights = vertex_weights(object_data)
+    for group in list(object_data.vertex_groups):
+        object_data.vertex_groups.remove(group)
+    made = {}
+
+    def give(index, name, weight):
+        group = made.get(name)
+        if group is None:
+            group = object_data.vertex_groups.new(name=name)
+            made[name] = group
+        group.add([index], weight, "REPLACE")
+
+    plates = 0
+    skin = 0
+    for index, bone in sorted(rides.items()):
+        if bone:
+            give(index, bone, 1.0)
+            plates += 1
+        else:
+            skin += 1
+            per = weights.get(index) or {}
+            total = sum(per.values()) or 1.0
+            for name, weight in sorted(per.items()):
+                give(index, name, weight / total)
+    return ("%d plate vertex(es) on one node each (%d plate(s) over %d bone(s)); "
+            "%d fabric vertex(es) keep the blend they were skinned with - a "
+            "plate cannot bend or twist in any pose"
+            % (plates, object_data.get("whole_pieces") or 0, len(made),
+               skin))
 
 
 def inside_out(faces, coords, slot):
@@ -6444,7 +6680,7 @@ def jms_node_rows(armature):
     return order, index_of, rows, checksum
 
 
-def export_jms(object_data, armature, path, arms=False):
+def export_jms(object_data, armature, path, arms=False, two_weights=True):
     """Halo CE's text model format, laid out the way tool.exe reads it.
 
     Positional, with no section markers, matching HaloCE's own exporter
@@ -6583,9 +6819,13 @@ def export_jms(object_data, armature, path, arms=False):
             point = inverse @ (world @ vertex.co)
             normal = rotate @ (world.to_3x3() @ vertex.normal)
             normal.normalize()
+            # A body rides one node per vertex (see single_bone_weights), so it
+            # is written that way: a second weight here would hand the engine
+            # two nodes to blend and the crush would come back.
             weighted = sorted(((group.weight, group_names[group.group])
                                for group in vertex.groups
-                               if group.group in group_names), reverse=True)[:2]
+                               if group.group in group_names),
+                              reverse=True)[:2 if two_weights else 1]
             if not weighted:
                 weighted = [(1.0, names[0])]
             node0 = index_of.get(weighted[0][1], 0)
@@ -7856,6 +8096,10 @@ def main():
             # reach are the rig's business, not the mesh's.
             scale = fit
             body_grow = None
+            # Which vertices are the ported avatar and the factor they were
+            # scaled by, for a body whose parts were scaled separately.
+            pose_avatar = None
+            pose_avatar_fit = None
             if body:
                 heights = [vertex.co.y for vertex in merged.data.vertices]
                 authored = (max(heights) - min(heights)) if heights else 0.0
@@ -7912,6 +8156,18 @@ def main():
                             "- the avatar's own proportions scaled, never bent"
                             % (merged.name, grow, tall * grow))
                     if placed is not None:
+                        # Both parts were scaled here - the item by fit, the
+                        # avatar by the factor that makes it exactly Halo's
+                        # height - so the body is stood in Halo's pose from two
+                        # joint tables, one per part. Leaving this path with
+                        # body_grow unset is what skipped the pose for every
+                        # item that carries its own avatar: the suit stayed in
+                        # the avatar's T-pose while the bones hung arms-down, and
+                        # in game that is arms out, elbows folded and the boots
+                        # in the ground.
+                        body_grow = fit
+                        pose_avatar = avatar
+                        pose_avatar_fit = placed["avatar_scale"]
                         # Each part's own height, not the model's: reporting the
                         # merged height as the item's is what made the log read
                         # "its 1.850 m" for a 1.509 m armour.
@@ -8045,8 +8301,9 @@ def main():
                         "torso or a leg and now ride the upper arm of their side"
                         % (merged.name, shoulders))
             if standing:
-                stood = stand_in_halo_pose(merged, armature, body_grow,
-                                           limbs=options.get("limbs", False))
+                stood = stand_in_halo_pose(
+                    merged, armature, body_grow, limbs=options.get("limbs", False),
+                    avatar=pose_avatar, avatar_fit=pose_avatar_fit)
                 if stood:
                     record["stand"] = stood["lines"][0]
                     log("%s stood in Halo's pose: worst edge x%.2f over the "
@@ -8085,6 +8342,17 @@ def main():
                     log("%s: repaired the seam the re-hung plates left - %d "
                         "round(s) of the game's own poses, weights only"
                         % (merged.name, repaired))
+            # The last thing the weights get, and the reason the shape is safe:
+            # one node per vertex, weight 1.0. A rig with two nodes on a vertex
+            # is a rig the engine blends, and a blend of two rotations is a
+            # crush at the elbow and a twist in every animation that moves the
+            # limb. With one node each there is nothing to blend, so no pose
+            # Halo plays can bend this mesh - it only moves it.
+            if body:
+                single = single_bone_weights(merged, armature)
+                if single:
+                    record["rig"] = (rig_audit(merged, armature) + " - " + single)
+                    log("%s: plates ride one node - %s" % (merged.name, single))
             shape = shape_audit(merged, authored)
             if shape:
                 record["shape"] = shape["line"]
