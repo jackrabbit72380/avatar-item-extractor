@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v193"
-BUILD = "the mesh bends only where the skeleton has a joint"
+VERSION = "v194"
+BUILD = "a plate rides the bone its own middle hangs on"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4024,6 +4024,54 @@ def band_weights(object_data, armature, band=None):
     return kept
 
 
+def plate_bone(object_data, segments, children, indexes, tally):
+    """Which bone carries one plate: the bone its own middle hangs on.
+
+    A plate is one piece of armour and rides one bone, and which bone is a
+    question about where the plate *is*, not about how its vertices happened to
+    be counted. Counting them is what put a mirrored pair of pads on different
+    bones - a left arm that came down beside a right arm that stayed out.
+
+    The middle of the plate answers it, and the answer walks past the end of a
+    bone onto the bone that carries on from it: a pauldron sits outside the
+    shoulder, so the clavicle's end is nearer the plate's middle than the
+    clavicle's length is, and the plate belongs to the upper arm. Only bones the
+    plate already rides, or the bones they carry, are candidates - so a chest
+    plate can never be handed to a hand.
+    """
+    if not segments:
+        return max(sorted(tally.items()), key=lambda pair: pair[1])[0]
+    matrix = object_data.matrix_world
+    points = object_data.data.vertices
+    middle = Vector((0.0, 0.0, 0.0))
+    for index in indexes:
+        middle += matrix @ points[index].co
+    middle /= max(len(indexes), 1)
+    candidates = set(name for name in tally if name in segments)
+    for name in list(candidates):
+        candidates.update(child for child in children.get(name) or () if child in segments)
+    if not candidates:
+        return max(sorted(tally.items()), key=lambda pair: pair[1])[0]
+
+    def gap(name):
+        head, tail = segments[name]
+        return point_segment_distance(middle, head, tail)
+
+    ridden = min(sorted(candidates), key=gap)
+    for _step in range(2):
+        head, tail = segments[ridden]
+        axis = tail - head
+        if axis.length_squared < 1e-12:
+            break
+        if (middle - head).dot(axis) / axis.length_squared <= 1.0:
+            break
+        onward = [child for child in children.get(ridden) or () if child in candidates]
+        if not onward:
+            break
+        ridden = min(sorted(onward), key=gap)
+    return ridden
+
+
 def single_bone_rides(object_data, armature):
     """Which bone each vertex rides on its own, and which must keep its blend.
 
@@ -4056,6 +4104,10 @@ def single_bone_rides(object_data, armature):
             if name in known and weight > best_weight:
                 best, best_weight = name, weight
         rides[index] = best
+    matrix = armature.matrix_world
+    segments = {bone.name: (matrix @ bone.head_local, matrix @ bone.tail_local)
+                for bone in armature.data.bones if bone.name in known}
+    _parent, children = bone_tree(armature, list(segments))
     plates = {}
     shells = 0
     for piece in shell_faces(object_data.data):
@@ -4073,7 +4125,7 @@ def single_bone_rides(object_data, armature):
                 tally[name] = tally.get(name, 0) + 1
         if not tally:
             continue
-        bone = max(sorted(tally.items()), key=lambda pair: pair[1])[0]
+        bone = plate_bone(object_data, segments, children, indexes, tally)
         for index in indexes:
             plates[index] = bone
         shells += 1
@@ -4136,6 +4188,19 @@ def single_bone_weights(object_data, armature):
             total = sum(per.values()) or 1.0
             for name, weight in sorted(per.items()):
                 give(index, name, weight / total)
+    # What rides what, bone by bone, because a plate on the wrong bone looks
+    # exactly like a broken arm - and a mirrored pair that disagrees is the one
+    # thing a number can show that a picture cannot.
+    counts = {}
+    for bone in rides.values():
+        if bone:
+            counts[bone] = counts.get(bone, 0) + 1
+    chain = sorted((name, count) for name, count in counts.items()
+                   if "arm" in name.lower() or "hand" in name.lower()
+                   or "clavicle" in name.lower())
+    if chain:
+        log("%s: plates on the arm chain - %s"
+            % (object_data.name, ", ".join("%s %d" % pair for pair in chain)))
     return ("%d plate vertex(es) on one node each (%d plate(s) over %d bone(s)); "
             "%d fabric vertex(es) blend only across a joint they stand at - a "
             "plate cannot bend or twist in any pose, and the mesh cannot fold "
