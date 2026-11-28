@@ -209,94 +209,34 @@ def looks_like_container_name(name):
     return len(bare) == 32 and all(char in "0123456789abcdefABCDEF" for char in bare)
 
 
-# Where a title can come from when the container carries none. A dump is often
-# just the item's .bin in a folder - no closet index, no package header - and the
-# folder is then the only thing that names the item. "asset" is not a name, and
-# neither is the GUID the store called the container: a model called
-# 00000FFC3972... tells nobody anything.
-GENERIC_FOLDER_NAMES = {
-    "asset", "assets", "avatar", "avatars", "avatar item", "avatar items",
-    "content", "download", "downloads", "extracted", "item", "items",
-    "new folder", "package", "packages", "source", "src", "temp", "tmp",
-}
-
-# A one-line file beside the item that states its name, for a container that has
-# no title of its own and a folder that is just a folder.
-TITLE_FILES = ("title.txt", "item name.txt", "item_name.txt")
-
-
-def plausible_title(text):
-    """A name that can stand as the item's title, or None if it is a label.
-
-    A title is what a person would recognise: not "asset", not a GUID, not a
-    path-safe leftover like "extracted1".
-    """
-    text = (text or "").strip(" .")
-    if len(text) < 3 or len(text) > 80:
-        return None
-    if text.lower() in GENERIC_FOLDER_NAMES or text.lower() in GENERIC_ASSET_NAMES:
-        return None
-    if looks_like_container_name(text):
-        return None
-    if not any(char.isalpha() for char in text):
-        return None
-    # A long run of hex and dashes is a container's name in another spelling -
-    # 00000FFC3972... - and a model called that tells nobody anything.
-    if len(text) >= 24 and " " not in text:
-        hexish = sum(char in "0123456789abcdefABCDEF-" for char in text)
-        if hexish >= len(text) * 0.8:
-            return None
-    return text
-
-
-def stated_title(path):
-    """The title written beside the item, or None: (title, file name).
-
-    "title.txt" (or "item name.txt") next to the item is the one way a person
-    can say what the item is called when the container carries no name and the
-    folder does not either. Its first line is the title.
-    """
-    folder = os.path.dirname(os.path.abspath(path))
-    for name in TITLE_FILES:
-        candidate = os.path.join(folder, name)
-        try:
-            if not os.path.isfile(candidate):
-                continue
-            with open(candidate, encoding="utf-8-sig", errors="replace") as handle:
-                first = handle.readline().strip()
-        except OSError:
-            continue
-        if plausible_title(first):
-            return first, name
-    return None
-
-
-def folder_title(path):
-    """The folder the item arrived in, when it names it: one item, real name.
-
-    A dump of one item keeps that item's folder, and the folder is its name. A
-    folder holding several items names none of them, so it is left alone and
-    the ids stand.
-    """
-    folder = os.path.dirname(os.path.abspath(path))
-    try:
-        others = [entry for entry in os.listdir(folder)
-                  if is_container(os.path.join(folder, entry))]
-    except OSError:
-        others = []
-    if len(others) > 1:
-        return None
-    # Only the item's own folder: one level up is a dump, a download folder or a
-    # temp directory, and none of those names the item.
-    return plausible_title(os.path.basename(folder.rstrip(os.sep)))
-
-
 def fallback_names():
     """extracted1, extracted2, ... for items nothing else names."""
     number = 0
     while True:
         number += 1
         yield "extracted%d" % number
+
+
+UNNAMED = "extracted"
+
+
+def unnamed_name(used):
+    """The name of an item no title names: "extracted", then "extracted 2", ...
+
+    A container's GUID is not a name, so an item it titles nothing is called
+    extracted rather than 00000FFC3972.... The number only appears when a run
+    holds more than one such item, so two never share a name; a loose bin keeps
+    its own extracted1, extracted2 numbering, which is why the first one here
+    has no number at all.
+    """
+    if UNNAMED not in used:
+        return UNNAMED
+    number = 1
+    while True:
+        number += 1
+        name = "%s %d" % (UNNAMED, number)
+        if name.lower() not in used:
+            return name
 
 
 def item_id_for(path, unnamed=None):
@@ -617,17 +557,14 @@ def package_listing(files):
 def item_title(name, path, item_id):
     """The item's title, and where it came from.
 
-    The order is the order the evidence deserves. A name stated beside the item
-    is the most explicit thing there is; a closet carries the title itself; a
-    loose item's package has a Title in its header; and failing all of those the
-    folder the item arrived in is its name - which is what a model has to be
-    called, rather than the GUID the container is called by.
+    A closet already carries the title. A loose item does not, so look for the
+    package it came out of: first the item itself, then the packages beside it,
+    then one folder up. Nothing else is a title. A folder name and a stray file
+    beside the item are not what the item is called, and taking them as one
+    renamed people's items for a name they could not see the source of.
     """
     if name:
         return name, "closet"
-    stated = stated_title(path)
-    if stated:
-        return stated
     # The item may itself be a package: its Title is inside it, not beside it.
     try:
         if os.path.isfile(path) and os.path.getsize(path) >= STFS_HEADER:
@@ -661,14 +598,6 @@ def item_title(name, path, item_id):
             title = package_title(candidate)
             if title:
                 return title, "package %s" % entry
-    # Nothing inside the container names it, and the id is a container's GUID -
-    # the one id that is never a name. The folder the item arrived in is a better
-    # answer when it is the item's own folder and called something real: that is
-    # how "UNSC Marine Armor" survives a container called 00000FFC3972....
-    if looks_like_container_name(item_id or ""):
-        folder = folder_title(path)
-        if folder:
-            return folder, "folder"
     return None, None
 
 
@@ -2568,10 +2497,19 @@ def main(argv=None):
             swatch_count = sum(len(table.get("colours") or [])
                                for table in (facts.get("colours") or []))
             title, title_source = item_title(name, path, item_id)
-            # One name for every file the item writes: its title, or the id when
-            # nothing names it. A title already used in this run falls back to
-            # the id, so two "Test Shirt"s cannot overwrite each other.
-            stem = safe_folder(title or item_id) or item_id
+            # One name for every file the item writes: its title. Nothing else
+            # names it - not the folder it arrived in, not a file left beside
+            # it - because a name whose source cannot be seen is a rename. A
+            # container's GUID is not a name either, so an item no title names
+            # is called extracted, numbered only when the run holds more than
+            # one such item.
+            if title:
+                stem = safe_folder(title)
+            elif looks_like_container_name(item_id or ""):
+                stem = unnamed_name({name.lower() for name in used_stems})
+            else:
+                stem = item_id
+            stem = stem or item_id
             if stem.lower() in used_stems:
                 stem = item_id
             if stem.lower() in used_stems:
@@ -2583,7 +2521,7 @@ def main(argv=None):
                 "title": title,
                 "title_source": title_source,
                 # The one name every file and folder for this item uses: its
-                # title, or its id when nothing names it.
+                # title, or extractedN when the container titles nothing.
                 "stem": stem,
                 "categories": categories,
                 "bodies": bodies,

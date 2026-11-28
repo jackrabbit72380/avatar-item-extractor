@@ -981,8 +981,10 @@ def main():
         # and nothing else, so items are found by walking the folders under it:
         # each item arrives in a folder named after its container, holding
         # asset.bin or asset_v2.bin. Those file names are the format, not the
-        # item, so the folder must name the output - naming by the file left two
-        # items in one run both called "asset_v2", overwriting each other.
+        # item, and the folder's GUID is the container's name, not the item's:
+        # neither may name the output. Two untitled items are extracted1 and
+        # extracted2, in the order they are found - one name each, so they
+        # cannot overwrite each other.
         avatar_mesh.strb_blocks = lambda data: [(3, 1, 0, b"model-payload")]
         avatar_mesh.read_model = lambda data: batches()
         oneclick = os.path.join(work, "oneclick")
@@ -1007,7 +1009,9 @@ def main():
                   "extracted for hek users/pc/data/%s/bitmaps/%s multipurpose.tif",
                   "extracted for hek users/xbox/data/%s/bitmaps/%s multipurpose.tif",
                   "extracted for hek users/xbox/data/%s/bitmaps/%s change colour.tif")
-        for name in containers:
+        # Folders are walked in order, so the two untitled items are named in
+        # the order they appear: a1 first, then b2.
+        for name in ("extracted", "extracted 2"):
             for pattern in wanted:
                 want = pattern % tuple([name] * pattern.count("%s"))
                 found = os.path.exists(os.path.join(out5, want))

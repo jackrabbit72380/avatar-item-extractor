@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v190.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v191.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -117,13 +117,15 @@ Test Item\
     catalogue.json
 ```
 
-"Test Item" is whatever your item is titled, looked for in the order the evidence
-arrives: a `title.txt` beside the item (its first line - the one way to state the
-name when nothing else does), the closet's name, the package's Title, and then
-the folder the item arrived in, when that folder holds just the one item. It is
-never the container's GUID: a model called `00000FFC3972...` tells nobody
-anything, and that is what "asset.bin" in a GUID folder used to produce. One item
-gets a folder named after it, next to `extracted\`; several items share
+"Test Item" is whatever your item is titled: the closet's name, or the Title in
+the package it came out of. Nothing else names it - not the folder it arrived
+in, not a file left beside it - because a name whose source you cannot see is
+just a rename. A container is called by a GUID (`00000FFC3972...`), which is not
+a name, so an item that nothing titles is called `extracted` - `extracted 2`,
+`extracted 3`, ... only when a run holds more than one of them, so no two share a
+name. `report.txt` says which of those it was: `title : ... (from package
+asset.bin)`, or `title : none in this container - named extracted`. One
+item gets a folder named after it, next to `extracted\`; several items share
 `extracted\`, each file carrying its item's name. Either way it is one
 double-click for the whole folder.
 
@@ -1361,7 +1363,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v190.bat` and
+`Extract UNSC Marine Armor Avatar-v191.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1376,7 +1378,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v190.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v191.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1426,9 +1428,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v190.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v191.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v190.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v191.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it

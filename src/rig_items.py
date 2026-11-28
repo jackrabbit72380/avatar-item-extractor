@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v190"
-BUILD = "the item's name is its title, never the container's number"
+VERSION = "v191"
+BUILD = "the item's own title names it, nothing else"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -571,9 +571,9 @@ def name_item_materials(meshes, bitmap):
 def item_stem(record):
     """The one name this item is written under, in every folder.
 
-    Extraction names it once - its title, or its id when nothing names it - and
-    the .obj's own name is the fallback for a catalogue written by a build that
-    did not record it.
+    Extraction names it once - its title, or extractedN when nothing titles it -
+    and the .obj's own name is the fallback for a catalogue written by a build
+    that did not record it.
     """
     return record.get("stem") or os.path.splitext(
         os.path.basename(record.get("obj") or record["id"]))[0]
@@ -7308,7 +7308,13 @@ def report_text(options, records, stems, armature, nxe=None):
     for record, stem in zip(records, stems):
         lines.append(stem)
         lines.append("  id        : %s" % record.get("id", ""))
-        lines.append("  title     : %s" % (record.get("title") or ""))
+        # Where the name came from, so it is never invisible: a title the
+        # container states, or the fallback when it states none.
+        if record.get("title"):
+            lines.append("  title     : %s (from %s)"
+                         % (record["title"], record.get("title_source") or "the container"))
+        else:
+            lines.append("  title     : none in this container - named %s" % stem)
         table = record.get("colour_table") or {}
         lines.append("  colours   : table %s, %d swatch(es)"
                      % ("yes" if table.get("present") else "no",
@@ -8130,8 +8136,8 @@ def main():
     os.makedirs(hek_data, exist_ok=True)
     stems = []
     for record, merged, nxe, arms_item, arms_rig in rigged:
-        # The one name extraction gave the item - its title, or its id when
-        # nothing names it - so this pass writes into the same data\<item>\
+        # The one name extraction gave the item - its title, or extractedN when
+        # nothing titles it - so this pass writes into the same data\<item>\
         # that holds the bitmaps. The .obj's own name is the fallback for a
         # catalogue written by a build that did not record it.
         stem = item_stem(record)
