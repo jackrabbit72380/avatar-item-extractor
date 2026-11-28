@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v197"
-BUILD = "the leg comes down in one piece too"
+VERSION = "v198"
+BUILD = "report.txt says whether every joint is inside the mesh"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2660,6 +2660,37 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
         if rides.get(first) and rides.get(first) == rides.get(second):
             plate_edges += 1
             worst_plate = max(worst_plate, ratio)
+    # Is every joint inside the mesh? Bone *lengths* are Blender's business - a
+    # Halo model stores where a node is, never how long its bone is, so a long
+    # foot bone drawn below a boot moves nothing in game. What does matter is
+    # where the joints are: a weapon hangs off the hand node, the boot stands on
+    # the foot node, and a joint outside its own armour is a part that will be
+    # placed from the wrong place. So each joint is measured to the nearest
+    # surface of the mesh that rides it.
+    matrix = armature.matrix_world
+    world = object_data.matrix_world
+    skin = [world @ Vector(point) for point in placed]
+    joints = []
+    for side in ("l", "r"):
+        for part in ("upperarm", "forearm", "hand",
+                     "thigh", "calf", "foot"):
+            name = "bip01 %s %s" % (side, part)
+            bone = armature.data.bones.get(name)
+            if bone is None:
+                continue
+            joint = matrix @ bone.head_local
+            nearest = min((point - joint).length for point in skin) if skin else 0.0
+            joints.append((name, nearest))
+    for name, nearest in joints:
+        if nearest > 6.0:
+            log("%s: %s has no surface within %.1f units - that joint is outside "
+                "the mesh" % (object_data.name, name, nearest))
+    if joints:
+        log("%s: every joint has mesh around it - %s"
+            % (object_data.name,
+               ", ".join("%s %.1f" % (name.replace("bip01 ", ""), nearest)
+                         for name, nearest in joints)))
+
     span_before = max(abs(point[1]) for point in points)
     span_after = max(abs(point[1]) for point in placed)
     for vertex, point in zip(mesh.vertices, placed):
