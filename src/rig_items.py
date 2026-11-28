@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v199"
-BUILD = "touching plates move together"
+VERSION = "v200"
+BUILD = "one turn, one pivot"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2292,6 +2292,20 @@ def body_fit_plan(armature, fit=1.0, points=None):
     for calf, thigh in ((6, 2), (8, 3)):
         if calf in by_joint and thigh in by_joint:
             by_joint[calf]["turn"] = by_joint[thigh]["turn"]
+    # A turn that is inherited has to be taken about the joint it belongs to.
+    # The same rotation about a different pivot is not the same movement: it is
+    # that rotation plus a slide of (R - I) times the distance between the two
+    # pivots, which for this arm is 1.25 times an 10.9-unit upper arm - 13 units
+    # of jump at the elbow, and that jump is what a kinked elbow looks like in
+    # the mesh. So a joint that rides its parent's turn also rides its parent's
+    # pivot, and the whole limb comes down as one rigid piece about the shoulder
+    # or the hip, exactly as it was modelled.
+    for entry in plan:
+        entry["pivot"] = entry["source"]
+    for below, above in ((25, 20), (28, 22), (6, 2), (8, 3),
+                         (33, 25), (36, 28), (11, 6), (15, 8)):
+        if below in by_joint and above in by_joint:
+            by_joint[below]["pivot"] = by_joint[above]["source"]
     if 19 in by_joint:
         by_joint[19]["turn"] = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     for entry in plan:
@@ -2522,8 +2536,10 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
                                for step in range(3))
         else:
             # Turned about the item's own joint, which stays where the avatar
-            # put it: that is what leaves every limb its own length.
-            anchor = tuple(entry["source"])
+            # put it: that is what leaves every limb its own length. A joint
+            # that inherited its parent's turn turns about the parent's joint
+            # instead, so the limb is one rigid piece and no seam jumps.
+            anchor = tuple(entry.get("pivot") or entry["source"])
             offset = fit_between(anchor, point)
         turned = fit_turned(entry["turn"], offset)
         return tuple(anchor[step] + turned[step] for step in range(3))
@@ -2604,34 +2620,22 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
         # rotation, taken about one anchor - so the vertex still moves rigidly
         # and its neighbours move almost the same way. The band then folds
         # instead of tearing, and every plate around it keeps its exact shape.
+        # A blended vertex has to turn about the pivot of the turn it is given.
+        # A forearm that inherited the upper arm's turn turns about the
+        # shoulder, so a sleeve vertex weighted half to the forearm and half to
+        # the upper arm must turn about the shoulder too - otherwise it is the
+        # same angle about a point half way down the upper arm, which is a
+        # different movement, and the sleeve steps away from the plates that
+        # ride the arm at the seam between them.
         anchor = [0.0, 0.0, 0.0]
         for name, weight in share.items():
-            source = where[name]["source"]
+            source = where[name].get("pivot") or where[name]["source"]
             for step in range(3):
                 anchor[step] += (weight / total) * source[step]
         turn = fit_average_turn([(where[name]["turn"], weight / total)
                                  for name, weight in share.items()])
         turned = fit_turned(turn, fit_between(tuple(anchor), point))
         placed.append(tuple(anchor[step] + turned[step] for step in range(3)))
-    for side in ("l", "r"):
-        for first, second, what in (("upperarm", "forearm", "elbow"),
-                                    ("thigh", "calf", "knee")):
-            upper = by_bone.get("bip01 %s %s" % (side, first))
-            fore = by_bone.get("bip01 %s %s" % (side, second))
-            if not upper or not fore:
-                continue
-            angles = []
-            for entry in (upper, fore):
-                turn = entry["turn"]
-                trace = turn[0][0] + turn[1][1] + turn[2][2]
-                angles.append(math.degrees(math.acos(
-                    max(-1.0, min(1.0, (trace - 1.0) / 2.0)))))
-            log("%s %s %s: %s %.1f deg, %s %.1f deg - %.1f deg of %s bend in the "
-                "bind pose"
-                % (object_data.name, "arm" if what == "elbow" else "leg", side,
-                   first, angles[0], second, angles[1], angles[1] - angles[0],
-                   what))
-
     worst = 1.0
     worst_plate = 1.0
     worst_long = 1.0
@@ -2665,6 +2669,46 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
         if rides.get(first) and rides.get(first) == rides.get(second):
             plate_edges += 1
             worst_plate = max(worst_plate, ratio)
+    # Does the arm come down as one piece? The arm is one rigid turn about the
+    # shoulder, so every vertex on it - plate or fabric - must land where that
+    # turn puts it. This measures each one against that single answer and names
+    # the worst, so a kink becomes a number about a named bone instead of a look.
+    for side in ("l", "r"):
+        root = by_bone.get("bip01 %s upperarm" % side)
+        if root is None:
+            continue
+        chain = set(["bip01 %s %s" % (side, part)
+                     for part in ("upperarm", "forearm", "hand")])
+        pivot = Vector(root.get("pivot") or root["source"])
+        turn = root["turn"]
+        far = {}
+        count = {}
+        for index, point in enumerate(points):
+            mine = rides.get(index)
+            if mine:
+                if mine not in chain:
+                    continue
+            else:
+                share = weights.get(index) or {}
+                if not share or set(share) - chain:
+                    continue
+                mine, weight = max(share.items(), key=lambda pair: pair[1])
+                if weight < 0.9:
+                    continue
+            offset = fit_between(tuple(pivot), point)
+            want = Vector(tuple(pivot)) + Vector(fit_turned(turn, offset))
+            away = (Vector(placed[index]) - want).length
+            far[mine] = max(far.get(mine, 0.0), away)
+            count[mine] = count.get(mine, 0) + 1
+        if far:
+            log("%s: arm %s, how far the armour sits from the arm's own rigid "
+                "turn about the shoulder - %s"
+                % (object_data.name, side,
+                   ", ".join("%s %.1f over %d"
+                             % (name.replace("bip01 %s " % side, "").replace(
+                                 "bip01 ", ""), far[name], count[name])
+                             for name in sorted(far))))
+
     # Is every joint inside the mesh? Bone *lengths* are Blender's business - a
     # Halo model stores where a node is, never how long its bone is, so a long
     # foot bone drawn below a boot moves nothing in game. What does matter is
