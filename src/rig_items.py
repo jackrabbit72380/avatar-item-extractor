@@ -95,8 +95,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v204"
-BUILD = "v204 - a model that names a shader no bitmap can draw is refused, not written to draw white"
+VERSION = "v205"
+BUILD = "v205 - the physics model gets the pelvis sphere it never wrote, and the run prints the three heights that place his feet"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -7624,6 +7624,55 @@ def export_collision_jms(object_data, armature, path, material_name):
     return boxes
 
 
+def ground_audit(object_data, armature, boxes, spheres, index_of=None):
+    """The three heights a biped's feet can be placed by, measured together.
+
+    What stands a Halo CE biped on the floor is one of these, and they have to
+    agree or the character is drawn at the wrong height:
+
+    * the mesh's own lowest point, which is what the .jms writes as a vertex;
+    * the collision model's lowest point, which is where the engine's own
+      collision puts his feet;
+    * the lowest physics sphere's bottom, node origin minus its radius - the
+      pellet the biped stands on.
+
+    All three in armature space, which is the space the .jms node block is
+    written in. Master Chief's own model has his soles on zero, so anything
+    that is not zero here is the difference between him and the marine.
+    """
+    inverse = armature.matrix_world.inverted()
+    world = object_data.matrix_world
+    soles = min((inverse @ (world @ vertex.co))[2]
+                for vertex in object_data.data.vertices)
+    collided = min(low[2] for _node, low, _high in boxes) if boxes else soles
+    lowest = None
+    # Node numbers are Halo's own 19-node order, not Blender's bone order -
+    # measuring a foot sphere against Blender's index 8 read the pelvis.
+    order = (index_of if index_of is not None else
+             {bone.name: number for number, bone in enumerate(armature.data.bones)})
+    for node, radius in spheres:
+        bone = next((name for name, number in sorted(order.items())
+                     if number == node), None)
+        if bone is None or armature.data.bones.get(bone) is None:
+            continue
+        centre = (armature.matrix_world @ armature.data.bones[bone].head_local)[2]
+        bottom = centre - radius
+        lowest = bottom if lowest is None else min(lowest, bottom)
+    line = ("mesh soles %.2f, collision bottom %.2f, lowest physics sphere "
+            "bottom %.2f, pelvis node %.3f"
+            % (soles, collided, -1.0 if lowest is None else lowest,
+               armature.data.bones["bip01 pelvis"].head_local[2]
+               if armature.data.bones.get("bip01 pelvis") else 0.0))
+    log("ground: %s - these are what place his feet; the mesh's own lowest "
+        "point is the .jms vertex, the collision bottom is the engine's contact "
+        "and the sphere bottom is the pellet a biped stands on" % line)
+    if abs(soles) > 0.05:
+        log("ground: the mesh does not stand on zero - its lowest point is "
+            "%.2f units off the floor, so the model is lifted or sunk by that "
+            "much before any tag is read" % soles)
+    return line
+
+
 def export_physics_jms(object_data, armature, path, material_name, boxes):
     """A physics model as tool.exe reads one: spheres, linked to the pelvis.
 
@@ -7665,9 +7714,37 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
         node = index_of.get(bone)
         if node is None:
             continue
-        for piece, low, high in boxes:
-            if piece != node:
+        pieces = [(low, high) for piece, low, high in boxes if piece == node]
+        if not pieces:
+            if not share:
                 continue
+            # The pelvis has no collision box of its own - the surface round the
+            # hips rides the spine and the thighs - so this sphere was skipped
+            # and the physics model went out as two pellets at the feet, with no
+            # body on it at all. tool physics sizes the biped's bounding volume
+            # from these spheres, and the pelvis sphere is the pill a biped
+            # stands on, so it is measured from the surface that rides the hips
+            # instead of from a box that does not exist.
+            height = ankle.get(bone)
+            if height is None:
+                continue
+            torso = {"bip01 pelvis", "bip01 spine", "bip01 spine1",
+                     "bip01 l thigh", "bip01 r thigh"}
+            riders = {group.index: group.name
+                      for group in object_data.vertex_groups}
+            widest = 0.0
+            for vertex, point in zip(object_data.data.vertices, soles):
+                if abs(point[2] - height) > 10.0:
+                    continue
+                held = sorted(((entry.weight, riders.get(entry.group))
+                               for entry in vertex.groups), reverse=True)
+                if not held or held[0][1] not in torso:
+                    continue    # a hand hangs at hip height and is not the hips
+                widest = max(widest, abs(point[0]), abs(point[1]))
+            if widest > 0.0:
+                spheres.append((node, max(widest, 1.0)))
+            continue
+        for low, high in pieces:
             if share:
                 widest = max(high[0] - low[0], high[2] - low[2])
                 spheres.append((node, max(widest * share, 1.0)))
@@ -9066,11 +9143,14 @@ def main():
                         merged, armature,
                         os.path.join(physics_dir, "%s collision.jms" % stem),
                         material)
-                    export_physics_jms(
+                    spheres = export_physics_jms(
                         merged, armature,
                         os.path.join(physics_dir, "%s physics.jms" % stem),
                         material, boxes)
                     record["collision"] = len(boxes)
+                    record["ground"] = ground_audit(
+                        merged, armature, boxes, spheres,
+                        _jms_header(armature)[1])
                 except Exception as problem:  # noqa: BLE001 - a biped can still render
                     record["collision_errors"] = ("%s: %s"
                                                   % (type(problem).__name__, problem))
