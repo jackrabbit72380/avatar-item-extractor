@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v194"
-BUILD = "a plate rides the bone its own middle hangs on"
+VERSION = "v195"
+BUILD = "a pad around the shoulder belongs to the arm"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -4032,10 +4032,11 @@ def plate_bone(object_data, segments, children, indexes, tally):
     be counted. Counting them is what put a mirrored pair of pads on different
     bones - a left arm that came down beside a right arm that stayed out.
 
-    The middle of the plate answers it, and the answer walks past the end of a
-    bone onto the bone that carries on from it: a pauldron sits outside the
-    shoulder, so the clavicle's end is nearer the plate's middle than the
-    clavicle's length is, and the plate belongs to the upper arm. Only bones the
+    The middle of the plate answers it - and it answers for the arm the plate is
+    strapped to, not for the girdle bone beside it: a pauldron wraps around the
+    shoulder, so it is about as near the clavicle as the upper arm, and the
+    clavicle barely turns. A plate lying along the next bone up the chain is
+    given that bone, so it comes down with the arm it is part of. Only bones the
     plate already rides, or the bones they carry, are candidates - so a chest
     plate can never be handed to a hand.
     """
@@ -4058,17 +4059,32 @@ def plate_bone(object_data, segments, children, indexes, tally):
         return point_segment_distance(middle, head, tail)
 
     ridden = min(sorted(candidates), key=gap)
+    # A shoulder pad wraps *around* the joint, so its middle is about as near the
+    # clavicle as it is the upper arm - and the clavicle barely turns, so the pad
+    # is left standing out sideways while the arm comes down under it. A plate
+    # that lies along the bone past this one belongs to that bone: it is the arm
+    # it is strapped to. Only a plate that sits off the end of the next bone, or
+    # much further from it, stays where the nearest bone put it.
     for _step in range(2):
-        head, tail = segments[ridden]
-        axis = tail - head
-        if axis.length_squared < 1e-12:
+        best = None
+        for child in sorted(children.get(ridden) or ()):
+            if child not in candidates or child not in segments:
+                continue
+            head, tail = segments[child]
+            axis = tail - head
+            if axis.length_squared < 1e-12:
+                continue
+            how_far = (middle - head).dot(axis) / axis.length_squared
+            if how_far < -0.10 or how_far > 1.05:
+                continue
+            distance = gap(child)
+            if distance > max(gap(ridden) * 1.6, gap(ridden) + 0.5):
+                continue
+            if best is None or distance < best[0]:
+                best = (distance, child)
+        if best is None:
             break
-        if (middle - head).dot(axis) / axis.length_squared <= 1.0:
-            break
-        onward = [child for child in children.get(ridden) or () if child in candidates]
-        if not onward:
-            break
-        ridden = min(sorted(onward), key=gap)
+        ridden = best[1]
     return ridden
 
 
