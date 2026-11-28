@@ -55,12 +55,13 @@ rem  animation graph ... don't match" failure; no graph at all is the "units
 rem  must have models and animation graphs" failure.
 rem
 rem  The model needs a shader tag named after each .jms material. Those tags are
-rem  checked before the model is compiled, and a missing one is named (with the
-rem  bitmap it draws with) and nothing is built: tool.exe would write an EMPTY
-rem  shader under that name, bake the reference into the model, and that surface
-rem  draws white in game for good. Make each shader once (README.md, "Building it
-rem  in Halo's editing kit") and run this again - one-time, the same shader for
-rem  every copy of the item.
+rem  checked before the model is compiled - under the whole of tags\, because that
+rem  is how tool.exe looks one up: by NAME, in whatever folder it sits - and a
+rem  missing one is named (with the bitmap it draws with) and nothing is built:
+rem  tool.exe would write an EMPTY shader under that name, bake the reference into
+rem  the model, and that surface draws white in game for good. Make each shader
+rem  once (README.md, "Building it in Halo's editing kit") and run this again -
+rem  one-time, the same shader for every copy of the item.
 rem
 rem  Those names are LOWER CASE - "unsc marine armor face", not "UNSC Marine
 rem  Armor face" - because a tag path is, and tool.exe finds the shader by the
@@ -165,12 +166,19 @@ rem  face: never a missing texture, always a missing or empty shader tag.
 rem  So every tag is checked first, and the model is left alone until they all
 rem  exist. "shaders to make.txt" beside this file lists them as
 rem  <item>|<shader tag>|<bitmap tag>.
+rem  The search is the whole of tags\, not two guessed folders. It used to look
+rem  in tags\ and tags\<item>\ only, so a tag in the place Halo's own tags live -
+rem  tags\characters\<item>\ - read as missing: the build said "nothing was
+rem  compiled, on purpose" and stopped, the model tag on disk stayed the one from
+rem  before, and the game went on drawing those arms and that white face however
+rem  many times the item had been rebuilt since. An index of every shader_model
+rem  in the kit is the same test tool.exe makes - the name, wherever it sits.
+if not defined TEMP set "TEMP=%OUT%"
+set "TAGINDEX=%TEMP%\avatar shader tags %RANDOM%.txt"
+if exist "%HEK%\tags" dir /b /s "%HEK%\tags\*.shader_model" > "%TAGINDEX%" 2>nul
 set "NEEDSHADER="
-if exist "%OUT%shaders to make.txt" for /f "usebackq tokens=1,2,3 delims=|" %%A in ("%OUT%shaders to make.txt") do if /i "%%A"=="%BUILD%" if not exist "%HEK%\tags\%%B.shader_model" if not exist "%HEK%\tags\%BUILD%\%%B.shader_model" (
-  echo   needs a shader tag: %%B    base map: %%C
-  echo shader missing: %%B    base map: %%C >>"%LOG%"
-  set "NEEDSHADER=1"
-)
+if exist "%OUT%shaders to make.txt" for /f "usebackq tokens=1,2,3 delims=|" %%A in ("%OUT%shaders to make.txt") do if /i "%%A"=="%BUILD%" call :needs "%%B" "%%C"
+if exist "%TAGINDEX%" del /Q "%TAGINDEX%" >nul 2>&1
 if defined NEEDSHADER (
   echo.
   echo   Nothing was compiled for %BUILD%, on purpose. tool.exe would write an
@@ -243,4 +251,15 @@ rem  Build the map again (tool build-cache-file "<scenario>" classic) after this
 echo.
 echo   Compiled %BUILD%. The game draws a model from the .map it was built into,
 echo   not from tags\, so build the map again to see the change.
+exit /b 0
+
+:needs
+rem  %~1 is a shader tag name from "shaders to make.txt", %~2 the bitmap behind
+rem  it. A name in the index is a tag tool.exe will find, wherever it sits.
+set "FOUND="
+for /f "usebackq delims=" %%F in ("%TAGINDEX%") do if /i "%%~nxF"=="%~1.shader_model" set "FOUND=1"
+if defined FOUND exit /b 0
+echo   needs a shader tag: %~1    base map: %~2
+echo shader missing: %~1    base map: %~2 >>"%LOG%"
+set "NEEDSHADER=1"
 exit /b 0

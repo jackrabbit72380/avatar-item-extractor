@@ -80,6 +80,26 @@ def shader_tags(tags):
     return found
 
 
+def model_tags(tags):
+    """Every model tag under tags\\, by lower-case name: {name: [path, ...]}.
+
+    A tag path is not one folder deep. Halo's own live in tagged folders -
+    ``characters\\cyborg\\cyborg.gbxmodel`` - so a model compiled into
+    ``tags\\characters\\<item>\\`` is a model that exists, and looking only in
+    ``tags\\<item>\\`` calls it missing. That mistake is the one that made a
+    build say "nothing was compiled, on purpose" over a good model.
+    """
+    found = {}
+    for root, folders, files in os.walk(tags):
+        folders[:] = [name for name in folders if not name.startswith(".")]
+        for name in files:
+            if not name.lower().endswith(".gbxmodel"):
+                continue
+            found.setdefault(name[: -len(".gbxmodel")].lower(), []).append(
+                os.path.join(root, name))
+    return found
+
+
 def paths_in(path):
     """Printable runs in a binary tag that look like tag paths in it."""
     with open(path, "rb") as handle:
@@ -226,12 +246,18 @@ def main():
     # the empty reference, and a .map built before them still carries the pixels
     # and the references of that moment.
     print()
+    models = model_tags(tags)
     for item in items:
-        model_tag = os.path.join(tags, item, "%s.gbxmodel" % item)
-        if not os.path.exists(model_tag):
-            print("model  : no %s.gbxmodel under tags\\%s - it has not been compiled."
-                  % (item, item))
+        entries = models.get(item.lower()) or []
+        if not entries:
+            print("model  : no %s.gbxmodel anywhere under tags\\ - it has not been"
+                  % item)
+            print("         compiled, so the game draws the model it was built with.")
             continue
+        # The newest copy: a kit can hold the same name twice, and the one the
+        # compile wrote last is the one the tags folder now answers with.
+        model_tag = max(entries, key=os.path.getmtime)
+        print("model  : %s" % model_tag)
         # Only the tags that answer this build's own materials: the tags\ folder
         # holds every stock shader in the game, and their dates say nothing
         # about when this item's tags were made.
@@ -244,7 +270,6 @@ def main():
         newest_shader = max(stamps) if stamps else 0
         if newest_shader and os.path.getmtime(model_tag) < newest_shader:
             worst = max(worst, 1)
-            print("model  : %s" % model_tag)
             print("         built %s, before a shader tag made at %s"
                   % (when(os.path.getmtime(model_tag)), when(newest_shader)))
             print("         Compile the model again: it baked the shader reference of that")
