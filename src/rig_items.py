@@ -95,8 +95,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v205"
-BUILD = "v205 - the physics model gets the pelvis sphere it never wrote, and the run prints the three heights that place his feet"
+VERSION = "v206"
+BUILD = "v206 - the physics sphere count and radii are read off the cyborg rig, not invented"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -7673,6 +7673,46 @@ def ground_audit(object_data, armature, boxes, spheres, index_of=None):
     return line
 
 
+def biped_spheres(armature, index_of):
+    """The physics spheres a standing biped needs, measured off the RIG.
+
+    A physics model belongs to the biped, not to the costume worn on it, and the
+    rig this tool ships is Halo's own cyborg skeleton - the same block
+    characters\\cyborg carries. So these are Master Chief's own numbers, read
+    off his bones rather than invented from whatever mesh is being put on him:
+
+    * the two FOOT nodes stand on the floor, so each sphere's radius is the
+      node's own height over it - 6.878 and 6.877 - and its bottom lands on
+      zero by construction, which is what puts the soles on the ground;
+    * the PELVIS is the node every other bone hangs from, and its sphere is half
+      the distance between the two hip joints - 4.219 of an 8.437-wide pelvis -
+      which is the body the engine collides, not the width of a costume's arms.
+
+    Three spheres, because a biped stands on two feet and its mass sits at one
+    pelvis: the feet are the only nodes that touch the floor and the pelvis is
+    the only root. Nothing here is scaled by the item, so a costume cannot make
+    the biped taller, wider or heavier than the character it is worn on.
+    """
+    matrix = armature.matrix_world
+    pelvis = armature.data.bones.get("bip01 pelvis")
+    if pelvis is None or pelvis.name not in index_of:
+        return []
+    left = armature.data.bones.get("bip01 l thigh")
+    right = armature.data.bones.get("bip01 r thigh")
+    if left is not None and right is not None:
+        hips = ((matrix @ left.head_local) - (matrix @ right.head_local)).length / 2.0
+    else:
+        hips = 0.0
+    spheres = [(index_of[pelvis.name], max(hips, 1.0))]
+    for name in ("bip01 l foot", "bip01 r foot"):
+        foot = armature.data.bones.get(name)
+        if foot is None or name not in index_of:
+            continue
+        height = (matrix @ foot.head_local).z        # the floor is the model's 0
+        spheres.append((index_of[name], max(height, 1.0)))
+    return spheres
+
+
 def export_physics_jms(object_data, armature, path, material_name, boxes):
     """A physics model as tool.exe reads one: spheres, linked to the pelvis.
 
@@ -7699,63 +7739,11 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
     # drops the biped until that midpoint is on the floor and the feet stand in
     # it. The sole is the lowest vertex of the body, and the ankle is the foot
     # node's own origin, so the radius is the distance between the two.
-    inverse = armature.matrix_world.inverted()
-    world = object_data.matrix_world
-    soles = [inverse @ (world @ vertex.co)
-             for vertex in object_data.data.vertices]
-    ground = min(point[2] for point in soles) if soles else 0.0
-    # The ankle is the foot bone's own head, in the same armature space the
-    # sole was measured in. The node block's translation is parent-space, so it
-    # is not the height wanted here.
-    ankle = {bone.name: bone.head_local[2] for bone in armature.data.bones}
-    wanted = [("bip01 pelvis", 0.5), ("bip01 l foot", 0.0), ("bip01 r foot", 0.0)]
-    spheres = []
-    for bone, share in wanted:
-        node = index_of.get(bone)
-        if node is None:
-            continue
-        pieces = [(low, high) for piece, low, high in boxes if piece == node]
-        if not pieces:
-            if not share:
-                continue
-            # The pelvis has no collision box of its own - the surface round the
-            # hips rides the spine and the thighs - so this sphere was skipped
-            # and the physics model went out as two pellets at the feet, with no
-            # body on it at all. tool physics sizes the biped's bounding volume
-            # from these spheres, and the pelvis sphere is the pill a biped
-            # stands on, so it is measured from the surface that rides the hips
-            # instead of from a box that does not exist.
-            height = ankle.get(bone)
-            if height is None:
-                continue
-            torso = {"bip01 pelvis", "bip01 spine", "bip01 spine1",
-                     "bip01 l thigh", "bip01 r thigh"}
-            riders = {group.index: group.name
-                      for group in object_data.vertex_groups}
-            widest = 0.0
-            for vertex, point in zip(object_data.data.vertices, soles):
-                if abs(point[2] - height) > 10.0:
-                    continue
-                held = sorted(((entry.weight, riders.get(entry.group))
-                               for entry in vertex.groups), reverse=True)
-                if not held or held[0][1] not in torso:
-                    continue    # a hand hangs at hip height and is not the hips
-                widest = max(widest, abs(point[0]), abs(point[1]))
-            if widest > 0.0:
-                spheres.append((node, max(widest, 1.0)))
-            continue
-        for low, high in pieces:
-            if share:
-                widest = max(high[0] - low[0], high[2] - low[2])
-                spheres.append((node, max(widest * share, 1.0)))
-            else:
-                # The sphere is centred on the foot node (its marker offset is
-                # zero), so a radius of ankle-minus-sole ends exactly on the
-                # floor and the soles rest there.
-                her = ankle.get(bone)
-                if her is None:
-                    her = high[2]
-                spheres.append((node, max(her - ground, 1.0)))
+    # Measured off the rig, not off the mesh: the numbers below are Master
+    # Chief's own, because the rig is Halo's cyborg skeleton (see
+    # biped_spheres). The costume's width, height and hands have no say in a
+    # biped's physics body.
+    spheres = biped_spheres(armature, index_of)
     if not spheres:
         return []
     out.append("%d" % len(spheres))
@@ -7768,7 +7756,9 @@ def export_physics_jms(object_data, armature, path, material_name, boxes):
     out.append("0")                    # no vertices
     out.append("0")                    # no faces
     _jms_write(path, out)
-    log("physics: %d sphere(s) - pelvis %.2f units, each foot %.2f"
+    log("physics: %d sphere(s) off the rig - pelvis %.2f units (half the hip "
+        "joints' separation), each foot %.2f (the foot node's height over the "
+        "floor, so its bottom lands on zero)"
         % (len(spheres), spheres[0][1], spheres[-1][1]))
     log("wrote %s" % os.path.basename(path))
     return spheres
