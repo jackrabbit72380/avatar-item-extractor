@@ -86,23 +86,22 @@ def unpack(bat, out):
 
 
 def collect(src):
-    """Every .py and .bat under src, keyed by its path relative to src.
+    """Every .py under src, keyed by its path relative to src.
 
-    The .bat is the script that drives tool.exe after extraction, and it has to
-    travel with the code: rig_items.py looks for build-hek.bat beside itself and
-    writes it beside the builds, so a payload carrying only .py files left every
-    player to go and find one. It is stored as the text it is, exactly as read.
+    No .bat travels in here. The script that drives tool.exe is text in
+    hek_scripts.py, and rig_items.py writes it out beside the builds, so the
+    only .bat in the payload is the carrier a player double-clicks.
     """
     modules = {}
     for root, _dirs, files in os.walk(src):
         for name in sorted(files):
-            if not name.endswith((".py", ".bat")):
+            if not name.endswith(".py"):
                 continue
             path = os.path.join(root, name)
             key = os.path.relpath(path, src).replace(os.sep, "/")
             with open(path, encoding="utf-8", newline="") as handle:
                 text = handle.read()
-            modules[key] = text if name.endswith(".bat") else text.replace("\r\n", "\n")
+            modules[key] = text.replace("\r\n", "\n")
     if not modules:
         raise SystemExit("no .py files under %s" % src)
     return modules
@@ -158,7 +157,7 @@ def check_version(bat, head, version):
                          % problem)
 
 
-def pack(bat, src, rigs=None):
+def pack(bat, src, rigs=None, drop=()):
     text = open(bat, encoding="utf-8", newline="").read()
     head, _old_payload = _split(text)
     entries = collect(src)
@@ -168,7 +167,7 @@ def pack(bat, src, rigs=None):
     # .blend rigs and still passed the check below, because that check only
     # compares the rebuild against what it was handed.
     carried = read_entries(text)
-    lost = sorted(set(carried) - set(entries))
+    lost = sorted(set(carried) - set(entries) - set(drop))
     if lost:
         raise SystemExit(
             "refusing to pack: %s already carries %d entr%s that this rebuild "
@@ -194,11 +193,16 @@ def main(argv=None):
     parser.add_argument("--rigs",
                         help="folder holding the .blend rig files to carry "
                              "(required: a rebuild that dropped them is refused)")
+    parser.add_argument("--drop", action="append", default=[],
+                        metavar="ENTRY",
+                        help="an entry the rebuild removes on purpose, named one "
+                             "per flag; anything else that would be lost is "
+                             "still refused")
     args = parser.parse_args(argv)
     if args.action == "unpack":
         unpack(args.bat, args.src)
     else:
-        pack(args.bat, args.src, args.rigs)
+        pack(args.bat, args.src, args.rigs, args.drop)
     return 0
 
 

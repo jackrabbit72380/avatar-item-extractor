@@ -37,6 +37,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import halo_pose
+import hek_scripts
 from mathutils import Matrix, Quaternion, Vector, kdtree
 
 # The .jms is positional and carries no section markers, so one wrong count shifts
@@ -93,8 +94,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v202"
-BUILD = "a shoulder vertex follows its own bone"
+VERSION = "v203"
+BUILD = "v203 - the compile script and shader checker travel as text, not as two loose .bat files"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -8940,11 +8941,10 @@ def main():
     # The step after the data is the kit: tool.exe has to compile the .jms and
     # the .tif files into tags. The script that does it is carried in this
     # payload and written beside the builds, so it is never something to go and
-    # find.
-    beside = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "build-hek.bat")
-    if built and os.path.exists(beside):
-        data = open(beside, "rb").read()
+    # find. It is text in hek_scripts.py, not a second .bat in the payload: a
+    # one-click program should hand a player one .bat, the one that extracts.
+    data = hek_scripts.BUILD_HEK.encode("utf-8")
+    if built:
         for stem in sorted(set(stems)):
             # Named after the item, because the item is what the player is
             # compiling: "Compile UNSC Marine Armor Avatar.bat" beside the
@@ -8961,13 +8961,13 @@ def main():
         # reads this computer's own tags - what answers each material name, what
         # base map each one holds, and whether the model tag or the .map was
         # built before them - and nothing else can know that.
-        for name, source in (("Check the shaders.bat", "check-shaders.bat"),
-                             ("check_shaders.py", "check_shaders.py")):
-            beside = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  source)
-            if not os.path.exists(beside):
-                continue
-            data = open(beside, "rb").read()
+        scripts = [("Check the shaders.bat",
+                    hek_scripts.CHECK_SHADERS.encode("utf-8"))]
+        beside = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "check_shaders.py")
+        if os.path.exists(beside):
+            scripts.append(("check_shaders.py", open(beside, "rb").read()))
+        for name, data in scripts:
             target = os.path.join(out, name)
             if not os.path.exists(target) or open(target, "rb").read() != data:
                 with open(target, "wb") as handle:
