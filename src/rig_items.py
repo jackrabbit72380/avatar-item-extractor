@@ -38,6 +38,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import halo_pose
 import hek_scripts
+import shader_guard
 from mathutils import Matrix, Quaternion, Vector, kdtree
 
 # The .jms is positional and carries no section markers, so one wrong count shifts
@@ -94,8 +95,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v203"
-BUILD = "v203 - the compile script and shader checker travel as text, not as two loose .bat files"
+VERSION = "v204"
+BUILD = "v204 - a model that names a shader no bitmap can draw is refused, not written to draw white"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2821,14 +2822,49 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
     # end under it once it is stood in Halo's. The model is placed by its origin,
     # so a mesh below that origin is drawn in the ground.
     lowest = min(point[2] for point in placed)
+    shift = 0.0
     if abs(lowest) > 0.01:
         for vertex in object_data.data.vertices:
             vertex.co.z -= lowest
         object_data.data.update()
         placed = [(x, y, z - lowest) for x, y, z in placed]
         log("soles lifted %.2f units onto the floor after the pose" % -lowest)
+        shift = -lowest
         lowest = 0.0
     tallest = max(point[2] for point in placed)
+    # Where this item's own joints run after the turn, bone by bone, in world
+    # space - the answer to "which bone does this plate hang from?". It has to
+    # come from this body's joints: Halo's hand bone hangs beside the hip and
+    # its elbow sits another distance down the arm, so a plate compared to those
+    # segments is compared to a body it is not on. The joints move with the mesh
+    # (each carried by its own bone's turn, then by the lift onto the floor), so
+    # a pauldron measures against the shoulder it is strapped to and a gauntlet
+    # against the forearm it covers.
+    posture = {}
+    world_matrix = object_data.matrix_world
+    _up, kids_of = bone_tree(armature, list(by_bone))
+    for name, entry in by_bone.items():
+        head = Vector(turned_point(entry, tuple(entry["source"])))
+        head.z += shift
+        halo = armature.data.bones.get(name)
+        tail = None
+        kids = [child for child in (kids_of.get(name) or ()) if child in by_bone]
+        if kids and halo is not None:
+            want = Vector(halo.tail_local)
+
+            def ends_in(child, want=want):
+                other = armature.data.bones.get(child)
+                return (Vector(other.head_local) - want).length if other else 1e9
+
+            best = min(kids, key=ends_in)
+            tail = Vector(turned_point(entry, tuple(by_bone[best]["source"])))
+            tail.z += shift
+        if tail is None or (tail - head).length < 1e-6:
+            span = (Vector((0.0, 0.0, 1.0)) if halo is None else
+                    (armature.matrix_world @ halo.tail_local)
+                    - (armature.matrix_world @ halo.head_local))
+            tail = head + span
+        posture[name] = (tuple(world_matrix @ head), tuple(world_matrix @ tail))
     line = ("%d joints, %d plate vertex(es) on one bone each, worst plate edge "
             "x%.2f over %d edge(s), worst edge within one part over 1 cm x%.2f "
             "(anywhere x%.2f), arms in from %.1f to %.1f on y, %.2f m tall, "
@@ -2840,7 +2876,7 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
     return {"worst": worst, "worst_plate": worst_plate,
             "height": tallest / HALO_UNITS_PER_METRE,
             "arms_before": span_before, "arms_after": span_after,
-            "lines": ["biped pose : " + line]}
+            "joints": posture, "lines": ["biped pose : " + line]}
 
 
 def retarget_body(object_data, armature, fit=1.0):
@@ -2911,14 +2947,70 @@ def rig_audit(object_data, armature):
     return line
 
 
-def rebind(object_data, armature, rigid=False):
+def audit_reach(object_data, armature, joints):
+    """Count vertices riding a bone they have not reached *when another fits*.
+
+    Sitting behind a bone's head is not a fault by itself - a pauldron wraps
+    above the shoulder joint and rides the upper arm, which is exactly right.
+    The fault is riding a bone whose head the vertex is behind *while another
+    bone's segment fits it better*: that is the shoulder padding on the forearm
+    (turned about the elbow eleven units away, landing beside the shoulder as a
+    flat fin) and the lower-arm shell on the hand (turned about the wrist, the
+    mangled forearm) - the vertex is flung by a bone it is not on. The binding
+    must leave none of those, so the count is written into the report.
+    """
+    if not joints:
+        return None
+    world = object_data.matrix_world
+    groups = {group.index: group.name for group in object_data.vertex_groups}
+    spans = {}
+    for name, span in joints.items():
+        spans[name] = (Vector(span[0]), Vector(span[1]))
+    counts = {}
+    for vertex in object_data.data.vertices:
+        point = world @ vertex.co
+        for entry in vertex.groups:
+            if entry.weight <= 0.001:
+                continue
+            name = groups.get(entry.group)
+            span = spans.get(name)
+            if span is None:
+                continue
+            head, tail = span
+            axis = tail - head
+            if axis.length_squared < 1e-12:
+                continue
+            mine = point_segment_distance(point, head, tail)
+            if (point - head).dot(axis) >= -0.05 * axis.length_squared:
+                continue
+            better = [other for other, (a, b) in spans.items()
+                      if other != name
+                      and point_segment_distance(point, a, b) < mine - 0.5]
+            if not better:
+                continue
+            short = name.replace("bip01 ", "")
+            counts[short] = counts.get(short, 0) + 1
+    if counts:
+        line = ("%d vertex/vertices ride a bone whose head they are behind: %s "
+                "- each of those is flung by that bone instead of carried by it"
+                % (sum(counts.values()),
+                   ", ".join("%s %d" % pair for pair in sorted(counts.items()))))
+        log("%s: %s" % (object_data.name, line))
+    else:
+        line = ("every vertex rides a bone it has reached - none is behind its "
+                "own bone's head")
+        log("%s: %s" % (object_data.name, line))
+    return line
+
+
+def rebind(object_data, armature, rigid=False, joints=None):
     """Skin again from scratch, so a re-fitted mesh does not keep old weights."""
     for group in list(object_data.vertex_groups):
         object_data.vertex_groups.remove(group)
     for modifier in list(object_data.modifiers):
         if modifier.type == "ARMATURE":
             object_data.modifiers.remove(modifier)
-    return skin(object_data, armature, rigid=rigid)
+    return skin(object_data, armature, rigid=rigid, joints=joints)
 
 
 # ------------------------------------------------------------------- skinning
@@ -6739,7 +6831,8 @@ def drop_floaters(object_data):
     return len(drop)
 
 
-def skin(object_data, armature, influences=2, rigid=False, given=None):
+def skin(object_data, armature, influences=2, rigid=False, given=None,
+         joints=None):
     """Distance weighting against the biped, so shells and open meshes work.
 
     Bone heat weighting fails on the single-sided shells most avatar items are,
@@ -6755,13 +6848,26 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
     names = list(segments)
     mesh = object_data.data
     world = object_data.matrix_world
+    # Where each bone actually runs on THIS body. Halo's segments are a
+    # different body's: its hand bone hangs beside the hip and its elbow sits
+    # another distance down the arm, so binding by them put a shoulder pauldron
+    # on the forearm - eleven units above the elbow the forearm bone starts at,
+    # so the turn flung it out as a flat fin beside the shoulder - and put the
+    # whole lower-arm shell on the hand, which turns it about the wrist and is
+    # the mangled forearm. ``joints`` is the item's own joints carried into
+    # Halo's pose by the same turns the mesh gets (stand_in_halo_pose), so a
+    # plate is measured against the joint it actually hangs from.
+    measure = {}
+    for name, span in (joints or segments).items():
+        measure[name] = (Vector(span[0]), Vector(span[1]))
+    measured = [name for name in names if name in measure]
 
     if rigid:
         votes = {}
         for vertex in mesh.vertices:
             point = world @ vertex.co
-            nearest = min(names,
-                          key=lambda name: point_segment_distance(point, *segments[name]))
+            nearest = min(measured if measured else names,
+                          key=lambda name: point_segment_distance(point, *measure[name]))
             votes[nearest] = votes.get(nearest, 0) + 1
         chosen = max(votes, key=votes.get)
         object_data.vertex_groups.new(name=chosen).add(
@@ -6792,8 +6898,9 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
             nearest = [dict(ride) for ride in given]
         for vertex in (mesh.vertices if given is None else ()):
             point = world @ vertex.co
-            ridden = min(names, key=lambda name: point_segment_distance(
-                point, *segments[name]))
+            ridden = min(measured if measured else names,
+                         key=lambda name: point_segment_distance(
+                             point, *measure[name]))
             # A point past the far end of a bone is not on that bone any more:
             # it is past the joint the bone ends in, which is where the next
             # bone takes over. Shaped armour makes this visible - a pauldron
@@ -6801,26 +6908,57 @@ def skin(object_data, armature, influences=2, rigid=False, given=None):
             # nearest thing to it while the plate actually hangs off the arm -
             # and weighting it to the clavicle leaves the pad on the chest
             # while the arm swings out from under it. Same at the near end.
-            for _step in range(2):
-                head, tail = segments[ridden]
+            # A vertex never rides a bone it has not reached. A point behind a
+            # bone's head belongs to the bone that carries it, and the walk
+            # keeps going up until that bone's head too is behind the point; a
+            # point past a bone's far end belongs to the bone that joint leads
+            # to. Two steps were not enough - a pauldron can be two bones above
+            # the one that happened to be nearest - and it is this rule that
+            # stops a shoulder plate taking the elbow's bone and a lower-arm
+            # shell taking the wrist's.
+            for _step in range(len(measured) or len(names)):
+                head, tail = measure[ridden]
                 axis = tail - head
                 long_enough = axis.length_squared
                 if long_enough < 1e-12:
                     break
                 how_far = (point - head).dot(axis) / long_enough
-                if how_far > 1.0 and children.get(ridden):
-                    ridden = min(children[ridden],
-                                 key=lambda name: (segments[name][0] - tail).length)
-                elif how_far < 0.0 and parent.get(ridden):
-                    ridden = parent[ridden]
+                # The move is only taken when the bone it moves to fits the
+                # vertex better than the one it is on. A hip point sits below
+                # the pelvis' own head and belongs to the pelvis all the same;
+                # a shoulder pauldron above the elbow fits the upper arm far
+                # better than the forearm, and that is the difference this rule
+                # is for.
+                if how_far > 1.0:
+                    onward = [name for name in (children.get(ridden) or ())
+                              if name in measure]
+                    if not onward:
+                        break
+                    best = min(onward, key=lambda name: point_segment_distance(
+                        point, *measure[name]))
+                    if (point_segment_distance(point, *measure[best])
+                            >= point_segment_distance(point, *measure[ridden])):
+                        break
+                    ridden = best
+                elif how_far < 0.0:
+                    up = parent.get(ridden)
+                    if not up or up not in measure:
+                        break
+                    if (point_segment_distance(point, *measure[up])
+                            >= point_segment_distance(point, *measure[ridden])):
+                        break
+                    ridden = up
                 else:
                     break
             allowed = family[ridden]
             scored = sorted(
                 ((point_segment_distance(point, head, tail), name)
-                 for name, (head, tail) in segments.items()
+                 for name, (head, tail) in measure.items()
                  if name in allowed),
                 key=lambda pair: pair[0])[:influences]
+            if not scored:
+                scored = [(point_segment_distance(point, *measure[ridden]),
+                           ridden)]
             nearest.append({name: 1.0 / max(distance, 1e-4) ** 2
                             for distance, name in scored})
         weights = smooth_by_position(nearest, mesh, kin=family)
@@ -7039,6 +7177,65 @@ def jms_node_rows(armature):
     return order, index_of, rows, checksum
 
 
+def shader_gaps(object_data, most=48):
+    """Every material this model names that its shader cannot be drawn with.
+
+    Read from the material's own node tree, and from its bitmap where the
+    material's own faces point: a face sheet that was never written leaves the
+    item's own atlas padding blank under the face, and that samples as one
+    colour (see shader_guard). A body sheet of one flat colour is the item's own
+    paint and is not a fault.
+
+    Returns [(material name, why)] - empty when every shader the model names has
+    a base map behind it.
+    """
+    mesh = object_data.data
+    if not mesh.materials:
+        return [("(no material)", "the model names no material at all")]
+    layers = list(mesh.uv_layers)
+    gaps = []
+    for index in sorted({polygon.material_index for polygon in mesh.polygons}):
+        slot = mesh.materials[index] if index < len(mesh.materials) else None
+        name = (slot.name if slot is not None else "(no material)")
+        image = None
+        if slot is not None and slot.use_nodes and slot.node_tree:
+            for node in slot.node_tree.nodes:
+                if node.type == "TEX_IMAGE" and node.image is not None:
+                    image = node.image
+                    break
+        if image is None:
+            gaps.append((name, shader_guard.gap(name, False, 0)))
+            continue
+        width = image.size[0] if image.size else 0
+        height = image.size[1] if image.size else 0
+        if width <= 0 or height <= 0:
+            gaps.append((name, shader_guard.gap(name, True, 0)))
+            continue
+        colours = set()
+        if layers:
+            try:
+                pixels = list(image.pixels)
+            except (RuntimeError, ValueError):  # an image Blender never loaded
+                pixels = []
+            faces = [polygon for polygon in mesh.polygons
+                     if polygon.material_index == index]
+            step = max(1, len(faces) // max(most, 1))
+            for polygon in faces[::step]:
+                if not polygon.loop_indices:
+                    continue
+                uv = layers[0].data[polygon.loop_indices[0]].uv
+                x = int((uv[0] % 1.0) * (width - 1))
+                y = int((uv[1] % 1.0) * (height - 1))
+                at = (y * width + x) * 4
+                if at + 2 < len(pixels):
+                    colours.add(tuple(round(value, 2)
+                                      for value in pixels[at:at + 3]))
+        why = shader_guard.gap(name, True, len(colours))
+        if why:
+            gaps.append((name, why))
+    return gaps
+
+
 def export_jms(object_data, armature, path, arms=False, two_weights=True):
     """Halo CE's text model format, laid out the way tool.exe reads it.
 
@@ -7074,6 +7271,15 @@ def export_jms(object_data, armature, path, arms=False, two_weights=True):
     the weapon stops drawing. The export raises instead of writing such a
     file.
     """
+    # The model asks the game for one shader per material, and a shader whose
+    # base map is blank compiles, bakes and draws white for good - the white
+    # face. A model asking for something this run cannot satisfy is not written
+    # at all, and the reason goes into report.txt instead of into a map.
+    gaps = shader_gaps(object_data)
+    if gaps:
+        line = shader_guard.refusal(gaps, object_data.name)
+        log("%s: %s" % (object_data.name, line))
+        return [line]
     mesh_data = object_data.data
     bones = list(armature.data.bones)
     by_name = {bone.name: bone for bone in bones}
@@ -8674,7 +8880,8 @@ def main():
                     # node - the one a weapon is placed from - moved nothing.
                     # The bones run through the limbs now, so the skin is
                     # measured again on the body as it stands.
-                    rebound = rebind(merged, armature, rigid=prop)
+                    rebound = rebind(merged, armature, rigid=prop,
+                                     joints=stood.get("joints"))
                     if rebound:
                         record["binding"] = rebound
                         log("%s: re-skinned on the stood body - %s"
@@ -8712,6 +8919,13 @@ def main():
                 if single:
                     record["rig"] = (rig_audit(merged, armature) + " - " + single)
                     log("%s: plates ride one node - %s" % (merged.name, single))
+            # What the binding ended up as, in the one number that shows a flung
+            # plate: a vertex behind its own bone's head is turned about a joint
+            # it is nowhere near.
+            reach_joints = (stood or {}).get("joints") if standing else None
+            reach = audit_reach(merged, armature, reach_joints)
+            if reach:
+                record["reach"] = reach
             shape = shape_audit(merged, authored)
             if shape:
                 record["shape"] = shape["line"]
