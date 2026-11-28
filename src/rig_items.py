@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v186"
-BUILD = "a white surface is a shader tag, and the build now says which one"
+VERSION = "v187"
+BUILD = "the shader names are lower case, and the map holds its own copy"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -308,10 +308,20 @@ TAG_PREFIX = [True]
 
 
 def tag_name(stem, part):
-    """The name this model asks tool.exe for: "face", or "<item> face"."""
+    """The name this model asks tool.exe for: "face", or "<item> face".
+
+    Lower case, always: a Halo tag path carries none - the HEK's own guide says
+    "always use lower-case names" - and this string is a tag's name, not a
+    label. tool.exe looks the shader up by the name the .jms spells, so a model
+    that asks for "UNSC Marine Armor face" is asking for a tag with capitals in
+    it, and a tags folder holding "unsc marine armor face.shader_model" answers
+    that with the empty shader - the white surface. The item's title keeps its
+    capitals everywhere else (folders, files, the .blend); only the shader name
+    drops them.
+    """
     if TAG_PREFIX[0]:
-        return "%s %s" % (stem, part)
-    return part
+        return ("%s %s" % (stem, part)).lower()
+    return part.lower()
 
 
 # The carrier .bat streams every [rig] line as Blender writes it, so the
@@ -548,7 +558,11 @@ def name_item_materials(meshes, bitmap):
     named = []
     for index, material in batches:
         was = material.name
-        material.name = "%s %d" % (bitmap, index) if several else bitmap
+        # Lower case, because this name is the shader tag's name: tool.exe
+        # finds the tag by the spelling in the .jms, and a tag path carries no
+        # capitals.
+        material.name = (("%s %d" % (bitmap, index) if several else bitmap)
+                         .lower())
         named.append("%s (was %s)" % (material.name, was))
     log("item material %s" % ", ".join(named))
     return [material for _, material in batches]
@@ -1248,6 +1262,7 @@ def name_remaining_materials(object_data, bitmap, stem):
         counts[polygon.material_index] = counts.get(polygon.material_index, 0) + 1
     if not counts:
         return []
+    bitmap = bitmap.lower()
     taken = {bitmap, tag_name(stem, "face"), tag_name(stem, "body")}
     biggest = max(counts, key=counts.get)
     named = []
@@ -5875,7 +5890,8 @@ def name_materials_by_bitmap(object_data, stem):
     face_slot = None
     if rest:
         face_slot = max(rest, key=lambda index: tall[index] / counts[index])
-    wanted = {largest: "%s base map" % stem}
+    # Lower case: this name is the shader tag's name, and a tag path has none.
+    wanted = {largest: ("%s base map" % stem).lower()}
     if face_slot is not None:
         wanted[face_slot] = tag_name(stem, "face")
     # Every other material is a part of the body the item also brought - a strap,
@@ -8137,7 +8153,8 @@ def main():
                             and any(node.type == "TEX_IMAGE" and node.image
                                     and node.image.name.startswith("%s %s." % (stem, texture))
                                     for node in slot.material.node_tree.nodes)
-                            and slot.material.name == "%s %s" % (stem, suffix)
+                            and slot.material.name.lower()
+                            == ("%s %s" % (stem, suffix)).lower()
                             for slot in merged.material_slots)]
             # tool.exe takes a power of two a side and the export is not built
             # to that rule - a 360sona face is 765x930 - so the HEK copy is

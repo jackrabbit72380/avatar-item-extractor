@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v186.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v187.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1221,16 +1221,17 @@ models, and logs everything to a `.log` of the same name beside it. Passing
    belongs together.
 
    Every material is named after the bitmap it wraps, and its shader has that
-   name. The item's own is `<item> base map` - `UNSC Marine Armor base map` for
-   the Marine armour - so its shader is `UNSC Marine Armor base map.shader_model`,
-   with `<item> multipurpose` as its multipurpose map. An item built with
-   `--port` carries two more, `<item> face` and `<item> body`, each with its
-   own bitmap of that name in every build's `bitmaps` and each needing a
-   `shader_model` called the same thing. The `fp\` arms carry those same
-   material names, so these shaders are theirs as well - there is no second set
-   to make and no second folder of maps to compile. The spaces are part of the
-   name, in the
-   `.jms` and in the tag; the tag has to match it exactly. Leave those two
+   name - in lower case, because a tag path is. The item's own is
+   `<item> base map` - `unsc marine armor base map` for the Marine armour, where
+   the bitmap file is still `UNSC Marine Armor base map.tif` - so its shader is
+   `unsc marine armor base map.shader_model`, with `<item> multipurpose` as its
+   multipurpose map. An item built with `--port` carries two more,
+   `unsc marine armor face` and `unsc marine armor body`, each with its own
+   bitmap in every build's `bitmaps` and each needing a `shader_model` of that
+   name. The `fp\` arms carry those same material names, so these shaders are
+   theirs as well - there is no second set to make and no second folder of maps
+   to compile. The spaces are part of the name, in the `.jms` and in the tag;
+   the tag has to match it exactly, capitals and all. Leave those two
    sheets' multipurpose maps empty unless you want the face to take the team
    colour: it is skin, and a team colour on it flickers with the armour's.
 
@@ -1251,25 +1252,37 @@ looks that tag up when it draws the surface. When the tag is not there,
 `.gbxmodel`. An empty shader has no base map, so the engine falls back to its
 white shader - and compiling the model again cannot undo it, because the empty
 tag is sitting there now. That is what a white face is, and it is never a model
-problem: the built `.jms` names the face material `UNSC Marine Armor face`, its
+problem: the built `.jms` names the face material `unsc marine armor face`, its
 faces ride `bip01 head`, its UVs cover the sheet, and that sheet compiles into
 `bitmaps\` as `UNSC Marine Armor face.bitmap`.
+
+**The shader names are lower case.** A Halo tag path carries none - the HEK's own
+guide says "always use lower-case names" - and the material name in a `.jms` is
+the tag's name, not a label, so the model asks tool.exe for
+`unsc marine armor face`. `UNSC Marine Armor face.shader_model` is a different
+name: a kit that compares the spelling finds nothing under the lower-case name
+and writes the empty shader, which is the white face. So the tags, not the
+model, are spelled in lower case; the item's title keeps its capitals in every
+folder and file name. A capitals tag made for an earlier build is fixed by
+renaming the file to `unsc marine armor face.shader_model` - same folder, same
+contents.
 
 So the compile script checks the tags **before** it compiles anything. A tag
 that is missing is printed with the bitmap it draws with, and the model is left
 alone - no empty shader can be written. To get the face back:
 
-1. `tags\UNSC Marine Armor face.shader_model` - *base map* =
+1. `tags\unsc marine armor face.shader_model` - *base map* =
    `UNSC Marine Armor\bitmaps\UNSC Marine Armor face`.
-2. `tags\UNSC Marine Armor base map.shader_model` and
-   `tags\UNSC Marine Armor body.shader_model` - *base map* =
+2. `tags\unsc marine armor base map.shader_model` and
+   `tags\unsc marine armor body.shader_model` - *base map* =
    `UNSC Marine Armor\bitmaps\UNSC Marine Armor body`.
 3. If an empty tag of one of those names is already in `tags\`, delete it before
    making the real one: the empty one is what the model is pointing at.
 4. Run the compile script again, then **rebuild the map file**. The tag
    references and the bitmap pixels are packed into the map at that point, so a
    map built before the shaders existed keeps the white face however many times
-   the model is compiled.
+   the model is compiled - compiling the model changes the model *tag*, and the
+   map holds its own copy of everything it draws.
 
 Run **`Check the shaders.bat`**, beside this build, and it reads the tags that
 are actually on this computer: for each material it says whether a
@@ -1330,7 +1343,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v186.bat` and
+`Extract UNSC Marine Armor Avatar-v187.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1345,7 +1358,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v186.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v187.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1395,9 +1408,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v186.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v187.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v186.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v187.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it

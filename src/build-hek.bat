@@ -62,6 +62,12 @@ rem  draws white in game for good. Make each shader once (README.md, "Building i
 rem  in Halo's editing kit") and run this again - one-time, the same shader for
 rem  every copy of the item.
 rem
+rem  Those names are LOWER CASE - "unsc marine armor face", not "UNSC Marine
+rem  Armor face" - because a tag path is, and tool.exe finds the shader by the
+rem  name the .jms spells. The names in "shaders to make.txt" are exactly what
+rem  the model asks for, so build the tags under the spellings printed there and
+rem  no other.
+rem
 rem  Usage: "Compile <item> Avatar.bat" [pc|xbox]     (pc when nothing is given)
 rem ===========================================================================
 
@@ -228,4 +234,13 @@ if exist "%HEK%\data\%BUILD%\fp\models\*.jms" (
   tool.exe model "%BUILD%\fp" >>"%LOG%" 2>&1
   if errorlevel 1 echo   fp arms model reported an error for %BUILD% - see the log
 )
+rem  A map carries its own copy of every tag it uses - the model, the shader
+rem  references, the bitmap pixels - packed in when the map was built. Compiling
+rem  a model tag again changes the tag and nothing else, so a .map built before
+rem  this run keeps the model and the shaders it was built with. That is why a
+rem  model can be compiled ten times over a fixed shader and still draw white.
+rem  Build the map again (tool build-cache-file "<scenario>" classic) after this.
+echo.
+echo   Compiled %BUILD%. The game draws a model from the .map it was built into,
+echo   not from tags\, so build the map again to see the change.
 exit /b 0

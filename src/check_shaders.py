@@ -183,6 +183,23 @@ def main():
                             print("    %s  (%s)" % (path, kind))
             continue
         print("  tag: %s" % model)
+        # The name inside the tag file and the spelling of its file both answer
+        # to the material - but tool.exe looks the shader up by the material
+        # name as the .jms spells it, so a tag saved in capitals is a tag of a
+        # different name to a kit that compares the spelling. Renaming the file
+        # is the whole fix: same folder, same contents, lower case.
+        on_disk = os.path.basename(model)
+        if on_disk.lower().endswith(".shader_model"):
+            on_disk = on_disk[: -len(".shader_model")]
+        if on_disk != name:
+            worst = max(worst, 2)
+            print("  ... but its name on disk is %r, and the model asks for %r."
+                  % (on_disk, name))
+            print("  tool.exe finds a shader by the material name exactly as the .jms")
+            print("  spells it, so a tag named in capitals can leave the model with the")
+            print("  empty shader - the white surface. Rename it to")
+            print("  %s.shader_model (same folder, same contents) and" % name)
+            print("  compile the model again, then rebuild the map.")
         used.setdefault(item, []).append(model)
         paths = paths_in(model)
         leaf = bitmap.rsplit("\\", 1)[-1].lower()
