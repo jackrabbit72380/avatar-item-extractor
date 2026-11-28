@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v200"
-BUILD = "one turn, one pivot"
+VERSION = "v201"
+BUILD = "plates are exact, so the report names what is not"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2683,6 +2683,7 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
         turn = root["turn"]
         far = {}
         count = {}
+        far_plate = {}
         for index, point in enumerate(points):
             mine = rides.get(index)
             if mine:
@@ -2700,6 +2701,14 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
             away = (Vector(placed[index]) - want).length
             far[mine] = max(far.get(mine, 0.0), away)
             count[mine] = count.get(mine, 0) + 1
+            if rides.get(index):
+                far_plate[mine] = max(far_plate.get(mine, 0.0), away)
+        if far_plate and max(far_plate.values()) > 0.05:
+            log("%s: arm %s plates off the arm's rigid turn - %s"
+                % (object_data.name, side,
+                   ", ".join("%s %.1f" % (name.replace("bip01 %s " % side, ""),
+                                         far_plate[name])
+                             for name in sorted(far_plate))))
         if far:
             log("%s: arm %s, how far the armour sits from the arm's own rigid "
                 "turn about the shoulder - %s"
