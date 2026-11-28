@@ -54,10 +54,13 @@ rem  names, or this skeleton in another order, is the "the model ... and the
 rem  animation graph ... don't match" failure; no graph at all is the "units
 rem  must have models and animation graphs" failure.
 rem
-rem  The model needs a shader tag named after each .jms material, and tool.exe
-rem  will ask for one if it cannot find it. Make that shader once (README.md,
-rem  "Building it in Halo's editing kit") and run this again: the shader is the
-rem  same for every copy of the item, so it is a one-time step.
+rem  The model needs a shader tag named after each .jms material. Those tags are
+rem  checked before the model is compiled, and a missing one is named (with the
+rem  bitmap it draws with) and nothing is built: tool.exe would write an EMPTY
+rem  shader under that name, bake the reference into the model, and that surface
+rem  draws white in game for good. Make each shader once (README.md, "Building it
+rem  in Halo's editing kit") and run this again - one-time, the same shader for
+rem  every copy of the item.
 rem
 rem  Usage: "Compile <item> Avatar.bat" [pc|xbox]     (pc when nothing is given)
 rem ===========================================================================
@@ -147,6 +150,32 @@ xcopy /E /I /Y "%OUT%extracted for hek users\%ORDER%\data\%BUILD%" "%HEK%\data\%
 echo -- bitmaps "%BUILD%\bitmaps" >>"%LOG%"
 tool.exe bitmaps "%BUILD%\bitmaps" >>"%LOG%" 2>&1
 if errorlevel 1 echo   bitmap compile reported an error for %BUILD% - see the log
+rem  A material with no shader tag is not an error to tool.exe: it asks which
+rem  type to make, writes an EMPTY shader under that name, and bakes the
+rem  reference into the .gbxmodel. An empty shader has no base map, so the engine
+rem  draws that surface with its white shader - and compiling the model again
+rem  does not undo it, because the empty tag is there now. That is the white
+rem  face: never a missing texture, always a missing or empty shader tag.
+rem  So every tag is checked first, and the model is left alone until they all
+rem  exist. "shaders to make.txt" beside this file lists them as
+rem  <item>|<shader tag>|<bitmap tag>.
+set "NEEDSHADER="
+if exist "%OUT%shaders to make.txt" for /f "usebackq tokens=1,2,3 delims=|" %%A in ("%OUT%shaders to make.txt") do if /i "%%A"=="%BUILD%" if not exist "%HEK%\tags\%%B.shader_model" if not exist "%HEK%\tags\%BUILD%\%%B.shader_model" (
+  echo   needs a shader tag: %%B    base map: %%C
+  echo shader missing: %%B    base map: %%C >>"%LOG%"
+  set "NEEDSHADER=1"
+)
+if defined NEEDSHADER (
+  echo.
+  echo   Nothing was compiled for %BUILD%, on purpose. tool.exe would write an
+  echo   empty shader under each name above and bake it into the model, and a
+  echo   shader with no base map draws that surface white in game - the white
+  echo   face. Make each one in Guerilla: New, shader_model, tag path
+  echo   tags\NAME.shader_model, base map set to the bitmap named beside it.
+  echo   Then run this file again. It is a one-time step.
+  echo not compiled - the shader tags above are missing >>"%LOG%"
+  exit /b 0
+)
 echo -- model "%BUILD%" >>"%LOG%"
 tool.exe model "%BUILD%" >>"%LOG%" 2>&1
 if errorlevel 1 echo   model compile reported an error for %BUILD% - if it asked for a shader, make that shader tag and run this again

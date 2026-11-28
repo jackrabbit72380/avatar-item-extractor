@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v184"
-BUILD = "the body stands in the pose Halo's bones hold"
+VERSION = "v185"
+BUILD = "a missing shader tag stops the model, so the face cannot bake white"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -7324,20 +7324,25 @@ def report_text(options, records, stems, armature, nxe=None):
                      " game rather than an error - so make one for each name below."
                      % len(record.get("materials") or []))
         for material in record.get("materials") or []:
-            lines.append("              - \"%s\"  ->  shader_model, base map = %s"
-                         % (material, record.get("material_maps", {}).get(
-                             material, "%s base map.tif" % stem)))
+            sheet = record.get("material_maps", {}).get(
+                material, "%s base map.tif" % stem)
+            lines.append("              - \"%s\"  ->  tags\\%s.shader_model,"
+                         " base map = tags\\%s\\bitmaps\\%s.bitmap"
+                         % (material, material, stem,
+                            os.path.splitext(os.path.basename(sheet))[0]))
         if os.path.exists(os.path.join(options["out"], "%s face.png" % stem)):
             lines.append("  face      : the head is material \"%s\", bound to "
                          "%s face.tif" % (tag_name(stem, "face"), stem))
-            lines.append("              Guerilla: a shader_model whose tag name is"
-                         " exactly \"%s\", base map = %s face.tif,"
-                         " assigned to that material."
-                         % (tag_name(stem, "face"), stem))
-            lines.append("              Without that tag the engine has nothing to draw"
-                         " the head with and uses its stock white")
-            lines.append("              shader - a white face here means a missing shader,"
-                         " not a missing texture.")
+            lines.append("              Guerilla: a shader_model at tags\\%s.shader_model,"
+                         " base map =" % tag_name(stem, "face"))
+            lines.append("              tags\\%s\\bitmaps\\%s face.bitmap, assigned to"
+                         " that material." % (stem, stem))
+            lines.append("              With no tag of that name the engine draws the"
+                         " head with its stock white shader.")
+            lines.append("              So a white face means a missing or empty shader"
+                         " tag, not a missing texture - and if")
+            lines.append("              tool.exe has already made an empty one, delete it"
+                         " before making the real one.")
         if record.get("arms_file"):
             lines.append("  fp arms   : %s" % record["arms_file"])
             lines.append("              %s" % (record.get("arms_binding")
@@ -8318,6 +8323,31 @@ def main():
     # user the same, while the two sheets sat at the top looking like leftovers.
     organise(out, stems)
     log("sorted every file into the folder of the program that opens it")
+
+    # What the compile script checks before it lets tool.exe build a model.
+    # A material with no shader tag is not an error to tool.exe: it asks which
+    # type to make, writes an EMPTY tag under that name and bakes the reference
+    # into the .gbxmodel, and an empty shader has no base map - so that surface
+    # draws white in game and compiling the model again cannot undo it. Written
+    # after organise(), because the sorter does not know this file and would
+    # carry it away from the script that reads it.
+    wanted = []
+    for row in rigged:
+        record = row[0]
+        stem_now = item_stem(record)
+        for material in record.get("materials") or []:
+            sheet = record.get("material_maps", {}).get(
+                material, "%s base map.tif" % stem_now)
+            bitmap = os.path.splitext(os.path.basename(sheet))[0]
+            wanted.append("%s|%s|%s\\bitmaps\\%s"
+                          % (stem_now, material, stem_now, bitmap))
+    if wanted:
+        with open(os.path.join(out, "shaders to make.txt"),
+                  "w", encoding="utf-8", newline="\r\n") as handle:
+            for line in wanted:
+                handle.write(line + "\n")
+        log("wrote \"shaders to make.txt\": %d shader tag(s), checked by the "
+            "compile script before tool.exe builds a model" % len(wanted))
     return 0
 
 

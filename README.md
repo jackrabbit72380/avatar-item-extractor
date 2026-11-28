@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v184.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v185.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -1242,6 +1242,38 @@ models, and logs everything to a `.log` of the same name beside it. Passing
 5. **Map.** `tool build-cache-file "<scenario>" classic`, which packs the tags
    and the bitmap pixels into the map file.
 
+#### Why the head draws white, and what makes it appear
+
+A compiled model holds no texture. It holds the *name* of a shader, and the game
+looks that tag up when it draws the surface. When the tag is not there,
+`tool.exe` does not fail: it asks which type to make, writes an **empty**
+`shader_model` under the material's name and bakes that reference into the
+`.gbxmodel`. An empty shader has no base map, so the engine falls back to its
+white shader - and compiling the model again cannot undo it, because the empty
+tag is sitting there now. That is what a white face is, and it is never a model
+problem: the built `.jms` names the face material `UNSC Marine Armor face`, its
+faces ride `bip01 head`, its UVs cover the sheet, and that sheet compiles into
+`bitmaps\` as `UNSC Marine Armor face.bitmap`.
+
+So the compile script checks the tags **before** it compiles anything. A tag
+that is missing is printed with the bitmap it draws with, and the model is left
+alone - no empty shader can be written. To get the face back:
+
+1. `tags\UNSC Marine Armor face.shader_model` - *base map* =
+   `UNSC Marine Armor\bitmaps\UNSC Marine Armor face`.
+2. `tags\UNSC Marine Armor base map.shader_model` and
+   `tags\UNSC Marine Armor body.shader_model` - *base map* =
+   `UNSC Marine Armor\bitmaps\UNSC Marine Armor body`.
+3. If an empty tag of one of those names is already in `tags\`, delete it before
+   making the real one: the empty one is what the model is pointing at.
+4. Run the compile script again, then **rebuild the map file**. The tag
+   references and the bitmap pixels are packed into the map at that point, so a
+   map built before the shaders existed keeps the white face however many times
+   the model is compiled.
+
+The exact names and maps are in `report.txt`, in the compile window, and in
+`shaders to make.txt` beside the compile script.
+
 ### What the engine reads, and where a decal can go
 
 A `shader_model` has four texture inputs - base map, multipurpose map, detail
@@ -1289,7 +1321,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v184.bat` and
+`Extract UNSC Marine Armor Avatar-v185.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1304,7 +1336,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v184.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v185.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1354,9 +1386,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v184.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v185.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v184.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v185.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
