@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v198"
-BUILD = "report.txt says whether every joint is inside the mesh"
+VERSION = "v199"
+BUILD = "touching plates move together"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2099,6 +2099,11 @@ BODY_FIT_INFLUENCES = 4
 # bone whole, so it cannot bend, tear or shear.
 SHELL_SINGLE_BONE_MAX = 600
 
+# Plates closer together than this touch: they are one piece of armour in two
+# shells, a pad and the strap under it. Touching plates move together, so the
+# one that picked the wrong bone is the one that changes, not the many.
+PLATE_TOUCH = 3.0
+
 # Rounds of neighbour averaging the FABRIC's own blend gets before the bind pose
 # is applied. A cliff between two vertices of one sleeve - one at 0.85 collar and
 # its neighbour at 0.85 arm - tears the edge between them when the arms come
@@ -2690,6 +2695,49 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
             % (object_data.name,
                ", ".join("%s %.1f" % (name.replace("bip01 ", ""), nearest)
                          for name, nearest in joints)))
+
+    # A plate the pose left behind shows up as a gap that was not there: two
+    # plates that touched now do not. That is measured from the model's own
+    # geometry, not supposed, and it is the one number that says whether a pad
+    # came down with the arm it belongs to.
+    shells = []
+    for piece in shell_faces(mesh):
+        indexes = set()
+        for polygon in piece:
+            indexes.update(polygon.vertices)
+        if not indexes:
+            continue
+        before = Vector((0.0, 0.0, 0.0))
+        after = Vector((0.0, 0.0, 0.0))
+        for index in indexes:
+            before += Vector(points[index])
+            after += Vector(placed[index])
+        shells.append((before / len(indexes), after / len(indexes)))
+    worst_was = worst_now = None
+    if len(shells) > 1:
+        tree = kdtree.KDTree(len(shells))
+        for number, (before, _after) in enumerate(shells):
+            tree.insert(before, number)
+        tree.balance()
+        touching = set()
+        for number, (before, _after) in enumerate(shells):
+            _co, near, _gap = tree.find(before)
+            if near != number:
+                touching.add((min(number, near), max(number, near)))
+        for one, two in touching:
+            was = (shells[one][0] - shells[two][0]).length
+            now = (shells[one][1] - shells[two][1]).length
+            if was > PLATE_TOUCH:
+                continue
+            if worst_now is None or now - was > worst_now - worst_was:
+                worst_was, worst_now = was, now
+    if worst_now is not None and worst_now - worst_was > 0.5:
+        log("%s: a gap opened between two plates that touched - %.2f units "
+            "became %.2f. One of them did not move with the other."
+            % (object_data.name, worst_was, worst_now))
+    if worst_now is not None:
+        log("%s: worst gap between two touching plates: %.2f units before, "
+            "%.2f after" % (object_data.name, worst_was, worst_now))
 
     span_before = max(abs(point[1]) for point in points)
     span_after = max(abs(point[1]) for point in placed)
@@ -4192,6 +4240,7 @@ def single_bone_rides(object_data, armature):
                 for bone in armature.data.bones if bone.name in known}
     _parent, children = bone_tree(armature, list(segments))
     plates = {}
+    pieces = []
     shells = 0
     for piece in shell_faces(object_data.data):
         if not piece:
@@ -4209,9 +4258,38 @@ def single_bone_rides(object_data, armature):
         if not tally:
             continue
         bone = plate_bone(object_data, segments, children, indexes, tally)
+        middle = matrix @ (sum((object_data.data.vertices[index].co
+                                for index in indexes), Vector((0.0, 0.0, 0.0)))
+                           / max(len(indexes), 1))
+        pieces.append((indexes, bone, middle))
+        shells += 1
+    # Plates that touch each other move together. A pad whose neighbours all ride
+    # the arm is a pad the arm carries, whatever its own middle happens to be
+    # nearest - and a pad left on the girdle while the arm goes down is exactly
+    # the plate that hangs out sideways. Only a child bone may be adopted this
+    # way, so the pull is outward along a limb and never up one.
+    for _round in range(2):
+        adopt = {}
+        for indexes, bone, middle in pieces:
+            votes = {}
+            for _other, their_bone, their_middle in pieces:
+                if their_bone == bone:
+                    continue
+                if (their_middle - middle).length > PLATE_TOUCH:
+                    continue
+                votes[their_bone] = votes.get(their_bone, 0) + 1
+            onward = [(count, name) for name, count in votes.items()
+                      if name in (children.get(bone) or ())
+                      and count >= max(votes.get(bone, 0) + 2, 2)]
+            if onward:
+                adopt[id(indexes)] = max(onward)[1]
+        if not adopt:
+            break
+        pieces = [(indexes, adopt.get(id(indexes), bone), middle)
+                  for indexes, bone, middle in pieces]
+    for indexes, bone, _middle in pieces:
         for index in indexes:
             plates[index] = bone
-        shells += 1
     missing = [index for index, name in rides.items() if name is None]
     if missing:
         matrix = armature.matrix_world
