@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v188"
-BUILD = "the build finds your shader tags wherever they sit"
+VERSION = "v189"
+BUILD = "a tag is found by name, wherever the user keeps it"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -7335,24 +7335,28 @@ def report_text(options, records, stems, armature, nxe=None):
         # Left unsaid, the engine has nothing to draw it with and falls back to
         # its stock white shader: that white face is the missing tag, not the
         # model's texture, and it looks identical to a blank map.
-        lines.append("  shaders   : the model names %d material(s). tool.exe looks for"
-                     " one shader tag per name, and a name with no tag draws WHITE in"
-                     " game rather than an error - so make one for each name below."
+        lines.append("  shaders   : the model names %d material(s). tool.exe finds a"
+                     " shader tag by NAME, anywhere under tags\\ - its own folder,"
+                     " yours, a mod folder, it makes no difference - and a name with"
+                     " no tag draws WHITE in game rather than an error, so make one"
+                     " for each name below, wherever you keep your tags."
                      % len(record.get("materials") or []))
         for material in record.get("materials") or []:
             sheet = record.get("material_maps", {}).get(
                 material, "%s base map.tif" % stem)
-            lines.append("              - \"%s\"  ->  tags\\%s.shader_model,"
-                         " base map = tags\\%s\\bitmaps\\%s.bitmap"
-                         % (material, material, stem,
+            lines.append("              - \"%s\"  ->  a shader_model called that"
+                         " (e.g. tags\\%s.shader_model), base map = a bitmap"
+                         " called %s"
+                         % (material, material,
                             os.path.splitext(os.path.basename(sheet))[0]))
         if os.path.exists(os.path.join(options["out"], "%s face.png" % stem)):
             lines.append("  face      : the head is material \"%s\", bound to "
                          "%s face.tif" % (tag_name(stem, "face"), stem))
-            lines.append("              Guerilla: a shader_model at tags\\%s.shader_model,"
-                         " base map =" % tag_name(stem, "face"))
-            lines.append("              tags\\%s\\bitmaps\\%s face.bitmap, assigned to"
-                         " that material." % (stem, stem))
+            lines.append("              Guerilla: a shader_model called \"%s\" (e.g."
+                         " tags\\%s.shader_model, or beside your own tags),"
+                         " base map = a bitmap called \"%s face\", assigned to"
+                         " that material."
+                         % (tag_name(stem, "face"), tag_name(stem, "face"), stem))
             lines.append("              With no tag of that name the engine draws the"
                          " head with its stock white shader.")
             lines.append("              So a white face means a missing or empty shader"

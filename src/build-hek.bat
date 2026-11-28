@@ -184,9 +184,11 @@ if defined NEEDSHADER (
   echo   Nothing was compiled for %BUILD%, on purpose. tool.exe would write an
   echo   empty shader under each name above and bake it into the model, and a
   echo   shader with no base map draws that surface white in game - the white
-  echo   face. Make each one in Guerilla: New, shader_model, tag path
-  echo   tags\NAME.shader_model, base map set to the bitmap named beside it.
-  echo   Then run this file again. It is a one-time step.
+  echo   face. Make each one in Guerilla: New, shader_model, in whatever folder
+  echo   you keep your tags in - tags\NAME.shader_model, or your own layout
+  echo   tags\<you>\characters\NAME.shader_model, it makes no difference, the
+  echo   NAME is what is looked up. Set its base map to the bitmap named beside
+  echo   it. Then run this file again. It is a one-time step.
   echo not compiled - the shader tags above are missing >>"%LOG%"
   exit /b 0
 )

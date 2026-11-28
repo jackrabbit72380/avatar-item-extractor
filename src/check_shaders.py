@@ -80,6 +80,24 @@ def shader_tags(tags):
     return found
 
 
+def bitmap_tags(tags):
+    """Every bitmap under tags\\, by lower-case file name: {name: [path, ...]}.
+
+    The same rule as a shader: the name is what is looked up, and the folder a
+    player keeps it in - Halo's ``characters\\<name>\\bitmaps``, their own
+    ``<name>\\characters\\...``, a mod folder - is theirs to choose.
+    """
+    found = {}
+    for root, folders, files in os.walk(tags):
+        folders[:] = [name for name in folders if not name.startswith(".")]
+        for name in files:
+            if not name.lower().endswith(".bitmap"):
+                continue
+            found.setdefault(name[: -len(".bitmap")].lower(), []).append(
+                os.path.join(root, name))
+    return found
+
+
 def model_tags(tags):
     """Every model tag under tags\\, by lower-case name: {name: [path, ...]}.
 
@@ -105,7 +123,11 @@ def paths_in(path):
     with open(path, "rb") as handle:
         data = handle.read()
     seen = []
-    for run in re.findall(rb"[\x20-\x7e]{4,64}", data):
+    # A tag path is a 256-byte field, and a user's own prefix makes it long:
+    # "jackrabbit72380\characters\UNSC Marine Armor\bitmaps\UNSC Marine Armor face"
+    # is 72 characters, so a 64-character read cut the tail off and called a base
+    # map that is there missing. Read the field, not the first line of it.
+    for run in re.findall(rb"[\x20-\x7e]{4,255}", data):
         text = run.decode("latin-1").strip()
         if "\\" not in text and "/" not in text:
             continue
@@ -168,8 +190,11 @@ def main():
     print("tags   : %s" % tags)
 
     found = shader_tags(tags)
+    bitmaps = bitmap_tags(tags)
     print()
     print("%d shader tag(s) under tags\\" % sum(len(v) for v in found.values()))
+    print("Names are looked up the way tool.exe looks them up: by name, in every")
+    print("folder - tags\\, tags\\characters\\<item>\\, tags\\<your folder>\\...")
 
     worst = 0
     used = {}
@@ -235,10 +260,22 @@ def main():
                 bitmap_tag = os.path.join(tags, path.replace("\\", os.sep) + ".bitmap")
                 if os.path.exists(bitmap_tag):
                     print("  base map: %s  (there)" % path)
+                    continue
+                # A shader's base map is a tag PATH: the engine reads it from
+                # tags\ exactly, so a bitmap of that name in the player's own
+                # folder is not this tag's base map - the reference has to name
+                # the folder the file is really in.
+                leaf = path.rsplit("\\", 1)[-1].lower()
+                found_elsewhere = bitmaps.get(leaf) or []
+                worst = max(worst, 2)
+                if found_elsewhere:
+                    print("  base map: %s  (not at that path)" % path)
+                    print("  a bitmap of that name is here: %s" % found_elsewhere[0])
+                    print("  a base map is a tag path, so set it to that path - or"
+                          " move the bitmap to tags\\%s." % path)
                 else:
-                    worst = max(worst, 2)
-                    print("  base map: %s  (MISSING - no %s.bitmap under tags\\%s)"
-                          % (path, path.rsplit("\\", 1)[-1], os.path.dirname(path)))
+                    print("  base map: %s  (MISSING - no %s.bitmap anywhere under"
+                          " tags\\)" % (path, path.rsplit("\\", 1)[-1]))
                     print("  a base map that is not there draws white, so this is it.")
 
     # The two things that are right but out of date, which no amount of making
