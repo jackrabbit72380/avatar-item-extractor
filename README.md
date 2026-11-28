@@ -1,6 +1,6 @@
 # Avatar Item Extractor
 
-Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v183.bat`
+Put your Xbox 360 avatar items beside `Extract UNSC Marine Armor Avatar-v184.bat`
 - one folder
 per item, named after its container, as they arrive from a download - then
 double-click it. That is the whole procedure: it finds the items itself and
@@ -996,8 +996,8 @@ the avatar's, which turned a 1.85 m avatar into 1.45 m.
 
 The trade is honest and worth stating plainly: the joint fit exists so that the
 mesh's joints sit on the bones Halo animates, and `--keep-shape` does not do
-that. The mesh keeps the pose it was authored in - arms out, for a typical
-export - and its limb lengths are the avatar's, not Halo's, so an animation
+that. The body is still stood in Halo's pose (above), so it stands the way the
+biped does - but its limb lengths are the avatar's, not Halo's, and an animation
 that bends Halo's knees and shoulders will move limbs that are the wrong length
 for it. The model looks like the file; it does not move like the biped.
 
@@ -1289,7 +1289,7 @@ python3 tools/test_all.py
 ```
 
 `test_all.py` unpacks the payload of the shipped
-`Extract UNSC Marine Armor Avatar-v183.bat` and
+`Extract UNSC Marine Armor Avatar-v184.bat` and
 runs the whole suite against it, so a green run proves the artifact itself is
 intact rather than a copy of it beside the repository.
 
@@ -1304,7 +1304,7 @@ skinned to them, and without them nothing can be rigged.
 Rebuilding the shipped `.bat` from the sources needs only Python:
 
 ```sh
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v183.bat" src --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v184.bat" src --rigs src/rig
 ```
 
 `--rigs` is not optional, and `pack` refuses to write unless the rebuild decodes
@@ -1354,9 +1354,9 @@ records every number either half measured.
 Neither script is needed to run the tool.
 
 ```sh
-python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v183.bat" src/
+python3 tools/payload.py unpack "Extract UNSC Marine Armor Avatar-v184.bat" src/
 # edit src/extract_items.py, then put it back - --rigs is not optional:
-python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v183.bat" src/ --rigs src/rig
+python3 tools/payload.py pack "Extract UNSC Marine Armor Avatar-v184.bat" src/ --rigs src/rig
 ```
 
 `pack` decodes its own output and refuses to write unless it matches the files it
@@ -1591,37 +1591,51 @@ when it has no texture), the face and neck take their sheet's name. A `.jms`
 material name is the shader `tool.exe` looks for, so a suit left called `hair_6`
 would have asked for a shader nobody would think to make.
 
-## The body keeps the pose the item authored
+## The body stands in the pose Halo's bones hold
 
-Halo's animations carry a node transform for every frame, so a model that sits in
-a different rest pose from the skeleton its graph drives is turned by that
-difference every frame. This avatar is authored in a T-pose with its knees apart
-while Halo's biped holds its arms down, and a build once shipped a pass that
-turned the armour into Halo's rest pose. **That pass is not on the carrier's
-command line**, because it cannot do the job without breaking the model - and
-that break is the "rotated suit" it looks like.
+HEK's rule, not this build's: a Halo CE gbxmodel has no bind pose in it.
+`tool.exe` bakes every vertex into the frame of the node it rides, from the
+`.jms`'s own node block, and the engine then draws it with whatever pose
+`characters\cyborg\cyborg.model_animations` gives that node. Mesh and node block
+therefore have to be the same pose.
 
-The item's geometry is not one surface: this armour arrives as 1,117 separate
-plates, and the pass turns each plate rigidly about its own joint. The head
-bone's own turn is nothing, so the head stays exactly where it was while the
-suit swings up to 45 degrees off it, and the plates that meet at the shoulder
-and the hip come away as floating pieces. Measured on this item, the pass swings
-the arms onto Halo's arm bones - a hand at 1.07 m instead of 1.64 m - and turns
-1,117 shells while the head, face and neck do not move at all.
+Only one of the two is free. Halo's 19-node block is the one the retail graph
+drives - its order, its checksum and its node frames - so it stays exactly as
+Halo wrote it, with the arms hanging 79 degrees down from the avatar's T-pose.
+The suit is what moves, and the double-click does it on every build: the arms
+come in from **+-38.1 to +-21.9 units** on y (the sleeve and the glove to about
++-13.6), the soles end at **0.00** on the floor and the model stands **2.47 m**
+tall where it stood 2.46 - one uniform resize, then a pose, never a stretch.
 
-So the double-click leaves the mesh in the pose the item authored it in. The only
-change to it is **one uniform factor**, and every edge is measured against the
-import afterwards:
+How it moves matters as much as that it moves. Every vertex is carried by its own
+weights - the same blend the game will use on it - after two rounds of averaging
+inside its own shell, so no plate is split by a weight cliff between two of its
+vertices. Each bone's transform is a turn about the item's own joint, from the
+item's segment to the bone's, so limb lengths and girth stay the avatar's; the
+head's own turn is nothing, so the helmet, the face and the neck keep exactly the
+place the file drew them in.
 
-* **11223** edges, worst edge **x1.00002** of that factor, **0** stretched;
-* nothing turned, fitted, stretched or posed, so the head and the suit stay in
-  the one frame the file drew them in;
-* the thirteen-pose battery on the authored pose: worst x3.22 with 2 torn - the
-  arms at 45 degrees come out x2.06 with 0 torn.
+Measured edge by edge against the T-posed build (8,640 edges):
 
-`--stand` still runs the pose pass by hand and `--t-pose` is its reverse; neither
-is on the carrier's command line. The pass stays in the program because it is
-what `--fit-limbs` builds on, and because a hand-run build may ask for it.
+* **924** edges change by more than 10%, **74** by more than 50%, **19** by more
+  than 2x, **0** by more than 3x; the worst is **x2.79**;
+* the worst of them sit at the collar and the armpit - the band a shoulder closes
+  when an arm comes down out of a T-pose, which is the one band a bind of this
+  armour has to bend;
+* the pauldrons keep the place the item authored them in and the plates on the
+  arm turn with it, so nothing detaches and no plate is left standing in the
+  T-pose.
+
+The weights are measured again on the body as it stands. Weights taken while the
+arms were out gave the whole sleeve to the upper arm - the forearm and the hand
+bones carried no vertex at all - so the glove was moved by the shoulder bone and
+Halo's hand node, the one a weapon is placed from, moved nothing. On the stood
+body the bones run through the limbs, and the glove now rides `bip01 l hand` and
+`bip01 r hand`, which is what puts a weapon in the hand rather than at the
+shoulder.
+
+`--t-pose` turns the pass off for a hand-run build. `--stand` is still accepted,
+and it is now what the double-click ships.
 
 **Exporting the avatar in another pose does not change this.** The suit's arms
 come from the item's own model, which is authored in the T-pose; the avatar
@@ -1643,12 +1657,11 @@ bone-length ratio, girth untouched - a sleeve that is longer without being
 fatter. It was built and measured, and it is **not shipped**, because on this
 avatar it costs more than it gives:
 
-| | pose pass (`--stand`) | fit limbs (`--fit-limbs`) |
-|---|---|---|
-| triangles still the item's shape | **99.8%** | 39.9% |
-| worst edge while standing the body | **x1.00** | x1.50 |
-| thirteen-pose battery | **x3.10, 2 torn** | x5.59, 38 torn |
-| arms at 45 degrees | x2.06, 0 torn | x3.48, 2 torn |
+What it costs, measured on this avatar: the arm has to stretch **x1.94** to put
+the glove on Halo's hand bone, past the x1.6 cap, and plates that reach
+different bones are then spaced by the bone lengths instead of the avatar's,
+which opens them at every joint. The stand shipped as the default keeps the
+armour's own shape and lets the glove sit at the wrist.
 
 The reason is geometric, not a bug: Halo's elbow is 10.86 units from its
 shoulder where this avatar's is 5.6, so the sleeve has to stretch x1.94 to reach
@@ -1722,7 +1735,6 @@ draw and the sky or the ground came through the gaps, which reads as "the faces
 are not welded together". Halo CE has no double-sided shader, so the model gets
 two windings instead: every triangle is written a second time in the same place
 with the opposite winding, and a plate is then solid from either side. The
-`.jms` goes from 5,758 to 11,516 triangles and the suit is unchanged in shape -
-99.8% of triangles still the item's own at one factor, worst edge x1.00, and the
-pose battery still x3.10 (4 edges torn rather than 2, because every edge now has
-a twin).
+`.jms` goes from 5,758 to 11,516 triangles and the suit is unchanged in shape:
+the second winding is the first one with its corners swapped, so it moves no
+vertex and changes no edge's length.

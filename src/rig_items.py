@@ -91,20 +91,10 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 # weight; without a floor, one arm bone's 15% share dragged whole torso plates
 # into the first-person set, where they hung scattered around the arm.
 ARM_SHARE = 0.5
-# How a plate is read as being on the arm, in Halo units, measured along the arm
-# from the shoulder joint. A sleeve starts just past the joint and runs to its
-# own reach; a plate out beyond that, near the arm's line, is the elbow guard or
-# the forearm plate.
-ARM_NEAR = 2.5
-ARM_ACROSS = 8.0
-ARM_FAR = 6.0
-ARM_CLEAR = 6.0
-ARM_WIDE = 14.0
-
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v183"
-BUILD = "the suit keeps the pose the item gave it"
+VERSION = "v184"
+BUILD = "the body stands in the pose Halo's bones hold"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -267,7 +257,7 @@ def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parsed = {"items": "extracted", "rig": None, "fp": None, "out": "rigged",
               "fbx": True, "jms": True, "name": None, "port": None,
-              "keep_shape": False, "eyes_forward": True, "stand": False,
+              "keep_shape": False, "eyes_forward": True, "stand": True,
               "limbs": False, "tag_prefix": True}
     index = 0
     while index < len(argv):
@@ -2088,6 +2078,14 @@ BODY_JOINTS = (
 # that joint actually reaches: measured from the mesh, not guessed.
 BODY_FIT_INFLUENCES = 4
 
+# Rounds of neighbour averaging the body's own weights get before the pose is
+# applied. A cliff between two vertices of one plate - one at 0.85 collar and
+# its neighbour at 0.85 arm - smears that plate across two bones: measured on
+# this armour, x26 on the pad that spans the collar and the arm. Two rounds
+# inside each shell remove the cliff, and shell weight is not mixed between
+# plates because shells share no edges.
+POSE_SMOOTHING = 2
+
 # The joints whose geometry is a limb: an upper arm, a forearm, a hand, a
 # thigh, a calf, a foot. These are scaled by their own stretch so the limb keeps
 # its girth when the bone has to reach further than the item's does.
@@ -2368,36 +2366,36 @@ def shift_of(matrix, anchor, centre):
                                    for column in range(3)) for row in range(3))
 
 
-# How close an arm has to already lie to Halo's own line before the T-pose swing
-# is skipped: 20 degrees, the cosine of it. An item exported "as shown" hangs
-# within a few degrees; a T-pose is 79 away.
-ALREADY_HANGING = 0.94
-
-
 def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
-    """Stand a whole body in the pose Halo's own skeleton holds - no scaling.
+    """Stand a whole body in the pose Halo's own skeleton holds - HEK's bind.
 
-    One uniform factor keeps the avatar's shape but not its pose. An avatar is
-    authored in a T-pose with its knees apart, while Halo's nodes sit with the
-    arms hanging and the legs under the hips: measured on this armour, the
-    avatar's shoulders are 0.97 m up against Halo's 1.73 m and its arms run out
-    sideways against bones that run down - 79 degrees away at the shoulder. So
-    every animation turns the avatar's own T-pose by Halo's node turns: the arms
-    stay out to the sides, look twisted about their own length, and the body
-    reads as half crouched, which is what the game showed.
+    A Halo CE gbxmodel has no bind pose in it. ``tool.exe`` bakes every vertex
+    into the frame of the node it rides, using the .jms's own node block, and
+    the engine then draws it with whatever pose its animation graph gives that
+    node. So the mesh and the node block have to be the same pose, and only one
+    of the two is free: Halo's 19-node block is the one the retail graph drives
+    and the one this rig ships, with its arms hanging 79 degrees down from the
+    avatar's T-pose. The mesh is what has to move, and this is the pass that
+    moves it. Left as authored the suit is a T-pose bound to arms-down bones:
+    in game the arms stay out at the sides and the boots sit under the origin,
+    which is the biped standing in the ground with its arms out.
 
-    This moves the mesh into Halo's rest pose, and the weights are the game's
-    own: each vertex is carried by the same blends `skin` gave it, so the
-    movement is exactly what Halo does to this surface on the first frame of an
-    arm-down animation - with one difference, that it is done once here instead
-    of every frame after. The alternative, moving the mesh before it is skinned,
-    gave the weights a different surface to be measured on and tore it x8.
+    Every vertex is carried by the weights it rides - the same blend the game
+    will use on it - so a plate that the weighting splits between the collar and
+    the arm bends with both instead of being flung by one. Those weights are
+    averaged over each shell's own edges first: a cliff between two vertices of
+    one plate, one at 0.85 collar and its neighbour at 0.85 arm, is what smears
+    a pad across two bones, and smoothing inside a shell removes the cliff
+    without mixing one plate's weights into another's.
 
-    ``fit`` is the uniform factor already applied to the mesh, so the avatar's
-    joints are compared where Halo keeps them. Nothing is scaled: a joint's
-    anchor is exact, and only the turn from the avatar's segment to Halo's bone
-    is applied, about that joint. Edges inside a segment keep their length; the
-    band where two bones blend deforms, which is what skinning is.
+    Each bone's transform is a turn about the item's own joint, from the item's
+    segment to the bone's: limb lengths, girth and proportions stay the
+    avatar's, and nothing is stretched along a bone unless ``limbs`` asks for
+    it. The head's own turn is the identity, so the helmet, the face and the
+    neck keep exactly the place the file drew them in.
+
+    Returns a report dict, or None when the rig is not the biped this table is
+    written for.
     """
     mesh = object_data.data
     points = [tuple(vertex.co) for vertex in mesh.vertices]
@@ -2408,270 +2406,81 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         return None
     by_bone = {entry["bone"]: entry for entry in plan}
     groups = {group.index: group.name for group in object_data.vertex_groups}
-    # Shells, not vertices: a plate of armour is one rigid piece, and turning
-    # each of its vertices by its own blend shears it - a few per cent over most
-    # of the suit, which is a shape change all the same. So each shell is turned
-    # once, by the bone most of it rides, exactly as the plate is worn. The
-    # weights are the game's own, and they were smoothed along each shell, so
-    # the bone that carries a plate is the bone the game turns it by.
-    parent = list(range(len(mesh.vertices)))
-
-    def find(index):
-        while parent[index] != index:
-            parent[index] = parent[parent[index]]
-            index = parent[index]
-        return index
-
-    for polygon in mesh.polygons:
-        corners = list(polygon.vertices)
-        for other in corners[1:]:
-            first, second = find(corners[0]), find(other)
-            if first != second:
-                parent[second] = first
-    shells = {}
-    for index in range(len(mesh.vertices)):
-        shells.setdefault(find(index), []).append(index)
-    # One swing per arm, measured from the arm's own plates: the shoulder the
-    # item gives, the farthest plate that rides the arm, and Halo's line from
-    # that shoulder to its hand. Turning every plate of an arm by this same
-    # rotation keeps the arm together; measuring each plate separately does not.
-    arm_turn = {}
-    # Every bone's own segment, in the item's space, so a plate can be asked
-    # which bone it actually sits nearest - geometry, not weights.
-    matrix = armature.matrix_world
-    bone_segments = {}
-    for bone in armature.data.bones:
-        start_point = tuple(matrix @ bone.head_local)
-        end_point = tuple(matrix @ bone.tail_local)
-        if fit_length(fit_between(start_point, end_point)) > 1e-6:
-            bone_segments[bone.name] = (start_point, end_point)
-    for side, up, hand in (("l", "bip01 l upperarm", "bip01 l hand"),
-                           ("r", "bip01 r upperarm", "bip01 r hand")):
-        upper = by_bone.get(up)
-        wrist = armature.data.bones.get(hand)
-        if upper is None or wrist is None:
-            continue
-        shoulder = upper["source"]
-        arm_group = {up, "bip01 %s forearm" % side, hand}
-        # The arm's own reach: the farthest point of any plate that weights to
-        # the arm, from the shoulder. That direction, turned onto Halo's line
-        # from the same shoulder to its hand, is the arm's swing.
-        tip, reach = None, 0.0
-        for corners_shell in shells.values():
-            voted = {}
-            for index in corners_shell:
-                for entry_group in mesh.vertices[index].groups:
-                    name = groups.get(entry_group.group)
-                    if name in arm_group:
-                        voted[name] = voted.get(name, 0.0) + entry_group.weight
-            if not voted or max(voted, key=voted.get) not in arm_group:
-                continue
-            for index in corners_shell:
-                far = fit_length(fit_between(shoulder, points[index]))
-                if far > reach:
-                    reach, tip = far, points[index]
-        if tip is None or reach < 8.0:
-            continue
-        halo = fit_unit(fit_between(tuple(matrix @ armature.data.bones[up].head_local),
-                                    tuple(matrix @ wrist.head_local)))
-        own = fit_unit(fit_between(shoulder, tip))
-        if halo is None or own is None:
-            continue
-        facing = sum(own[step] * halo[step] for step in range(3))
-        if facing <= -0.999:
-            continue
-        # A mesh exported arms-down already stands the way Halo's bones do. The
-        # swing below exists to bring a T-pose in - measured on this armour it is
-        # 79 degrees - and applying it to arms that already hang turns them past
-        # the body: the sleeve twists about its own length, the pad leaves the
-        # sleeve it is worn on, and the figure reads hunched over. So an arm that
-        # already lies within ALREADY_HANGING of Halo's line is left where it is.
-        if facing >= ALREADY_HANGING:
-            log("%s: the %s arm already hangs the way Halo's bones do (%.0f "
-                "degrees off it) - no swing applied"
-                % (object_data.name, side, math.degrees(math.acos(min(1.0, facing)))))
-            continue
-        swing = fit_turn(own, halo)
-        if swing is not None:
-            for name in arm_group:
-                arm_turn[name] = (shoulder, swing, own, reach)
-            # The clavicle carries the shoulder cap and the pad over it. They take
-            # the arm's swing too; which of them actually turn, and about what, is
-            # decided per plate below - the cap stays on the collar.
-            arm_turn["bip01 %s clavicle" % side] = (shoulder, swing, own, reach)
-    # The shoulder cap and the pad over it are one piece of armour on each side:
-    # they ride the clavicle, and they have to move together or they come apart
-    # at their own seams - which is what per-plate turning did, leaving pieces of
-    # the pad hanging in the air beside the shoulder. So each side's pad plates
-    # turn about ONE hinge, the inboard-most point of the whole pad where it meets
-    # the collar: the pad keeps its shape, its edge on the collar stays on the
-    # collar, and the rest of it lies down the arm with the arm.
-    riders = {}
-    for key, corners in shells.items():
-        votes = {}
-        for index in corners:
-            for entry in mesh.vertices[index].groups:
-                name = groups.get(entry.group)
-                if name in by_bone:
-                    votes[name] = votes.get(name, 0.0) + entry.weight
-        if votes:
-            riders[key] = max(votes, key=votes.get)
-    placed = list(points)
-    shell_fields = []
-    turned_shells = 0
-    arms_turned = 0
-    for key, corners in shells.items():
-        votes = {}
-        for index in corners:
-            for entry in mesh.vertices[index].groups:
-                name = groups.get(entry.group)
-                if name in by_bone:
-                    votes[name] = votes.get(name, 0.0) + entry.weight
-        if not votes:
-            continue
-        ridden = max(votes, key=votes.get)
-        entry = by_bone[ridden]
-        source = entry["source"]
-        turned_shells += 1
-        # What the plate is asked to become: the bone it rides, from that bone's
-        # own head to its tail. The turn the plan carries is the item's joint
-        # onto Halo's and is right for a joint the item authored in a T-pose
-        # only if the item's joints say so - this one's arms are modelled down
-        # while its joints are not, so where the plate's own axis can be
-        # measured, that axis is what is turned onto the bone.
-        turn = entry["turn"]
-        centre = source
-        # The arms are turned as ONE unit, about the shoulder, and only the
-        # plates lying along the arm are turned at all. A plate near a shoulder
-        # can ride the upper arm while sticking out to the side of it - a
-        # shoulder pad, a collar plate - and turning that by the arm's own swing
-        # throws it away from the body: that is the ring of shards a per-plate
-        # turn produced. So the swing is measured once, from where the arm's
-        # plates actually end, and a plate joins the arm only if it sits inside
-        # the arm's own tube.
-        if ridden in arm_turn:
-            shoulder, swing, own_axis, own_length = arm_turn[ridden]
-            middle = [sum(points[index][step] for index in corners) / len(corners)
-                      for step in range(3)]
-            # A plate the weighting put on the CLAVICLE is the shoulder cap and
-            # the pad over it. They are worn on the arm - left behind, they stand
-            # in the air beside a bare arm - but their inboard edge lies on the
-            # collar, and turning them whole about the shoulder joint pulls that
-            # edge off the collar and opens a wedge there. So they hinge where
-            # they meet the collar: the plate turns about its own inboard-most
-            # vertex, which keeps the edge on the collar on the collar while the
-            # rest of the plate lies down the arm with everything else on it.
-            if True:
-                # Along the arm is the item's own arm line - shoulder towards
-                # its own hand - because that is the pose the plates were shaped
-                # in. Across it is how far off that line a plate sits. A sleeve
-                # and a glove are narrow and start a little way out from the
-                # joint; a plate left in the T-pose reads as a bare tube beside
-                # a shoulder, so everything out along the arm travels with it.
-                offset = fit_between(shoulder, middle)
-                along = sum(offset[axis] * own_axis[axis] for axis in range(3))
-                across = fit_length([offset[axis] - own_axis[axis] * along
-                                     for axis in range(3)])
-                sleeve = (ARM_NEAR < along < own_length + ARM_FAR
-                          and across < ARM_ACROSS)
-                far_out = along >= ARM_CLEAR and across < ARM_WIDE
-                if sleeve or far_out:
-                    turn = swing
-                    centre = shoulder
-                    arms_turned += 1
-        # Two ways to place a plate, and they answer different questions.
-        #
-        # `limbs` also puts the JOINT on its bone and lengthens the limb to
-        # Halo's: the plate is turned onto the bone, stretched along it by the
-        # bone-length ratio and slid so its joint sits on the bone's head. Its
-        # girth is untouched, so a sleeve gets longer without getting fatter -
-        # and because the gate is per plate, nothing tears: edges inside a plate
-        # stretch by that one factor and plates share no edges. This is what
-        # makes the elbows, the knees and the weapon in the hand land where the
-        # game expects them.
-        #
-        # Without it the body is only turned into the pose, keeps its own limb
-        # lengths, and the hand bone reaches past the glove.
-        axial = 1.0
-        target = source
-        if limbs:
-            axial = entry.get("axial") or 1.0
-            axial = max(FIT_STRETCH_MIN, min(FIT_STRETCH_MAX, axial))
-            target = tuple(entry["target"])
-        axis = entry.get("axis") or None
-        middle = [sum(points[index][step] for index in corners) / len(corners)
-                  for step in range(3)]
-        if limbs and axis is not None:
-            # The plate is stretched along the limb by this one factor and then
-            # turned onto the bone, so the whole plate is one 3x3 map and a shift.
-            stretch = [[(axial if row == column else 0.0)
-                        + (1.0 - axial) * axis[row] * axis[column]
-                        for column in range(3)] for row in range(3)]
-            matrix = [[sum(turn[row][step] * stretch[step][column]
-                           for step in range(3)) for column in range(3)]
-                      for row in range(3)]
-            anchor = target
-            shell_fields.append((middle, matrix,
-                                 shift_of(matrix, anchor, centre), corners,
-                                 turn is not entry["turn"]))
-            for index in corners:
-                offset = fit_between(centre, points[index])
-                along = sum(offset[step] * axis[step] for step in range(3))
-                stretched = tuple(axis[step] * along * axial
-                                  + (offset[step] - axis[step] * along)
-                                  for step in range(3))
-                turned = fit_turned(turn, stretched)
-                placed[index] = tuple(target[step] + turned[step]
-                                      for step in range(3))
-            continue
-        # A plate turned about a point other than its own joint lands where that
-        # point takes it, so the anchor moves with it.
-        anchor = target if centre is source else centre
-        shell_fields.append((middle, turn, shift_of(turn, anchor, centre), corners,
-                             turn is not entry["turn"]))
-        for index in corners:
-            turned = fit_turned(turn, fit_between(centre, points[index]))
-            placed[index] = tuple(anchor[step] + turned[step] for step in range(3))
-    # A plate is a rigid piece, and that is the whole trouble with posing them
-    # one at a time: two plates that lay against each other take two different
-    # turns and part company, which reads as a hole in an arm that is whole.
-    # So the turns are not applied plate by plate after all. Each plate's turn
-    # is a field in space, and every vertex takes the weighted blend of the four
-    # nearest plates' turns - what a game does with bone weights, done across
-    # plates. Neighbours move together, the pose and the limb proportions are
-    # the standing fit's, and no seam between two plates is pulled open.
-    if shell_fields:
-        def field_at(point, on_arm):
-            # A plate on the arm is blended with other plates on the arm, and a
-            # plate on the body with the body. Mixing the two is what pulled the
-            # shoulder pad out sideways: half its neighbours stayed in the T-pose
-            # and half turned, so the pad went where neither of them went.
-            family = [entry for entry in shell_fields if entry[4] == on_arm]
-            if len(family) < 2:
-                family = shell_fields
-            nearest = sorted(((fit_length(fit_between(entry[0], point)), order)
-                              for order, entry in enumerate(family)))[:4]
-            matrix = [[0.0] * 3 for _ in range(3)]
-            shift = [0.0, 0.0, 0.0]
-            total = 0.0
-            for distance, order in nearest:
-                weight = 1.0 / max(distance, 0.05) ** 2
-                total += weight
-                turn_here, shift_here = family[order][1], family[order][2]
-                for row in range(3):
-                    shift[row] += weight * shift_here[row]
-                    for column in range(3):
-                        matrix[row][column] += weight * turn_here[row][column]
-            return ([[value / total for value in row] for row in matrix],
-                    [value / total for value in shift])
-
-        for middle, _matrix, _shift, corners, on_arm in shell_fields:
-            matrix, shift = field_at(middle, on_arm)
-            for index in corners:
-                point = points[index]
-                placed[index] = tuple(
-                    sum(matrix[row][column] * point[column] for column in range(3))
-                    + shift[row] for row in range(3))
+    # Each vertex's blend, kept to the bones this pose moves and normalised.
+    rides = []
+    for index, vertex in enumerate(mesh.vertices):
+        share = {}
+        for entry in vertex.groups:
+            name = groups.get(entry.group)
+            if name in by_bone and entry.weight > 0.0:
+                share[name] = share.get(name, 0.0) + entry.weight
+        total = sum(share.values())
+        rides.append({name: weight / total for name, weight in share.items()}
+                     if total > 0.0 else {})
+    loose = [index for index, share in enumerate(rides) if not share]
+    if loose:
+        # A vertex riding no bone still has to come with the body: the bone whose
+        # own segment is nearest carries it, the same rule skin() uses, so an
+        # unweighted plate lands where the surface around it went instead of
+        # staying behind in the T-pose.
+        matrix = armature.matrix_world
+        segments = {bone.name: (tuple(matrix @ bone.head_local),
+                               tuple(matrix @ bone.tail_local))
+                    for bone in armature.data.bones if bone.name in by_bone}
+        for index in loose:
+            point = points[index]
+            nearest = min(segments, key=lambda name: segment_distance(
+                point, segments[name][0], segments[name][1])) if segments else None
+            if nearest is not None:
+                rides[index] = {nearest: 1.0}
+        log("%s: %d vertex(es) rode no bone to be posed by - the nearest bone "
+            "carried each of them" % (object_data.name, len(loose)))
+    # Two rounds of neighbour averaging inside each shell: a cliff between two
+    # vertices of one plate is what smears that plate across two bones, and the
+    # shells are their own islands, so no plate's weights leak into another's.
+    neighbours = [[] for _ in points]
+    for edge in mesh.edges:
+        first, second = edge.vertices
+        neighbours[first].append(second)
+        neighbours[second].append(first)
+    for _ in range(POSE_SMOOTHING):
+        smoothed = []
+        for index, share in enumerate(rides):
+            mixed = dict(share)
+            for other in neighbours[index]:
+                for name, weight in rides[other].items():
+                    mixed[name] = mixed.get(name, 0.0) + weight
+            total = sum(mixed.values()) or 1.0
+            smoothed.append({name: weight / total
+                             for name, weight in mixed.items()})
+        rides = smoothed
+    placed = []
+    for point, share in zip(points, rides):
+        moved = [0.0, 0.0, 0.0]
+        for name, weight in share.items():
+            entry = by_bone[name]
+            if limbs:
+                # The joint itself also goes onto the bone, and the limb is
+                # lengthened along it: the hand at Halo's fingertips, paid for
+                # in limb length. Not shipped; --fit-limbs asks for it.
+                anchor = tuple(entry["target"])
+                offset = fit_between(entry["source"], point)
+                axis = entry.get("axis")
+                if axis is not None:
+                    axial = entry.get("axial") or 1.0
+                    axial = max(FIT_STRETCH_MIN, min(FIT_STRETCH_MAX, axial))
+                    along = sum(offset[step] * axis[step] for step in range(3))
+                    offset = tuple(offset[step] + axis[step] * along * (axial - 1.0)
+                                   for step in range(3))
+            else:
+                # Turned about the item's own joint, which stays where the
+                # avatar put it: that is what leaves every limb its own length.
+                anchor = tuple(entry["source"])
+                offset = fit_between(anchor, point)
+            turned = fit_turned(entry["turn"], offset)
+            for step in range(3):
+                moved[step] += weight * (anchor[step] + turned[step])
+        placed.append(tuple(moved))
     worst = 1.0
     for edge in mesh.edges:
         first, second = edge.vertices
@@ -2682,33 +2491,32 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False):
         if now <= 1e-6:
             continue
         worst = max(worst, now / was, was / now)
+    span_before = max(abs(point[1]) for point in points)
+    span_after = max(abs(point[1]) for point in placed)
     for vertex, point in zip(mesh.vertices, placed):
         vertex.co = point
     mesh.update()
-    # The soles belong on the floor before this returns: the pose turns the
-    # feet with their segments, and a foot that was on z = 0 in the avatar's
-    # pose can end under it once it is stood in Halo's. Left there, the model's
-    # lowest point is below the biped's origin and the game draws the boots in
-    # the ground - the model is placed by that origin, so the whole body has to
-    # come back up by the amount the pose pushed it down.
+    # The soles belong on the floor before this returns: the pose turns the feet
+    # with their segment, and a boot that stood on z = 0 in the avatar's pose can
+    # end under it once it is stood in Halo's. The model is placed by its origin,
+    # so a mesh below that origin is drawn in the ground.
     lowest = min(point[2] for point in placed)
     if abs(lowest) > 0.01:
-        for object_data_part in (object_data,):
-            for vertex in object_data_part.data.vertices:
-                vertex.co.z -= lowest
-            object_data_part.data.update()
+        for vertex in object_data.data.vertices:
+            vertex.co.z -= lowest
+        object_data.data.update()
         placed = [(x, y, z - lowest) for x, y, z in placed]
         log("soles lifted %.2f units onto the floor after the pose" % -lowest)
         lowest = 0.0
     tallest = max(point[2] for point in placed)
-    log("arms: %d plate(s) read as worn on the arm and turned with it" % arms_turned)
-    line = ("%d joints, %d shell(s) %s, worst edge x%.2f, %.2f m tall, "
-            "soles at %.2f units"
-            % (len(plan), turned_shells,
-               "fitted onto their bones" if limbs else "turned into Halo's rest pose",
-               worst, tallest / HALO_UNITS_PER_METRE, lowest))
+    line = ("%d joints, %d vertices on their own weights (%d smoothing round(s)), "
+            "worst edge x%.2f, arms in from %.1f to %.1f on y, %.2f m tall, "
+            "soles at %.2f"
+            % (len(plan), len(points), POSE_SMOOTHING, worst, span_before,
+               span_after, tallest / HALO_UNITS_PER_METRE, lowest))
     log("stood %s in Halo's rest pose: %s" % (object_data.name, line))
     return {"worst": worst, "height": tallest / HALO_UNITS_PER_METRE,
+            "arms_before": span_before, "arms_after": span_after,
             "lines": ["biped pose : " + line]}
 
 
@@ -5598,12 +5406,12 @@ def hold_the_arms(object_data, armature):
     cut across a continuous sleeve is a tear, and a shell with its own edge
     cannot tear from anything.
 
-    It runs AFTER stand_in_halo_pose(), not inside skin(), and that order is the
-    point: the stand pass reads these weights to decide what to swing down, and
-    a shoulder pad is a plate built for the arm held out. Swing the pad itself
-    and it stands on edge as a spike with the shoulder bare behind it. The pad
-    stays on the body for the pose, and only then does its weight move to the
-    arm, so it turns with the arm in the game and is never turned here.
+    It runs only for a body that keeps the pose it authored. A body stood in
+    Halo's pose has its sleeve on the arm bone already, so nothing swings out
+    from under the pad in game; and a pad built for a horizontal arm, turned
+    with the arm into Halo's pose, stands on edge as a spike with the shoulder
+    bare behind it. So a stood body leaves its pads on the shoulder cap, where
+    the item authored them.
     """
     segments = bone_segments(armature)
     if not all(name in segments for name in CLAVICLES):
@@ -8110,23 +7918,19 @@ def main():
             to_halo_space(merged, scale, keep_position=prop, anchor=anchor)
             # A whole body is authored in the avatar's T-pose, and Halo's
             # skeleton is not: its arms hang and its legs stand under the hips.
-            # Skinned as authored, every animation turned the avatar's own pose
-            # by Halo's node turns - arms stuck out and a body that read as half
-            # crouched in every animation. Turning each segment onto its bone
-            # changes no edge's length, so the shape stays exactly and the pose
-            # the animations expect is the one the mesh stands in.
-            # stand_in_halo_pose() is NOT called here, and the numbers are why.
-            # Turning the mesh from the avatar's T-pose into Halo's rest pose is
-            # what an animation would do to it, and it deforms the one place a
-            # body cannot spare: the armpit. Measured on this armour, worst edge
-            # at the shoulder x5.95 and only 87.2% of triangles keeping their
-            # shape - against 99.8% for the same body left in the pose it was
-            # authored in. A pose change and a shape change cannot be separated
-            # on a surface this coarse, and the shape is not negotiable, so the
-            # body keeps its own pose. What is left is geometry, not a weighting
-            # bug: Halo's cyborg is 1.83 m with its shoulders at 1.73 m and arms
-            # 1.02 m long, this avatar is 1.51 m with its shoulders at 0.97 m
-            # and arms 0.67 m - see report.txt's "biped pose" note and README.
+            # tool.exe bakes every vertex into the frame of the node it rides
+            # from the .jms's own node block, so a mesh left in one pose while
+            # its nodes hold another is compiled as that mismatch - in game the
+            # arms stay out, the boots drop under the origin and the character
+            # stands in the ground, which is what the screenshots showed. Halo's
+            # block cannot move: it is the one
+            # characters\cyborg\cyborg.model_animations drives. So the body is
+            # stood in Halo's pose before it is skinned, by its own weights
+            # (stand_in_halo_pose): neighbours travel together, no plate leaves
+            # the plate it lies against, and the head's own turn is nothing. The
+            # cost of a bind HEK accepts is the band across each joint, which
+            # bends the way the game would bend it; --t-pose keeps the old
+            # behaviour for anyone who wants the raw item.
             stood = None
             progress(stage + 0.09 * 0.92,
                      "item %d of %d: skinning %s to Halo's %d bones - the "
@@ -8179,27 +7983,55 @@ def main():
             # from. So the mesh is only ever scaled and placed: the shape check
             # below measures every edge against the one it had when it was
             # imported, and reports it.
-            if body and body_grow and options.get("stand"):
+            # Weights first, geometry after. The plates over the shoulder joint
+            # are on the clavicle, which barely turns, so the arm swings out of
+            # its own sleeve and the pad is left standing where the T-pose put
+            # it - the shoulder reads as missing. Handing those plates to the
+            # upper arm moves no vertex; it only says which bone carries them
+            # when the game poses it. It has to happen BEFORE the body is stood
+            # in Halo's pose, because that pass moves the mesh by its weights: a
+            # pad still on the clavicle stays out at the shoulder while the arm
+            # comes down, and re-hanging it afterwards would leave it swinging
+            # from the T-pose place in game instead of lying on the arm.
+            standing = bool(body and body_grow and options.get("stand"))
+            held = 0
+            shoulders = 0
+            if not standing:
+                # Only for a body left in the pose it was authored: there the
+                # arm swings out from under the pad in game, so the pad has to
+                # follow the arm instead. A stood body has no swing to make up
+                # for - the sleeve is already on the arm - and moving a pad
+                # built for a horizontal arm onto it stands the pad on edge as
+                # a spike with the shoulder bare behind it.
+                held = hold_the_arms(merged, armature)
+                if held:
+                    log("%s: %d plate(s) out along the arm were riding the "
+                        "clavicle and now ride the arm bone"
+                        % (merged.name, held))
+                shoulders = hold_the_shoulders(merged, armature)
+                if shoulders:
+                    log("%s: %d plate(s) on a shoulder joint were riding the "
+                        "torso or a leg and now ride the upper arm of their side"
+                        % (merged.name, shoulders))
+            if standing:
                 stood = stand_in_halo_pose(merged, armature, body_grow,
                                            limbs=options.get("limbs", False))
                 if stood:
                     record["stand"] = stood["lines"][0]
                     log("%s stood in Halo's pose: worst edge x%.2f over the "
                         "whole body" % (merged.name, stood["worst"]))
-            # Weights, not geometry: the plates over the shoulder joint are on the
-            # clavicle, which barely turns, so in game the arm swings out of its own
-            # sleeve and the pad is left standing where the T-pose put it - the
-            # shoulder reads as missing. Handing those plates to the upper arm moves
-            # no vertex; it only says which bone carries them when the game poses it.
-            held = hold_the_arms(merged, armature)
-            if held:
-                log("%s: %d plate(s) out along the arm were riding the clavicle "
-                    "and now ride the arm bone" % (merged.name, held))
-            shoulders = hold_the_shoulders(merged, armature)
-            if shoulders:
-                log("%s: %d plate(s) on a shoulder joint were riding the torso "
-                    "or a leg and now ride the upper arm of their side"
-                    % (merged.name, shoulders))
+                    # The weights were measured while the arms were still out,
+                    # and from there the whole sleeve is nearest the upper arm:
+                    # the forearm and the hand carried no vertex at all, so the
+                    # glove was moved by the shoulder bone and the game's hand
+                    # node - the one a weapon is placed from - moved nothing.
+                    # The bones run through the limbs now, so the skin is
+                    # measured again on the body as it stands.
+                    rebound = rebind(merged, armature, rigid=prop)
+                    if rebound:
+                        record["binding"] = rebound
+                        log("%s: re-skinned on the stood body - %s"
+                            % (merged.name, rebound))
             plates = hold_the_plates(merged, armature)
             if plates:
                 log("%s: %d point(s) away from a joint where they blend two "
