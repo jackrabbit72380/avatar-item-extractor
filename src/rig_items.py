@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v192"
-BUILD = "every plate rides one node - the armour cannot bend or twist"
+VERSION = "v193"
+BUILD = "the mesh bends only where the skeleton has a joint"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2478,7 +2478,10 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
     # not change shape when the arms come down. Blending two bones here instead
     # (the old pass did, twice-smoothed) is what folded the elbows.
     rides = single_bone_rides(object_data, armature)
-    weights = vertex_weights(object_data)
+    # Fabric folds, but only where the skeleton has a joint to fold at: a blend
+    # along the middle of a forearm would bend the mesh where no animation ever
+    # expects it, and no weapon pose could look right.
+    weights = band_weights(object_data, armature)
 
     def turned_point(entry, point):
         """One bone's turn of one point, about the item's own joint."""
@@ -3965,6 +3968,62 @@ def vertex_weights(object_data):
     return weights
 
 
+def band_weights(object_data, armature, band=None):
+    """Which bones may bend a vertex: only the pair across a joint it stands at.
+
+    An arm bends at the shoulder, the elbow and the wrist, and nowhere else. A
+    vertex that blends two bones while standing well away from the joint those
+    bones share is a vertex that bends the mesh mid-limb, and no animation and no
+    weapon pose can look right when the mesh bends where the skeleton has no
+    joint. So a vertex like that is given the one bone it rides most.
+
+    A vertex standing at the joint keeps both bones, because that is where a bend
+    belongs - and only bones that actually meet at a joint may share it, so a
+    chest point can never carry a share of the hand.
+
+    Weights only; no vertex moves.
+    """
+    if band is None:
+        band = PLATE_BAND          # one band for the whole tool, see hold_the_plates
+    segments = bone_segments(armature)
+    names = list(segments)
+    raw = vertex_weights(object_data)
+    if not names:
+        return raw
+    family = bone_family(armature, names)
+    world = object_data.matrix_world
+    joints = {}
+
+    def shared(one, two):
+        """The joint two bones have in common, or None when they do not meet."""
+        key = (one, two) if one < two else (two, one)
+        if key not in joints:
+            gap, joint = min(((a - b).length, (a + b) / 2.0)
+                             for a in segments[one] for b in segments[two])
+            joints[key] = (joint, gap)
+        return joints[key]
+
+    kept = {}
+    for index, per in raw.items():
+        ranked = sorted(per.items(), key=lambda pair: -pair[1])
+        if len(ranked) < 2:
+            kept[index] = per
+            continue
+        point = world @ object_data.data.vertices[index].co
+        mine = {ranked[0][0]: ranked[0][1]}
+        for name, weight in ranked[1:]:
+            if name not in (family.get(ranked[0][0]) or ()):
+                continue                  # not the far side of a joint
+            joint, gap = shared(ranked[0][0], name)
+            if gap > 1e-3:
+                continue                  # the bones do not meet at all
+            if (point - joint).length <= band:
+                mine[name] = weight
+        total = sum(mine.values()) or 1.0
+        kept[index] = {name: weight / total for name, weight in mine.items()}
+    return kept
+
+
 def single_bone_rides(object_data, armature):
     """Which bone each vertex rides on its own, and which must keep its blend.
 
@@ -4052,7 +4111,8 @@ def single_bone_weights(object_data, armature):
     rides = single_bone_rides(object_data, armature)
     if not rides:
         return None
-    weights = vertex_weights(object_data)
+    # The shipped skin too: two bones only across a joint the vertex stands at.
+    weights = band_weights(object_data, armature)
     for group in list(object_data.vertex_groups):
         object_data.vertex_groups.remove(group)
     made = {}
@@ -4077,8 +4137,9 @@ def single_bone_weights(object_data, armature):
             for name, weight in sorted(per.items()):
                 give(index, name, weight / total)
     return ("%d plate vertex(es) on one node each (%d plate(s) over %d bone(s)); "
-            "%d fabric vertex(es) keep the blend they were skinned with - a "
-            "plate cannot bend or twist in any pose"
+            "%d fabric vertex(es) blend only across a joint they stand at - a "
+            "plate cannot bend or twist in any pose, and the mesh cannot fold "
+            "where the skeleton has no joint"
             % (plates, object_data.get("whole_pieces") or 0, len(made),
                skin))
 
