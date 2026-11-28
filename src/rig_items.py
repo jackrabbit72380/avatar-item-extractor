@@ -93,8 +93,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v196"
-BUILD = "the arm comes down in one piece - no elbow kink in the bind"
+VERSION = "v197"
+BUILD = "the leg comes down in one piece too"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -2279,6 +2279,14 @@ def body_fit_plan(armature, fit=1.0, points=None):
     for forearm, upper in ((25, 20), (28, 22)):
         if forearm in by_joint and upper in by_joint:
             by_joint[forearm]["turn"] = by_joint[upper]["turn"]
+    # The same for the leg: a leg bends at the knee, and only there. A calf
+    # turned by its own direction against Halo's bends the knee in the bind pose
+    # by however much the two disagree, and the bend is baked in. The foot
+    # already follows the calf, so the whole leg then comes down in one piece
+    # from the hip and the knee stays as straight as the item drew it.
+    for calf, thigh in ((6, 2), (8, 3)):
+        if calf in by_joint and thigh in by_joint:
+            by_joint[calf]["turn"] = by_joint[thigh]["turn"]
     if 19 in by_joint:
         by_joint[19]["turn"] = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     for entry in plan:
@@ -2601,19 +2609,23 @@ def stand_in_halo_pose(object_data, armature, fit=1.0, limbs=False,
         turned = fit_turned(turn, fit_between(tuple(anchor), point))
         placed.append(tuple(anchor[step] + turned[step] for step in range(3)))
     for side in ("l", "r"):
-        upper = by_bone.get("bip01 %s upperarm" % side)
-        fore = by_bone.get("bip01 %s forearm" % side)
-        if not upper or not fore:
-            continue
-        angles = []
-        for entry in (upper, fore):
-            turn = entry["turn"]
-            trace = turn[0][0] + turn[1][1] + turn[2][2]
-            angles.append(math.degrees(math.acos(
-                max(-1.0, min(1.0, (trace - 1.0) / 2.0)))))
-        log("%s arm %s: upper arm %.1f deg, forearm %.1f deg - %.1f deg of elbow "
-            "bend in the bind pose"
-            % (object_data.name, side, angles[0], angles[1], angles[1] - angles[0]))
+        for first, second, what in (("upperarm", "forearm", "elbow"),
+                                    ("thigh", "calf", "knee")):
+            upper = by_bone.get("bip01 %s %s" % (side, first))
+            fore = by_bone.get("bip01 %s %s" % (side, second))
+            if not upper or not fore:
+                continue
+            angles = []
+            for entry in (upper, fore):
+                turn = entry["turn"]
+                trace = turn[0][0] + turn[1][1] + turn[2][2]
+                angles.append(math.degrees(math.acos(
+                    max(-1.0, min(1.0, (trace - 1.0) / 2.0)))))
+            log("%s %s %s: %s %.1f deg, %s %.1f deg - %.1f deg of %s bend in the "
+                "bind pose"
+                % (object_data.name, "arm" if what == "elbow" else "leg", side,
+                   first, angles[0], second, angles[1], angles[1] - angles[0],
+                   what))
 
     worst = 1.0
     worst_plate = 1.0
