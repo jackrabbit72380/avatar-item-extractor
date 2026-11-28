@@ -95,8 +95,8 @@ ARM_WEIGHTS = ARM_BONES + tuple(SHOULDER_BONES)
 ARM_SHARE = 0.5
 # Stamped into the log, report.txt and every READ ME block, so a file on disk
 # can say which build made it instead of being guessed at from its contents.
-VERSION = "v206"
-BUILD = "v206 - the physics sphere count and radii are read off the cyborg rig, not invented"
+VERSION = "v207"
+BUILD = "v207 - geometry that rode a bone it had not reached now rides the bone it is on"
 
 # Tool reads a model's LOD from the last word of the .jms file name, and only
 # the superhigh LOD's markers reach the compiled gbxmodel. A name with no LOD
@@ -3001,6 +3001,124 @@ def audit_reach(object_data, armature, joints):
                 "own bone's head")
         log("%s: %s" % (object_data.name, line))
     return line
+
+
+def hold_the_reach(object_data, armature, joints):
+    """Give every vertex to the bone whose *segment* it sits on, not a far one.
+
+    ``audit_reach`` counts the vertices that ride a bone whose head they are
+    behind while another bone fits them better - the shoulder padding turned
+    about the elbow, the bracer turned about the wrist, a glove turned about a
+    joint it does not reach. Each of those is a piece of armour flung by a bone
+    it is not on, and it is what a fin off the shoulder and a sleeve drawn as
+    stretched bands are made of. This pass moves them, and it moves them a
+    whole **shell** at a time: a plate that keeps its one bone keeps its shape,
+    so splitting it across two bones to fix half of it would trade a fin for a
+    torn plate. Only a shell that cannot agree on a bone is moved point by
+    point.
+
+    Returns how many vertices moved. Call it until it returns 0.
+    """
+    if not joints:
+        return 0
+    world = object_data.matrix_world
+    mesh = object_data.data
+    groups = {group.index: group.name for group in object_data.vertex_groups}
+    by_name = {group.name: group for group in object_data.vertex_groups}
+    spans = {}
+    for name, span in joints.items():
+        spans[name] = (Vector(span[0]), Vector(span[1]))
+
+    def target(point, name):
+        """The bone that fits this point better than ``name``, or None."""
+        span = spans.get(name)
+        if span is None:
+            return None
+        head, tail = span
+        axis = tail - head
+        if axis.length_squared < 1e-12:
+            return None
+        if (point - head).dot(axis) >= -0.05 * axis.length_squared:
+            return None        # it has reached this bone; nothing to fix
+        mine = point_segment_distance(point, head, tail)
+        best = mine - 0.5
+        better = None
+        for other, (first, second) in spans.items():
+            if other == name:
+                continue
+            gap = point_segment_distance(point, first, second)
+            if gap < best:
+                best = gap
+                better = other
+        return better
+
+    # What each vertex rides, and where it says it should ride instead.
+    riding = {}
+    wants = {}
+    for vertex in mesh.vertices:
+        point = world @ vertex.co
+        held = sorted(((entry.weight, groups.get(entry.group))
+                       for entry in vertex.groups if entry.weight > 0.001),
+                      reverse=True)
+        if not held:
+            continue
+        riding[vertex.index] = held[0][1]
+        better = target(point, held[0][1])
+        if better is not None and better in by_name:
+            wants[vertex.index] = better
+
+    # Shells, so a plate moves as one piece.
+    neighbours = [[] for _ in mesh.vertices]
+    for edge in mesh.edges:
+        first, second = edge.vertices
+        neighbours[first].append(second)
+        neighbours[second].append(first)
+    seen = set()
+    moves = {}
+    for start in range(len(mesh.vertices)):
+        if start in seen:
+            continue
+        shell = []
+        queue = [start]
+        seen.add(start)
+        while queue:
+            index = queue.pop()
+            shell.append(index)
+            for other in neighbours[index]:
+                if other not in seen:
+                    seen.add(other)
+                    queue.append(other)
+        asked = [wants[index] for index in shell if index in wants]
+        if not asked:
+            continue
+        # Only a shell that mostly agrees moves whole: a pauldron belongs on
+        # one bone, and the plate that rides it must keep that shape.
+        if len(asked) * 2 >= len(shell):
+            tally = {}
+            for name in asked:
+                tally[name] = tally.get(name, 0) + 1
+            winner = max(tally.items(), key=lambda pair: pair[1])[0]
+            if tally[winner] * 2 >= len(asked):
+                for index in shell:
+                    moves[index] = winner
+                continue
+        for index in shell:
+            if index in wants:
+                moves[index] = wants[index]
+
+    moved = 0
+    for index, name in moves.items():
+        old = riding.get(index)
+        if old is None or old == name:
+            continue
+        group = by_name.get(old)
+        if group is not None:
+            group.remove([index])
+        if name not in by_name:
+            by_name[name] = object_data.vertex_groups.new(name=name)
+        by_name[name].add([index], 1.0, "REPLACE")
+        moved += 1
+    return moved
 
 
 def rebind(object_data, armature, rigid=False, joints=None):
@@ -8975,6 +9093,29 @@ def main():
                     log("%s: repaired the seam the re-hung plates left - %d "
                         "round(s) of the game's own poses, weights only"
                         % (merged.name, repaired))
+            # Every plate, bracer and glove the weighting hung on a bone it does
+            # not reach is turned about a joint somewhere else, and that is what
+            # a fin off the shoulder and a sleeve drawn as stretched bands are
+            # made of. Move them onto the bone they are actually on - a whole
+            # shell at a time, so a plate keeps the one bone that holds its
+            # shape - until none is left. The audit below reports what remains,
+            # so this cannot pass by looking fixed.
+            #
+            # This runs AFTER the tear repair and not before it: put first, the
+            # same 241 points moved and the search then had to settle weights
+            # that had already been re-hung, and tearing over a centimetre went
+            # from x4.01 to x14.35 with 326 points past x1.6 instead of 162.
+            # Measured both orders; this is the one that holds the surface.
+            stood_joints = (stood or {}).get("joints") if standing else None
+            if stood_joints:
+                for _round in range(8):
+                    reached = hold_the_reach(merged, armature, stood_joints)
+                    if not reached:
+                        break
+                    log("%s: %d point(s) were riding a bone whose head they are "
+                        "behind and now ride the bone they are on - a plate "
+                        "turns about its own joint instead of one elsewhere"
+                        % (merged.name, reached))
             # The last thing the weights get, and the reason the shape is safe:
             # one node per vertex, weight 1.0. A rig with two nodes on a vertex
             # is a rig the engine blends, and a blend of two rotations is a
